@@ -1,0 +1,30 @@
+{
+  "$schema": "https://nitro.margelo.com/nitro.schema.json",
+  "cxxNamespace": [
+    "locationsession"
+  ],
+  "ios": {
+    "iosModuleName": "LocationSession"
+  },
+  "android": {
+    "androidNamespace": [
+      "locationsession"
+    ],
+    "androidCxxLibName": "LocationSession"
+  },
+  "autolinking": {
+    "LocationSession": {
+      "ios": {
+        "language": "swift",
+        "implementationClassName": "HybridLocationSession"
+      },
+      "android": {
+        "language": "kotlin",
+        "implementationClassName": "HybridLocationSession"
+      }
+    }
+  },
+  "ignorePaths": [
+    "**/node_modules"
+  ]
+}
