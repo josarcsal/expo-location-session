@@ -8,7 +8,14 @@
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.josarcsal.locationsessionexample"
+      "bundleIdentifier": "com.josarcsal.locationsessionexample",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Shares your location with the host during an active session.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Keeps sharing your location during an active session when the app is in the background.",
+        "UIBackgroundModes": [
+          "location"
+        ]
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -23,6 +30,7 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "newArchEnabled": true
+    "newArchEnabled": true,
+    "scheme": "locationsession"
   }
 }
