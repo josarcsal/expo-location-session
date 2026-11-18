@@ -1,34 +1,58 @@
 # QA
 
-## iOS survival (real device)
+v0.1 is done when every row passes on three physical devices: an iPhone (iOS 17+), a Pixel (Android 14+) and a Samsung or Xiaomi. Write the result in the device column (`pass`, `fail` plus a note, or a measured value); `n/a` means the row does not apply to that platform.
 
-Run on a physical iPhone with the example app, a reachable HTTPS upload endpoint and a session that expires well after the test.
+## Setup
 
-| Done | # | Check | Expected | Result |
-|------|---|-------|----------|--------|
-| [ ] | 1 | Always granted → `start` → kill the app from the app switcher → walk or drive ~300 m with the phone locked | The server receives uploads without the app being opened | |
-| [ ] | 2 | Same as 1, measure distance until the first upload after the kill | First upload after roughly 200 m (terminate region), not only after a ~500 m significant change | |
-| [ ] | 3 | When In Use only → `start` → kill from the app switcher → move ~300 m | No uploads while the app is closed | |
-| [ ] | 4 | After 3, open the app before `expiresAt` | Session resumes and uploads continue; `getState().survivesProcessDeath` is `false` | |
-| [ ] | 5 | Always → `start` → kill → wait past `expiresAt` → move | App relaunches, stops with `expired`, nothing is uploaded | |
-| [ ] | 6 | Always → `start` → reboot the phone → move before unlocking → unlock | Nothing happens before the first unlock; the session resumes after unlock and the stored session is not wiped | |
-| [ ] | 7 | Always → `start` → kill from the app switcher → lock the phone and wait 20 s → move ~300 m | Relaunch while locked resumes the session and uploads (Keychain readable after first unlock) | |
-| [ ] | 8 | While running, Settings → Location → When In Use | Session keeps running; `survivesProcessDeath` becomes `false` | |
-| [ ] | 9 | While running, Settings → Location → Never | Session stops with `permissionRevoked` | |
-| [ ] | 10 | `stop()` after a kill/relaunch cycle | No `els.*` regions remain; no further relaunches or uploads | |
+- The example app (`example/`) as a development build, driven by hand or with Maestro flows.
+- A reachable HTTPS upload endpoint, for example `example/scripts/echo-server.mjs` with TLS (see the README). It answers `?status=<code>` and `/fail?n=<count>`.
+- A session that expires well after the test unless the row says otherwise.
+- iOS: watch the device console for the `expo-location-session` subsystem.
+- Android: `adb logcat -s ELS ExpoLocationSession`. Every service promotion logs `service promoted via <route>` under the `ELS` tag.
+- Killing the Android process: `adb shell am kill <package>` does not kill it while the location foreground service runs. Use `adb shell run-as <package> kill -9 $(adb shell pidof <package>)` (debuggable builds) or let the OEM kill it.
 
-## Android survival (real device)
+## Matrix
 
-Run on a Pixel with Android 14+ and the example app, a reachable HTTPS upload endpoint and a session that expires well after the test. Watch `adb logcat -s ELS ExpoLocationSession`; every promotion logs `service promoted via <route>` under the `ELS` tag.
+### Basics
 
-| Done | # | Check | Expected | Result |
-|------|---|-------|----------|--------|
-| [ ] | 1 | Background location granted → `start` → background the app → `adb shell am kill <package>` (or an OEM kill) → move | The next movement relaunches the process, the notification returns, uploads continue | |
-| [ ] | 2 | Same as 1, note the `ELS` route lines after the relaunch | Record whether `foreground service start allowed via location` appears (a plain location broadcast is an FGS-start exemption) or `denied via location` | |
-| [ ] | 3 | Turn off Settings › Apps › Special app access › Alarms & reminders for the app; repeat 1 until a start is denied | `retry scheduled via recoveryGeofence`, then `service promoted via recoveryGeofence` | |
-| [ ] | 4 | Alarms & reminders on; repeat 1 until a start is denied | `retry scheduled via exactAlarm`, then `service promoted via exactAlarm` | |
-| [ ] | 5 | Without background location → `start` → background → kill → move | No relaunch with a notification, no uploads while closed | |
-| [ ] | 6 | After 5, open the app before `expiresAt` | Session resumes and uploads continue; `getState().survivesProcessDeath` is `false` | |
-| [ ] | 7 | Swipe the app from recents while running | Notification stays, uploads continue | |
-| [ ] | 8 | Denied starts keep happening for 10 minutes (e.g. both routes unavailable) | `error` with code `FGS_PROMOTION_FAILED`, then the session stops with `stopped` | |
-| [ ] | 9 | `stop()` after a kill/relaunch cycle | No relaunches, no uploads, no notification, no recovery geofence left | |
+| Done | # | Check | Expected | iPhone | Pixel | Samsung / Xiaomi |
+|------|---|-------|----------|--------|-------|------------------|
+| [ ] | 1 | Foreground: `start` → walk or drive | One upload per `minIntervalMs` at most; `location` and `upload` events in the log | | | |
+| [ ] | 2 | Background 30 min with the screen locked while moving | Uploads continue the whole time; iOS shows the location indicator, Android the notification | | | |
+| [ ] | 3 | Airplane mode for 5 min while moving, then off | Uploads fail and retry; the latest pending location goes out when the network is back | | | |
+| [ ] | 4 | Destination set → reach it | Arrival location uploaded, then `stop` with `arrived` | | | |
+| [ ] | 5 | Expiry with the app alive | `stop` with `expired` at `expiresAt`; nothing uploaded after it | | | |
+| [ ] | 6 | URL with `?status=401` | `stop` with `unauthorized` | | | |
+| [ ] | 7 | URL with `?status=410` | `stop` with `rejected` | | | |
+| [ ] | 8 | URL with `?status=422` | `error` with `UPLOAD_DROPPED`; the session keeps running | | | |
+| [ ] | 9 | 30-min session while moving | Record battery used (%) | | | |
+
+### iOS survival
+
+| Done | # | Check | Expected | iPhone | Pixel | Samsung / Xiaomi |
+|------|---|-------|----------|--------|-------|------------------|
+| [ ] | 10 | Always → `start` → kill from the app switcher → move ~300 m with the phone locked | The server receives uploads without the app being opened | | n/a | n/a |
+| [ ] | 11 | Same as 10, measure the distance until the first upload after the kill | First upload after roughly 200 m (terminate region), not only after a ~500 m significant change | | n/a | n/a |
+| [ ] | 12 | When In Use only → `start` → kill from the app switcher → move ~300 m | No uploads while the app is closed | | n/a | n/a |
+| [ ] | 13 | After 12, open the app before `expiresAt` | Session resumes and uploads continue; `getState().survivesProcessDeath` is `false` | | n/a | n/a |
+| [ ] | 14 | Always → `start` → kill → wait past `expiresAt` → move | App relaunches, stops with `expired`, nothing is uploaded | | n/a | n/a |
+| [ ] | 15 | Always → `start` → reboot the phone → move before unlocking → unlock | Nothing happens before the first unlock; the session resumes after unlock and the stored session is not wiped | | n/a | n/a |
+| [ ] | 16 | Always → `start` → kill from the app switcher → lock the phone and wait 20 s → move ~300 m | Relaunch while locked resumes the session and uploads (Keychain readable after first unlock) | | n/a | n/a |
+| [ ] | 17 | While running, Settings → Location → While Using the App | Session keeps running; `survivesProcessDeath` becomes `false` | | n/a | n/a |
+| [ ] | 18 | While running, Settings → Location → Never | Session stops with `permissionRevoked` | | n/a | n/a |
+| [ ] | 19 | `stop()` after a kill/relaunch cycle | No `els.*` regions remain; no further relaunches or uploads | | n/a | n/a |
+
+### Android survival
+
+| Done | # | Check | Expected | iPhone | Pixel | Samsung / Xiaomi |
+|------|---|-------|----------|--------|-------|------------------|
+| [ ] | 20 | Swipe the app from recents while running | Notification stays, uploads continue | n/a | | |
+| [ ] | 21 | Background location granted → `start` → background the app → kill the process (`run-as … kill -9`, or an OEM kill) → move | The next movement relaunches the process, the notification returns, uploads continue | n/a | | |
+| [ ] | 22 | Same as 21, note the `ELS` route lines after the relaunch | Record whether `foreground service start allowed via location` appears (a plain location broadcast is an FGS-start exemption) or `denied via location` | n/a | | |
+| [ ] | 23 | Alarms & reminders on; repeat 21 until a start is denied | `retry scheduled via exactAlarm`, then `service promoted via exactAlarm` | n/a | | |
+| [ ] | 24 | Settings › Apps › Special app access › Alarms & reminders off; repeat 21 until a start is denied | `retry scheduled via recoveryGeofence`, then `service promoted via recoveryGeofence` | n/a | | |
+| [ ] | 25 | Denied starts keep happening for 10 minutes (e.g. both routes unavailable) | `error` with `FGS_PROMOTION_FAILED`, then the session stops with `stopped` | n/a | | |
+| [ ] | 26 | Without background location → `start` → background → kill the process → move | No relaunch, no notification, no uploads while closed | n/a | | |
+| [ ] | 27 | After 26, open the app before `expiresAt` | Session resumes and uploads continue; `getState().survivesProcessDeath` is `false` | n/a | | |
+| [ ] | 28 | Background location granted → `start` → kill the process → wait past `expiresAt` | The expiry alarm (inexact, may be minutes late) wakes the app and the session stops with `expired`; nothing is uploaded after `expiresAt`; on the next open `getState().lastStop.reason` is `expired` | n/a | | |
+| [ ] | 29 | `stop()` after a kill/relaunch cycle | No relaunches, no uploads, no notification, no recovery geofence left | n/a | | |

@@ -10,13 +10,13 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "clean": "git clean -dfX",
-    "release": "semantic-release",
     "build": "npm run typecheck && bob build",
     "build:plugin": "tsc -p plugin",
     "codegen": "nitrogen --logLevel=\"debug\" && npm run build && node post-script.js",
     "prepare": "npm run build:plugin",
     "lint": "eslint . && prettier --check \"**/*.{js,mjs,cjs,ts,tsx}\"",
-    "format": "eslint --fix . && prettier --write \"**/*.{js,mjs,cjs,ts,tsx}\""
+    "format": "eslint --fix . && prettier --write \"**/*.{js,mjs,cjs,ts,tsx}\"",
+    "prepublishOnly": "npm run build:plugin"
   },
   "keywords": [
     "react-native",
@@ -55,14 +55,11 @@
   "devDependencies": {
     "@eslint/compat": "2.1.1",
     "@jamesacarr/eslint-formatter-github-actions": "^0.2.0",
-    "@semantic-release/changelog": "^6.0.3",
-    "@semantic-release/git": "^10.0.1",
     "@types/jest": "^29.5.12",
     "@types/node": "^26.6.6",
     "@types/react": "~19.3.0",
     "@typescript-eslint/eslint-plugin": "8.72.1",
     "@typescript-eslint/parser": "8.72.1",
-    "conventional-changelog-conventionalcommits": "^10.2.1",
     "eslint": "10.14.0",
     "eslint-plugin-import-x": "4.17.1",
     "eslint-plugin-react-hooks": "7.1.1",
@@ -74,7 +71,6 @@
     "react-native": "0.88.1",
     "react-native-builder-bob": "^0.40.18",
     "react-native-nitro-modules": "0.37.2",
-    "semantic-release": "^25.0.7",
     "typescript": "^6.0.3"
   },
   "peerDependencies": {
