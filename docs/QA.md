@@ -53,6 +53,13 @@ v0.1 is done when every row passes on three physical devices: an iPhone (iOS 17+
 | [ ] | 24 | Settings › Apps › Special app access › Alarms & reminders off; repeat 21 until a start is denied | `retry scheduled via recoveryGeofence`, then `service promoted via recoveryGeofence` | n/a | | |
 | [ ] | 25 | Denied starts keep happening for 10 minutes (e.g. both routes unavailable) | `error` with `FGS_PROMOTION_FAILED`, then the session stops with `stopped` | n/a | | |
 | [ ] | 26 | Without background location → `start` → background → kill the process → move | No relaunch, no notification, no uploads while closed | n/a | | |
-| [ ] | 27 | After 26, open the app before `expiresAt` | Session resumes and uploads continue; `getState().survivesProcessDeath` is `false` | n/a | | |
+| [ ] | 27 | After 26, open the app before `expiresAt` (from the launcher; the app does not need to call the library on mount) | Session resumes and uploads continue; `getState().survivesProcessDeath` is `false` | n/a | | |
 | [ ] | 28 | Background location granted → `start` → kill the process → wait past `expiresAt` | The expiry alarm (inexact, may be minutes late) wakes the app and the session stops with `expired`; nothing is uploaded after `expiresAt`; on the next open `getState().lastStop.reason` is `expired` | n/a | | |
 | [ ] | 29 | `stop()` after a kill/relaunch cycle | No relaunches, no uploads, no notification, no recovery geofence left | n/a | | |
+
+### Build configurations
+
+| Done | # | Check | Expected | iPhone | Pixel | Samsung / Xiaomi |
+|------|---|-------|----------|--------|-------|------------------|
+| [ ] | 30 | Android release build with R8 minify (`android.enableMinifyInReleaseBuilds=true`): `start` → kill the process (release builds are not debuggable: use an OEM kill, or `adb root` and `kill -9` on an emulator) → relaunch from the launcher | `start` resolves, uploads arrive, the session resumes after the relaunch | n/a | | |
+| [ ] | 31 | iOS build with static frameworks (`expo-build-properties` `ios.useFrameworks: "static"`): Always → `start` → kill → relaunch | `bootstrap launch` is logged at launch and the session resumes | | n/a | n/a |

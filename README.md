@@ -201,14 +201,14 @@ Rejected promises carry a `LocationSessionError` with `code` and `message`.
 | Code | When |
 | --- | --- |
 | `NOT_FOREGROUND` | `start` called while the app is not in the foreground |
-| `PERMISSION_DENIED` | `start` or `getCurrentPosition` without location permission |
+| `PERMISSION_DENIED` | `start` or `getCurrentPosition` without location permission; on iOS also `getCurrentPosition` with location services off (iOS reports that as denied) |
 | `ALREADY_RUNNING` | `start` while a session is running; call `stop` first |
-| `INVALID_CONFIG` | empty `id`, non-https or host-less `url`, `radiusMeters <= 0`, negative `distanceFilterMeters` or `minIntervalMs`, non-finite numbers, invalid destination coordinates; on iOS also a missing `UIBackgroundModes` `location` |
+| `INVALID_CONFIG` | empty `id`, non-https or host-less `url`, `radiusMeters <= 0`, negative `distanceFilterMeters` or `minIntervalMs`, non-finite numbers, invalid destination coordinates, an `accuracy` other than `high`, `balanced` or `low`; on iOS also a missing `UIBackgroundModes` `location` |
 | `NOTIFICATION_PERMISSION_DENIED` | Android 13+: `start` without notification permission |
 | `EXPIRED` | `expiresAt` is not in the future |
 | `INTERNAL` | the session could not be persisted or started |
 | `LOCATION_TIMEOUT` | `getCurrentPosition` got no fix within `timeoutMs` |
-| `LOCATION_UNAVAILABLE` | `getCurrentPosition` failed, or (Android) location services are off |
+| `LOCATION_UNAVAILABLE` | `getCurrentPosition` failed; on Android also when location services are off |
 
 ### Events
 
@@ -253,7 +253,7 @@ Content-Type: application/json
 }
 ```
 
-`altitude`, `speed` and `heading` are left out when the platform does not report them. `battery` is left out when the level is unknown (for example on the iOS simulator). `extras` is always present, `{}` when not configured. The request timeout is 20 s.
+`altitude`, `speed` and `heading` are left out when the platform does not report them. `battery` is left out when the level is unknown (for example on the iOS simulator). `extras` is always present, `{}` when not configured. Request timeout: on iOS 20 s per request; on Android a 20 s connect timeout and a 20 s read timeout, with a watchdog that cancels the request 20 s after it was opened.
 
 Only the latest position matters. There is one pending slot: a newer location replaces an unsent one. Locations with a timestamp before `start` are ignored.
 
@@ -276,7 +276,7 @@ Final uploads bypass the throttle:
 
 The session stops itself when:
 
-- `expired`: `now >= expiresAt`. Checked on every location, on resume and by a timer while the process is alive. Android also sets an inexact `AlarmManager.setAndAllowWhileIdle` alarm at `expiresAt` (it can fire a few minutes late). On Android, locations taken at or after `expiresAt` are never uploaded.
+- `expired`: `now >= expiresAt`. Checked on every location, on resume and by a timer while the process is alive. Android also sets an inexact `AlarmManager.setAndAllowWhileIdle` alarm at `expiresAt` (it can fire a few minutes late). Locations taken at or after `expiresAt` are never uploaded.
 - `arrived`: a location is within `radiusMeters` of `destination` and its accuracy is at most `max(radiusMeters, 100)` meters.
 - `unauthorized` / `rejected`: see the upload contract.
 - `permissionRevoked`: location permission was removed. iOS detects it immediately (setting it to Never). Android kills the app on revocation, so it is detected at the next wake or app open.
@@ -303,6 +303,7 @@ Stopping removes location updates, regions, geofences, alarms and the Android no
 - At launch the bootstrap resumes the persisted session without JS: it stops it as `expired` or `permissionRevoked`, or restarts updates and sends the pending location.
 - The session config (headers included) is stored in the Keychain with `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`; the pending location and `lastStop` are in `UserDefaults`. After a reboot nothing resumes before the first unlock; the engine waits and never overwrites the stored session. Because of `ThisDeviceOnly`, a session is not restored on a device restored from a backup or migrated to a new phone.
 - Uploads run in a `beginBackgroundTask` so a request can finish after the app is suspended.
+- v0.1 does not use iOS 17's `CLBackgroundActivitySession`: the library supports iOS 15.1+, and `allowsBackgroundLocationUpdates` with the `location` background mode already keeps updates running on every supported version.
 
 ### Android
 
