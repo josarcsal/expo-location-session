@@ -45,6 +45,8 @@ const withNotificationIcon: ConfigPlugin<string> = (config, icon) =>
     'android',
     async (cfg) => {
       const source = path.resolve(cfg.modRequest.projectRoot, icon);
+      if (!fs.existsSync(source))
+        throw new Error(`[expo-location-session] androidNotificationIcon not found: ${source}`);
       const dir = path.join(cfg.modRequest.platformProjectRoot, 'app/src/main/res/drawable');
       await fs.promises.mkdir(dir, { recursive: true });
       await fs.promises.copyFile(source, path.join(dir, `${ICON_NAME}.png`));

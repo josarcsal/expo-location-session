@@ -32,6 +32,7 @@
     "android/fix-prefab.gradle",
     "android/gradle.properties",
     "android/CMakeLists.txt",
+    "android/consumer-rules.pro",
     "android/src",
     "ios/**/*.h",
     "ios/**/*.m",
@@ -41,7 +42,11 @@
     "app.plugin.js",
     "plugin/build",
     "*.podspec",
-    "README.md"
+    "README.md",
+    "!android/src/test",
+    "!ios/Core/Tests",
+    "!ios/Core/Package.swift",
+    "!ios/Core/.build"
   ],
   "repository": "https://github.com/josarcsal/expo-location-session.git",
   "author": "Jose Arciniega",
@@ -54,8 +59,6 @@
   },
   "devDependencies": {
     "@eslint/compat": "2.1.1",
-    "@jamesacarr/eslint-formatter-github-actions": "^0.2.0",
-    "@types/jest": "^29.5.12",
     "@types/node": "^26.6.6",
     "@types/react": "~19.3.0",
     "@typescript-eslint/eslint-plugin": "8.72.1",
@@ -63,7 +66,7 @@
     "eslint": "10.14.0",
     "eslint-plugin-import-x": "4.17.1",
     "eslint-plugin-react-hooks": "7.1.1",
-    "eslint-plugin-react-native": "^5.0.0",
+    "eslint-plugin-react-native": "5.0.0",
     "expo": "~58.0.26",
     "nitrogen": "0.37.2",
     "prettier": "3.9.10",

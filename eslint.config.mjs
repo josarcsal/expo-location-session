@@ -41,7 +41,6 @@ export default [
       '@typescript-eslint/no-shadow': ['error'],
       'no-shadow': 'off',
       'no-undef': 'off',
-      'react-hooks/set-state-in-effect': 'off',
       '@typescript-eslint/consistent-type-imports': 'warn',
       'arrow-body-style': ['error'],
       curly: ['error', 'multi', 'consistent'],
@@ -62,6 +61,12 @@ export default [
           alphabetize: { order: 'asc', caseInsensitive: true },
         },
       ],
+    },
+  },
+  {
+    files: ['example/**'],
+    rules: {
+      'react-hooks/set-state-in-effect': 'off',
     },
   },
 ];
