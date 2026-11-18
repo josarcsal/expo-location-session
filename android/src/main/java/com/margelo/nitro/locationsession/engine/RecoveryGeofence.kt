@@ -48,7 +48,7 @@ object RecoveryGeofence {
             LocationServices.getGeofencingClient(ctx)
                 .addGeofences(request, LaunchGate.pendingIntent(ctx, LaunchGate.Kind.RECOVERY_GEOFENCE))
                 .addOnSuccessListener {
-                    ElsLog.info("recovery geofence armed at ${center.latitude},${center.longitude} radius=${radius}m")
+                    ElsLog.info("recovery geofence armed radius=${radius}m")
                     done(true)
                 }
                 .addOnFailureListener {

@@ -86,7 +86,7 @@ extension SessionEngine {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let c = config, permissions.hasAlways else { return }
         if let region = source.armTerminateRegion(at: lastFix) {
-            Log.info("armed terminate region for \(c.id) at \(region.center.latitude),\(region.center.longitude) r=\(region.radius)")
+            Log.info("armed terminate region for \(c.id) r=\(region.radius)")
         } else {
             Log.info("could not arm terminate region for \(c.id)")
         }
