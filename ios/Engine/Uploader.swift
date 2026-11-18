@@ -106,18 +106,45 @@ final class Uploader {
     }
 
     private func schedule(afterMs delay: Int64) {
-        timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: max(0, Double(delay)) / 1000, repeats: false) { [weak self] _ in
-            self?.timer = nil
-            self?.pump()
+        startTimer(afterMs: delay) { [weak self] in self?.pump() }
+    }
+
+    private func scheduleFlushRetry(afterMs delay: Int64) {
+        guard let c = config else { return }
+        let remaining = c.expiresAtMs - nowMs()
+        guard remaining > 0 else {
+            completeFlush()
+            return
         }
+        startTimer(afterMs: min(delay, remaining)) { [weak self] in
+            guard let self, let c = self.config else { return }
+            if nowMs() >= c.expiresAtMs {
+                self.completeFlush()
+            } else {
+                self.send()
+            }
+        }
+    }
+
+    private func startTimer(afterMs delay: Int64, _ fire: @escaping () -> Void) {
+        timer?.invalidate()
+        let t = Timer(timeInterval: max(0, Double(delay)) / 1000, repeats: false) { [weak self] _ in
+            self?.timer = nil
+            fire()
+        }
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
+    }
+
+    private func completeFlush() {
+        let done = flushCompletion
+        flushCompletion = nil
+        done?()
     }
 
     private func send() {
         guard let c = config, let fix = slot.fix, let url = URL(string: c.uploadUrl) else {
-            let done = flushCompletion
-            flushCompletion = nil
-            done?()
+            completeFlush()
             return
         }
         timer?.invalidate()
@@ -169,18 +196,23 @@ final class Uploader {
             attempt = 0
             events.emit(.error, ["code": "UPLOAD_DROPPED", "message": "Server responded \(status ?? 0); location dropped"])
         case .retry:
-            if flushCompletion == nil { schedule(afterMs: backoffMs(attempt: attempt)) }
+            let delay = backoffMs(attempt: attempt)
             attempt += 1
+            if flushCompletion != nil {
+                scheduleFlushRetry(afterMs: delay)
+            } else {
+                schedule(afterMs: delay)
+            }
+            return
         }
 
-        if let done = flushCompletion {
+        if flushCompletion != nil {
             if sent >= flushTarget || slot.fix == nil {
-                flushCompletion = nil
-                done()
+                completeFlush()
             } else {
                 send()
             }
-        } else if outcome != .retry {
+        } else {
             pump()
         }
     }

@@ -123,7 +123,7 @@ final class SessionStore {
     private func writeKeychain(_ data: Data) throws {
         var add = baseQuery()
         add[kSecValueData as String] = data
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         let status = SecItemAdd(add as CFDictionary, nil)
         switch status {
         case errSecSuccess:
@@ -131,7 +131,7 @@ final class SessionStore {
         case errSecDuplicateItem:
             let update: [String: Any] = [
                 kSecValueData as String: data,
-                kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
+                kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
             ]
             let updateStatus = SecItemUpdate(baseQuery() as CFDictionary, update as CFDictionary)
             guard updateStatus == errSecSuccess else { throw KeychainError.status(updateStatus) }

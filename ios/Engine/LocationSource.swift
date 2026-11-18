@@ -37,6 +37,10 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
     static let regionPrefix = "els."
     static let destinationRegionId = "els.destination"
 
+    static var hasBackgroundLocationMode: Bool {
+        (Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String])?.contains("location") ?? false
+    }
+
     var onFixes: (([Fix]) -> Void)?
     var onAuthorizationChange: ((CLAuthorizationStatus) -> Void)?
 

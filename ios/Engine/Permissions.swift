@@ -9,6 +9,8 @@ final class Permissions: NSObject, CLLocationManagerDelegate {
     private var resignedActive = false
     private var promptStartStatus: CLAuthorizationStatus = .notDetermined
     private var observers: [NSObjectProtocol] = []
+    private var queued: [(always: Bool, completion: (NativePermissionStatus) -> Void)] = []
+    private var requesting = false
 
     init(store: SessionStore) {
         self.store = store
@@ -52,6 +54,22 @@ final class Permissions: NSObject, CLLocationManagerDelegate {
 
     func request(always: Bool, completion: @escaping (NativePermissionStatus) -> Void) {
         dispatchPrecondition(condition: .onQueue(.main))
+        queued.append((always, completion))
+        runNext()
+    }
+
+    private func runNext() {
+        guard !requesting, !queued.isEmpty else { return }
+        requesting = true
+        let next = queued.removeFirst()
+        perform(always: next.always) { [weak self] status in
+            next.completion(status)
+            self?.requesting = false
+            self?.runNext()
+        }
+    }
+
+    private func perform(always: Bool, completion: @escaping (NativePermissionStatus) -> Void) {
         let finish: () -> Void = { [weak self] in
             guard let self else { return }
             completion(self.status())

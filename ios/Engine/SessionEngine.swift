@@ -50,6 +50,9 @@ final class SessionEngine {
         if let code = validate(c, nowMs: now, running: config != nil) {
             throw LocationSessionError(code: code, message: validationMessage(code))
         }
+        guard LocationSource.hasBackgroundLocationMode else {
+            throw LocationSessionError(code: "INVALID_CONFIG", message: "missing UIBackgroundModes location")
+        }
         do {
             try store.save(c, startedAtMs: now)
         } catch {

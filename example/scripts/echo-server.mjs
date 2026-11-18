@@ -6,9 +6,16 @@ const port = Number(process.env.PORT ?? 8443)
 const { TLS_CERT, TLS_KEY } = process.env
 
 const commands = []
+let failNext = 0
 
 const handler = (req, res) => {
   const url = new URL(req.url, 'http://localhost')
+  if (url.pathname === '/fail') {
+    failNext = Number(url.searchParams.get('n') ?? 1)
+    console.log(`${new Date().toISOString()} next ${failNext} upload(s) -> 503`)
+    res.writeHead(202)
+    return res.end()
+  }
   if (url.pathname === '/cmd') {
     if (req.method === 'GET') {
       const next = commands.shift()
@@ -25,7 +32,7 @@ const handler = (req, res) => {
     })
     return
   }
-  const status = Number(url.searchParams.get('status') ?? 204)
+  const status = failNext > 0 ? (failNext--, 503) : Number(url.searchParams.get('status') ?? 204)
   let body = ''
   req.on('data', (chunk) => (body += chunk))
   req.on('end', () => {
