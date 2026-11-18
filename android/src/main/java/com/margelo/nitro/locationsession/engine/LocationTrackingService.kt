@@ -20,13 +20,16 @@ class LocationTrackingService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        isAlive = true
         ensureChannel(PLACEHOLDER_CHANNEL_NAME)
         val placeholder = notification(PLACEHOLDER_TITLE, null)
         promoted = promote(placeholder)
+        isForeground = promoted
+        if (promoted) LaunchGate.onPromoted(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        SessionEngine.serviceStartDelivered()
+        LaunchGate.serviceStartDelivered()
         if (intent == null) {
             ElsLog.info("service restarted by the system")
             SessionEngine.resumeIfNeeded(this)
@@ -37,6 +40,7 @@ class LocationTrackingService : Service() {
             if (promoted && promote(notification(PLACEHOLDER_TITLE, null))) {
                 ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             }
+            isForeground = false
             stopSelf()
             return START_NOT_STICKY
         }
@@ -44,7 +48,17 @@ class LocationTrackingService : Service() {
         return START_STICKY
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        if (SessionEngine.isActive && !isForeground) {
+            ElsLog.info("task removed while the service is not foreground; asking the gate to restart")
+            LaunchGate.restart(this, "taskRemoved")
+        }
+    }
+
     override fun onDestroy() {
+        isForeground = false
+        isAlive = false
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }
@@ -91,6 +105,10 @@ class LocationTrackingService : Service() {
     }
 
     companion object {
+        var isAlive = false
+            private set
+        var isForeground = false
+            private set
         const val CHANNEL_ID = "expo_location_session"
         private const val NOTIFICATION_ID = 0x454c53
         private const val PLACEHOLDER_CHANNEL_NAME = "Location"

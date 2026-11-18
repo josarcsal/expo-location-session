@@ -8,11 +8,9 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.location.Location
-import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import androidx.core.content.ContextCompat
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
@@ -50,9 +48,10 @@ object SessionEngine {
     private var lastFix: Fix? = null
     private var stopping = false
     private var expiryRunnable: Runnable? = null
-    private var serviceStartPending = false
 
     val activeConfig: SessionConfig? get() = config
+    val isActive: Boolean get() = config != null
+    val lastKnownFix: Fix? get() = lastFix
 
     private fun init(ctx: Context): Context {
         assertMain()
@@ -173,6 +172,7 @@ object SessionEngine {
                 store.wipe()
                 removeUpdates(context)
                 cancelAlarm(context)
+                LaunchGate.clear(context)
                 stopService(context)
             }
             is StoredSession.Session -> {
@@ -212,6 +212,7 @@ object SessionEngine {
         expiryRunnable?.let { main.removeCallbacks(it) }
         expiryRunnable = null
         cancelAlarm(ctx)
+        LaunchGate.clear(ctx)
         removeUpdates(ctx)
         stopService(ctx)
         uploader.reset()
@@ -251,13 +252,7 @@ object SessionEngine {
         scheduleAlarm(ctx, c)
     }
 
-    private fun alarmIntent(ctx: Context): PendingIntent =
-        PendingIntent.getBroadcast(
-            ctx,
-            0,
-            Intent(ctx, ExpiryAlarmReceiver::class.java),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+    private fun alarmIntent(ctx: Context): PendingIntent = LaunchGate.pendingIntent(ctx, LaunchGate.Kind.EXPIRY)
 
     private fun scheduleAlarm(ctx: Context, c: SessionConfig) {
         val alarms = ctx.getSystemService(AlarmManager::class.java) ?: return
@@ -268,14 +263,7 @@ object SessionEngine {
         ctx.getSystemService(AlarmManager::class.java)?.cancel(alarmIntent(ctx))
     }
 
-    private fun updatesIntent(ctx: Context): PendingIntent {
-        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-        } else {
-            PendingIntent.FLAG_UPDATE_CURRENT
-        }
-        return PendingIntent.getBroadcast(ctx, 0, Intent(ctx, LocationUpdatesReceiver::class.java), flags)
-    }
+    private fun updatesIntent(ctx: Context): PendingIntent = LaunchGate.pendingIntent(ctx, LaunchGate.Kind.LOCATION)
 
     private fun requestUpdates(ctx: Context, c: SessionConfig) {
         val priority = when (c.accuracy) {
@@ -303,33 +291,17 @@ object SessionEngine {
         }
     }
 
-    private fun startService(ctx: Context) {
-        if (!Permissions.hasForeground(ctx) || !(Permissions.hasBackground(ctx) || isAppInForeground(ctx))) {
-            ElsLog.info("skipping foreground service start: location FGS would not be allowed")
-            return
-        }
-        try {
-            ContextCompat.startForegroundService(ctx, Intent(ctx, LocationTrackingService::class.java))
-            serviceStartPending = true
-        } catch (e: Exception) {
-            ElsLog.info("foreground service start denied: $e")
-        }
-    }
+    private fun startService(ctx: Context) = LaunchGate.promote(ctx)
 
     private fun stopService(ctx: Context) {
-        if (serviceStartPending) {
+        if (LaunchGate.startPending) {
             ElsLog.info("service start pending; it stops itself after promoting")
             return
         }
         ctx.stopService(Intent(ctx, LocationTrackingService::class.java))
     }
 
-    fun serviceStartDelivered() {
-        assertMain()
-        serviceStartPending = false
-    }
-
-    private fun isAppInForeground(ctx: Context): Boolean {
+    fun isAppInForeground(ctx: Context): Boolean {
         val info = ActivityManager.RunningAppProcessInfo()
         ActivityManager.getMyMemoryState(info)
         return info.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND

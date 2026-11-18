@@ -36,7 +36,14 @@ class EventBus {
 object ElsLog {
     private const val TAG = "ExpoLocationSession"
 
+    private const val ROUTE_TAG = "ELS"
+
     fun info(message: String) {
+        Log.i(TAG, message)
+    }
+
+    fun route(message: String) {
+        Log.i(ROUTE_TAG, message)
         Log.i(TAG, message)
     }
 }

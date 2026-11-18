@@ -23,6 +23,7 @@ class SessionStore(context: Context) {
         const val PENDING_FIX = "pendingFix"
         const val LAST_UPLOAD_AT = "lastUploadAtMs"
         const val LAST_STOP = "lastStop"
+        const val FIRST_PROMOTION_FAILURE_AT = "firstPromotionFailureAtMs"
     }
 
     fun save(config: SessionConfig, startedAtMs: Long): Boolean {
@@ -36,6 +37,7 @@ class SessionStore(context: Context) {
             .putLong(STARTED_AT, startedAtMs)
             .remove(PENDING_FIX)
             .remove(LAST_UPLOAD_AT)
+            .remove(FIRST_PROMOTION_FAILURE_AT)
             .commit()
     }
 
@@ -64,6 +66,13 @@ class SessionStore(context: Context) {
         set(value) {
             if (value != null) prefs.edit().putLong(LAST_UPLOAD_AT, value).apply()
             else prefs.edit().remove(LAST_UPLOAD_AT).apply()
+        }
+
+    var firstPromotionFailureAtMs: Long?
+        get() = if (prefs.contains(FIRST_PROMOTION_FAILURE_AT)) prefs.getLong(FIRST_PROMOTION_FAILURE_AT, 0) else null
+        set(value) {
+            if (value != null) prefs.edit().putLong(FIRST_PROMOTION_FAILURE_AT, value).commit()
+            else prefs.edit().remove(FIRST_PROMOTION_FAILURE_AT).commit()
         }
 
     var lastStop: LastStop?
@@ -101,6 +110,7 @@ class SessionStore(context: Context) {
             .remove(STARTED_AT)
             .remove(PENDING_FIX)
             .remove(LAST_UPLOAD_AT)
+            .remove(FIRST_PROMOTION_FAILURE_AT)
             .commit()
     }
 }

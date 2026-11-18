@@ -16,10 +16,7 @@
       android:foregroundServiceType="location"
       android:stopWithTask="false" />
     <receiver
-      android:name="com.margelo.nitro.locationsession.engine.LocationUpdatesReceiver"
-      android:exported="false" />
-    <receiver
-      android:name="com.margelo.nitro.locationsession.engine.ExpiryAlarmReceiver"
+      android:name="com.margelo.nitro.locationsession.engine.LaunchGate"
       android:exported="false" />
   </application>
 </manifest>
