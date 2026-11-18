@@ -4,6 +4,5 @@ plugin/build/
 example/ios/
 example/android/
 ios/Core/.build/
-post-script.js
 .superpowers/
 .claude/

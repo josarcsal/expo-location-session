@@ -17,7 +17,6 @@ export default [
       'ios/Core/.build/',
       '.superpowers/',
       '.claude/',
-      'post-script.js',
     ],
   },
   reactHooks.configs.flat.recommended,
