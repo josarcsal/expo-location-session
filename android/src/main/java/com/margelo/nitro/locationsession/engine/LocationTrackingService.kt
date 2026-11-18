@@ -35,6 +35,11 @@ class LocationTrackingService : Service() {
             SessionEngine.resumeIfNeeded(this)
         }
         val c = SessionEngine.activeConfig
+        if (!promoted) {
+            promoted = promote(notification(PLACEHOLDER_TITLE, null))
+            isForeground = promoted
+            if (promoted) LaunchGate.onPromoted(this)
+        }
         if (c == null || !promoted) {
             if (c == null) ElsLog.info("service has no active session; stopping")
             if (promoted && promote(notification(PLACEHOLDER_TITLE, null))) {

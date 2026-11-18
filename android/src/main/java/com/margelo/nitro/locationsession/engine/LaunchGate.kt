@@ -99,7 +99,7 @@ class LaunchGate : BroadcastReceiver() {
                 ElsLog.info("skipping foreground service start via $route: location FGS would not be allowed")
                 return
             }
-            if (LocationTrackingService.isAlive && !appInForeground) {
+            if (LocationTrackingService.isAlive) {
                 ElsLog.route("service alive but not foreground via $route")
                 onDenied(ctx, route)
                 return
@@ -114,7 +114,8 @@ class LaunchGate : BroadcastReceiver() {
                     ElsLog.route("foreground service start denied via $route")
                     onDenied(ctx, route)
                 } else {
-                    ElsLog.info("foreground service start failed via $route: $e")
+                    ElsLog.route("foreground service start failed via $route: $e")
+                    onDenied(ctx, route)
                 }
             }
         }
