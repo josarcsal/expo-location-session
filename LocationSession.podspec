@@ -15,7 +15,8 @@ Pod::Spec.new do |s|
 
   s.source_files = [
     # Implementation (Swift)
-    "ios/**/*.{swift}",
+    "ios/*.swift",
+    "ios/Core/Sources/**/*.swift",
     # Autolinking/Registration (Objective-C++)
     "ios/**/*.{m,mm}",
     # Implementation (C++ objects)
