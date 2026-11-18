@@ -98,13 +98,13 @@ private func milliseconds(_ value: Double) -> Int64? {
 }
 
 private func sessionConfig(_ c: NativeSessionConfig) throws -> SessionConfig {
-    guard let expiresAt = milliseconds(c.expiresAt), let minInterval = milliseconds(c.uploadMinIntervalMs) else {
-        throw LocationSessionError(code: "INVALID_CONFIG", message: "expiresAt and upload.minIntervalMs must be finite numbers")
+    guard let expiresAt = milliseconds(c.expiresAt), let minInterval = milliseconds(c.uploadMinIntervalMs), c.distanceFilterMeters.isFinite else {
+        throw LocationSessionError(code: "INVALID_CONFIG", message: "expiresAt, distanceFilterMeters and upload.minIntervalMs must be finite numbers")
     }
     let destination = c.destination.map {
         Destination(latitude: $0.latitude, longitude: $0.longitude, radiusMeters: $0.radiusMeters)
     }
-    if let d = destination, !(d.latitude.isFinite && d.longitude.isFinite && abs(d.latitude) <= 90 && abs(d.longitude) <= 180) {
+    if let d = destination, !(d.latitude.isFinite && d.longitude.isFinite && d.radiusMeters.isFinite && abs(d.latitude) <= 90 && abs(d.longitude) <= 180) {
         throw LocationSessionError(code: "INVALID_CONFIG", message: "destination coordinates are invalid")
     }
     return SessionConfig(
