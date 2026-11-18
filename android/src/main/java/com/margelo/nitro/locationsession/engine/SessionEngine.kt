@@ -53,14 +53,13 @@ object SessionEngine {
     val isActive: Boolean get() = config != null
     val lastKnownFix: Fix? get() = lastFix
 
-    private fun init(ctx: Context): Context {
+    private var lifecycleAttached = false
+
+    fun attach(ctx: Context) {
         assertMain()
-        app?.let { return it }
-        val context = ctx.applicationContext
-        app = context
-        store = SessionStore(context)
-        uploader = Uploader(context, store, events)
-        (context as? Application)?.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
+        if (lifecycleAttached) return
+        lifecycleAttached = true
+        (ctx.applicationContext as? Application)?.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
             override fun onActivityResumed(activity: Activity) {
                 resumeIfNeeded(activity)
             }
@@ -71,6 +70,16 @@ object SessionEngine {
             override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
             override fun onActivityDestroyed(activity: Activity) {}
         })
+    }
+
+    private fun init(ctx: Context): Context {
+        assertMain()
+        app?.let { return it }
+        val context = ctx.applicationContext
+        attach(context)
+        app = context
+        store = SessionStore(context)
+        uploader = Uploader(context, store, events)
         return context
     }
 
