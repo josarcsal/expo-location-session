@@ -140,7 +140,7 @@ final class SessionEngine {
         }
     }
 
-    private func evaluate(fix: Fix?) {
+    func evaluate(fix: Fix?) {
         guard let c = config, !stopping else { return }
         guard let reason = stopDecision(c, fix: fix, nowMs: nowMs()) else {
             if fix != nil { uploader.pump() }

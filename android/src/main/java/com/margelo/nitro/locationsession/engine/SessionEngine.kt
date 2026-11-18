@@ -198,7 +198,7 @@ object SessionEngine {
                     else -> {
                         activate(context, c, stored.startedAtMs, store.pendingFix, store.lastUploadAtMs)
                         ElsLog.info("resumed session ${c.id}")
-                        uploader.pump()
+                        lastFix?.let { evaluate(context, it) } ?: uploader.pump()
                     }
                 }
             }

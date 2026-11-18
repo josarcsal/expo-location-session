@@ -45,7 +45,7 @@ extension SessionEngine {
             } else {
                 activate(c, startedAtMs: startedAt, pending: store.pendingFix, lastUploadAtMs: store.lastUploadAtMs)
                 Log.info("resumed session \(c.id)")
-                uploader.pump()
+                if let fix = lastFix { evaluate(fix: fix) } else { uploader.pump() }
             }
         }
     }
