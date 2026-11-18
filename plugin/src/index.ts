@@ -1,5 +1,3 @@
-import fs from 'node:fs'
-import path from 'node:path'
 import {
   AndroidConfig,
   createRunOncePlugin,
@@ -7,64 +5,59 @@ import {
   withDangerousMod,
   withInfoPlist,
   type ConfigPlugin,
-} from 'expo/config-plugins'
+} from 'expo/config-plugins';
+import fs from 'node:fs';
+import path from 'node:path';
 
-const pkg = require('../../package.json') as { name: string; version: string }
+const pkg = require('../../package.json') as { name: string; version: string };
 
 export type LocationSessionPluginProps = {
-  locationWhenInUseText?: string
-  locationAlwaysText?: string
-  enableBackgroundLocationPermission?: boolean
-  androidNotificationIcon?: string
-}
+  locationWhenInUseText?: string;
+  locationAlwaysText?: string;
+  enableBackgroundLocationPermission?: boolean;
+  androidNotificationIcon?: string;
+};
 
-const DEFAULT_WHEN_IN_USE_TEXT = 'Allow $(PRODUCT_NAME) to access your location'
-const DEFAULT_ALWAYS_TEXT = 'Allow $(PRODUCT_NAME) to access your location in the background'
-const ICON_NAME = 'expo_location_session_notification_icon'
+const DEFAULT_WHEN_IN_USE_TEXT = 'Allow $(PRODUCT_NAME) to access your location';
+const DEFAULT_ALWAYS_TEXT = 'Allow $(PRODUCT_NAME) to access your location in the background';
+const ICON_NAME = 'expo_location_session_notification_icon';
 
 const withIos: ConfigPlugin<LocationSessionPluginProps> = (config, props) =>
   withInfoPlist(config, (cfg) => {
-    const plist = cfg.modResults
+    const plist = cfg.modResults;
     plist.NSLocationWhenInUseUsageDescription =
-      props.locationWhenInUseText ??
-      plist.NSLocationWhenInUseUsageDescription ??
-      DEFAULT_WHEN_IN_USE_TEXT
+      props.locationWhenInUseText ?? plist.NSLocationWhenInUseUsageDescription ?? DEFAULT_WHEN_IN_USE_TEXT;
     plist.NSLocationAlwaysAndWhenInUseUsageDescription =
-      props.locationAlwaysText ??
-      plist.NSLocationAlwaysAndWhenInUseUsageDescription ??
-      DEFAULT_ALWAYS_TEXT
-    const modes: string[] = Array.isArray(plist.UIBackgroundModes) ? plist.UIBackgroundModes : []
-    if (!modes.includes('location')) plist.UIBackgroundModes = [...modes, 'location']
-    return cfg
-  })
+      props.locationAlwaysText ?? plist.NSLocationAlwaysAndWhenInUseUsageDescription ?? DEFAULT_ALWAYS_TEXT;
+    const modes: string[] = Array.isArray(plist.UIBackgroundModes) ? plist.UIBackgroundModes : [];
+    if (!modes.includes('location')) plist.UIBackgroundModes = [...modes, 'location'];
+    return cfg;
+  });
 
 const withBackgroundPermission: ConfigPlugin = (config) =>
   withAndroidManifest(config, (cfg) => {
-    AndroidConfig.Permissions.ensurePermissions(cfg.modResults, [
-      'android.permission.ACCESS_BACKGROUND_LOCATION',
-    ])
-    return cfg
-  })
+    AndroidConfig.Permissions.ensurePermissions(cfg.modResults, ['android.permission.ACCESS_BACKGROUND_LOCATION']);
+    return cfg;
+  });
 
 const withNotificationIcon: ConfigPlugin<string> = (config, icon) =>
   withDangerousMod(config, [
     'android',
     async (cfg) => {
-      const source = path.resolve(cfg.modRequest.projectRoot, icon)
-      const dir = path.join(cfg.modRequest.platformProjectRoot, 'app/src/main/res/drawable')
-      await fs.promises.mkdir(dir, { recursive: true })
-      await fs.promises.copyFile(source, path.join(dir, `${ICON_NAME}.png`))
-      return cfg
+      const source = path.resolve(cfg.modRequest.projectRoot, icon);
+      const dir = path.join(cfg.modRequest.platformProjectRoot, 'app/src/main/res/drawable');
+      await fs.promises.mkdir(dir, { recursive: true });
+      await fs.promises.copyFile(source, path.join(dir, `${ICON_NAME}.png`));
+      return cfg;
     },
-  ])
+  ]);
 
 const withLocationSession: ConfigPlugin<LocationSessionPluginProps | void> = (config, props) => {
-  const options = props ?? {}
-  config = withIos(config, options)
-  if (options.enableBackgroundLocationPermission ?? true) config = withBackgroundPermission(config)
-  if (options.androidNotificationIcon)
-    config = withNotificationIcon(config, options.androidNotificationIcon)
-  return config
-}
+  const options = props ?? {};
+  config = withIos(config, options);
+  if (options.enableBackgroundLocationPermission ?? true) config = withBackgroundPermission(config);
+  if (options.androidNotificationIcon) config = withNotificationIcon(config, options.androidNotificationIcon);
+  return config;
+};
 
-export default createRunOncePlugin(withLocationSession, pkg.name, pkg.version)
+export default createRunOncePlugin(withLocationSession, pkg.name, pkg.version);

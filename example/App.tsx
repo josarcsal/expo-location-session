@@ -1,16 +1,5 @@
-import { StatusBar } from 'expo-status-bar'
-import { useCallback, useEffect, useState } from 'react'
-import {
-  AppState,
-  Button,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  TextInput,
-  View,
-} from 'react-native'
+import { AppState, Button, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
 import {
   addListener,
   getCurrentPosition,
@@ -23,71 +12,74 @@ import {
   type PermissionLevel,
   type PermissionStatus,
   type SessionState,
-} from 'expo-location-session'
+} from 'expo-location-session';
+import { StatusBar } from 'expo-status-bar';
 
-const DEFAULT_URL = 'https://localhost:8443/u'
-const DEFAULT_HEADERS = '{ "Authorization": "Bearer demo" }'
-const DESTINATION_RADIUS_METERS = 100
-const MAX_LOG_LINES = 100
+const DEFAULT_URL = 'https://localhost:8443/u';
+const DEFAULT_HEADERS = '{ "Authorization": "Bearer demo" }';
+const DESTINATION_RADIUS_METERS = 100;
+const MAX_LOG_LINES = 100;
+const BACKGROUND_COLOR = '#fff';
+const BORDER_COLOR = '#999';
 
-type Destination = { latitude: number; longitude: number; radiusMeters: number }
+type Destination = { latitude: number; longitude: number; radiusMeters: number };
 
 function describe(error: unknown): string {
-  if (error instanceof LocationSessionError) return `${error.code}: ${error.message}`
-  return String(error)
+  if (error instanceof LocationSessionError) return `${error.code}: ${error.message}`;
+  return String(error);
 }
 
 export default function App() {
-  const [permission, setPermission] = useState<PermissionStatus | null>(null)
-  const [session, setSession] = useState<SessionState | null>(null)
-  const [url, setUrl] = useState(DEFAULT_URL)
-  const [headers, setHeaders] = useState(DEFAULT_HEADERS)
-  const [expiryMinutes, setExpiryMinutes] = useState('30')
-  const [destination, setDestination] = useState<Destination | null>(null)
-  const [log, setLog] = useState<string[]>([])
+  const [permission, setPermission] = useState<PermissionStatus | null>(null);
+  const [session, setSession] = useState<SessionState | null>(null);
+  const [url, setUrl] = useState(DEFAULT_URL);
+  const [headers, setHeaders] = useState(DEFAULT_HEADERS);
+  const [expiryMinutes, setExpiryMinutes] = useState('30');
+  const [destination, setDestination] = useState<Destination | null>(null);
+  const [log, setLog] = useState<string[]>([]);
 
   const append = useCallback((line: string) => {
-    console.log(`ELS ${line}`)
-    const time = new Date().toLocaleTimeString()
-    setLog((lines) => [`${time} ${line}`, ...lines].slice(0, MAX_LOG_LINES))
-  }, [])
+    console.log(`ELS ${line}`);
+    const time = new Date().toLocaleTimeString();
+    setLog((lines) => [`${time} ${line}`, ...lines].slice(0, MAX_LOG_LINES));
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
-      setPermission(await getPermissionStatus())
-      setSession(await getState())
+      setPermission(await getPermissionStatus());
+      setSession(await getState());
     } catch (error) {
-      append(`refresh failed ${describe(error)}`)
+      append(`refresh failed ${describe(error)}`);
     }
-  }, [append])
+  }, [append]);
 
   const request = async (level: PermissionLevel) => {
     try {
-      const status = await requestPermission(level)
-      setPermission(status)
-      append(`permission ${JSON.stringify(status)}`)
+      const status = await requestPermission(level);
+      setPermission(status);
+      append(`permission ${JSON.stringify(status)}`);
     } catch (error) {
-      append(`requestPermission rejected ${describe(error)}`)
+      append(`requestPermission rejected ${describe(error)}`);
     }
-  }
+  };
 
   const toggleDestination = async (enabled: boolean) => {
-    if (!enabled) return setDestination(null)
+    if (!enabled) return setDestination(null);
     try {
-      const position = await getCurrentPosition({ accuracy: 'high' })
+      const position = await getCurrentPosition({ accuracy: 'high' });
       setDestination({
         latitude: position.latitude,
         longitude: position.longitude,
         radiusMeters: DESTINATION_RADIUS_METERS,
-      })
-      append(`destination ${position.latitude.toFixed(5)}, ${position.longitude.toFixed(5)}`)
+      });
+      append(`destination ${position.latitude.toFixed(5)}, ${position.longitude.toFixed(5)}`);
     } catch (error) {
-      append(`getCurrentPosition rejected ${describe(error)}`)
+      append(`getCurrentPosition rejected ${describe(error)}`);
     }
-  }
+  };
 
   const startSession = async () => {
-    const id = `demo-${Date.now()}`
+    const id = `demo-${Date.now()}`;
     try {
       await start({
         id,
@@ -107,51 +99,49 @@ export default function App() {
             channelName: 'Location sharing',
           },
         },
-      })
-      append(`started ${id}`)
+      });
+      append(`started ${id}`);
     } catch (error) {
-      append(`start rejected ${describe(error)}`)
+      append(`start rejected ${describe(error)}`);
     }
-    refresh()
-  }
+    refresh();
+  };
 
   const stopSession = async () => {
     try {
-      await stop()
-      append('stop requested')
+      await stop();
+      append('stop requested');
     } catch (error) {
-      append(`stop rejected ${describe(error)}`)
+      append(`stop rejected ${describe(error)}`);
     }
-    refresh()
-  }
+    refresh();
+  };
 
   useEffect(() => {
     const subscriptions = [
       addListener('location', (p) => {
-        append(
-          `location ${p.latitude.toFixed(5)}, ${p.longitude.toFixed(5)} ±${Math.round(p.accuracy)}m`
-        )
-        refresh()
+        append(`location ${p.latitude.toFixed(5)}, ${p.longitude.toFixed(5)} ±${Math.round(p.accuracy)}m`);
+        refresh();
       }),
       addListener('upload', (p) => {
-        append(`upload ${p.ok ? 'ok' : 'failed'} ${p.status ?? '-'}`)
-        refresh()
+        append(`upload ${p.ok ? 'ok' : 'failed'} ${p.status ?? '-'}`);
+        refresh();
       }),
       addListener('stop', (p) => {
-        append(`stop ${p.reason} ${p.sessionId}`)
-        refresh()
+        append(`stop ${p.reason} ${p.sessionId}`);
+        refresh();
       }),
       addListener('error', (p) => append(`error ${p.code}: ${p.message}`)),
-    ]
+    ];
     const appState = AppState.addEventListener('change', (next) => {
-      if (next === 'active') refresh()
-    })
-    refresh()
+      if (next === 'active') refresh();
+    });
+    refresh();
     return () => {
-      subscriptions.forEach((unsubscribe) => unsubscribe())
-      appState.remove()
-    }
-  }, [append, refresh])
+      subscriptions.forEach((unsubscribe) => unsubscribe());
+      appState.remove();
+    };
+  }, [append, refresh]);
 
   return (
     <View style={styles.container}>
@@ -189,16 +179,11 @@ export default function App() {
         <Text style={styles.heading}>Session</Text>
         <View style={styles.row}>
           <Text>Destination at current position</Text>
-          <Switch
-            value={destination != null}
-            onValueChange={toggleDestination}
-            testID="destination"
-          />
+          <Switch value={destination != null} onValueChange={toggleDestination} testID="destination" />
         </View>
         {destination && (
           <Text>
-            {destination.latitude.toFixed(5)}, {destination.longitude.toFixed(5)} ·{' '}
-            {destination.radiusMeters} m
+            {destination.latitude.toFixed(5)}, {destination.longitude.toFixed(5)} · {destination.radiusMeters} m
           </Text>
         )}
         <View style={styles.row}>
@@ -227,13 +212,13 @@ export default function App() {
       </ScrollView>
       <StatusBar style="auto" />
     </View>
-  )
+  );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: BACKGROUND_COLOR,
   },
   content: {
     paddingTop: 64,
@@ -254,7 +239,7 @@ const styles = StyleSheet.create({
   },
   input: {
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#999',
+    borderColor: BORDER_COLOR,
     borderRadius: 6,
     paddingHorizontal: 8,
     paddingVertical: 6,
@@ -267,4 +252,4 @@ const styles = StyleSheet.create({
     fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }),
     fontSize: 12,
   },
-})
+});
