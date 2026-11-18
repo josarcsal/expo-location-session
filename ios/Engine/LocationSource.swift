@@ -36,6 +36,8 @@ func desiredAccuracy(_ accuracy: String) -> CLLocationAccuracy {
 final class LocationSource: NSObject, CLLocationManagerDelegate {
     static let regionPrefix = "els."
     static let destinationRegionId = "els.destination"
+    static let terminateRegionId = "els.terminate"
+    static let terminateRadiusMeters: CLLocationDistance = 200
 
     static var hasBackgroundLocationMode: Bool {
         (Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String])?.contains("location") ?? false
@@ -45,11 +47,13 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
     var onAuthorizationChange: ((CLAuthorizationStatus) -> Void)?
 
     private var manager: CLLocationManager?
+    private var lastStatus: CLAuthorizationStatus?
 
     func start(_ config: SessionConfig) {
         dispatchPrecondition(condition: .onQueue(.main))
         let m = manager ?? CLLocationManager()
         manager = m
+        lastStatus = m.authorizationStatus
         m.delegate = self
         m.allowsBackgroundLocationUpdates = true
         m.pausesLocationUpdatesAutomatically = false
@@ -83,6 +87,42 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
         m.allowsBackgroundLocationUpdates = false
         m.delegate = nil
         manager = nil
+        lastStatus = nil
+    }
+
+    func removeRegions() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let m = manager else { return }
+        removeRegions(m)
+    }
+
+    @discardableResult
+    func armTerminateRegion(at fix: Fix?) -> CLCircularRegion? {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let m = manager, m.authorizationStatus == .authorizedAlways,
+              CLLocationManager.isMonitoringAvailable(for: CLCircularRegion.self) else { return nil }
+        m.startMonitoringSignificantLocationChanges()
+        let center: CLLocationCoordinate2D
+        if let fix {
+            center = CLLocationCoordinate2D(latitude: fix.latitude, longitude: fix.longitude)
+        } else if let location = m.location {
+            center = location.coordinate
+        } else {
+            return nil
+        }
+        let region = CLCircularRegion(
+            center: center,
+            radius: min(Self.terminateRadiusMeters, m.maximumRegionMonitoringDistance),
+            identifier: Self.terminateRegionId
+        )
+        region.notifyOnEntry = false
+        region.notifyOnExit = true
+        m.startMonitoring(for: region)
+        return region
+    }
+
+    var monitoredRegionIds: [String] {
+        (manager ?? CLLocationManager()).monitoredRegions.map(\.identifier).filter { $0.hasPrefix(Self.regionPrefix) }.sorted()
     }
 
     private func removeRegions(_ m: CLLocationManager) {
@@ -100,7 +140,10 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {}
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        onAuthorizationChange?(manager.authorizationStatus)
+        let status = manager.authorizationStatus
+        guard status != lastStatus else { return }
+        lastStatus = status
+        onAuthorizationChange?(status)
     }
 }
 

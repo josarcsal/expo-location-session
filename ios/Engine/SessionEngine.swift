@@ -24,14 +24,16 @@ final class SessionEngine {
     let events = EventBus()
     let store = SessionStore()
     private(set) lazy var permissions = Permissions(store: store)
-    private let source = LocationSource()
-    private lazy var uploader = Uploader(store: store, events: events)
+    let source = LocationSource()
+    private(set) lazy var uploader = Uploader(store: store, events: events)
 
-    private var config: SessionConfig?
+    private(set) var config: SessionConfig?
     private var startedAtMs: Int64 = 0
-    private var lastFix: Fix?
+    private(set) var lastFix: Fix?
     private var stopping = false
     private var expiryTimer: Timer?
+    var protectedDataObserver: NSObjectProtocol?
+    var terminateObserver: NSObjectProtocol?
 
     private init() {
         source.onFixes = { [weak self] in self?.handle($0) }
@@ -69,7 +71,7 @@ final class SessionEngine {
         teardown(c, reason)
     }
 
-    private func teardown(_ c: SessionConfig, _ reason: StopReason) {
+    func teardown(_ c: SessionConfig, _ reason: StopReason) {
         expiryTimer?.invalidate()
         expiryTimer = nil
         source.stop()
@@ -100,30 +102,7 @@ final class SessionEngine {
         )
     }
 
-    func resumeIfNeeded() {
-        dispatchPrecondition(condition: .onQueue(.main))
-        guard config == nil, UIApplication.shared.isProtectedDataAvailable else { return }
-        switch store.load() {
-        case .none, .unavailable:
-            return
-        case .corrupt:
-            Log.info("discarding unreadable persisted session")
-            store.wipe()
-            source.stop()
-        case let .session(c, startedAt):
-            if nowMs() >= c.expiresAtMs {
-                teardown(c, .expired)
-            } else if !permissions.isAuthorized {
-                teardown(c, .permissionRevoked)
-            } else {
-                activate(c, startedAtMs: startedAt, pending: store.pendingFix, lastUploadAtMs: store.lastUploadAtMs)
-                Log.info("resumed session \(c.id)")
-                uploader.pump()
-            }
-        }
-    }
-
-    private func activate(_ c: SessionConfig, startedAtMs: Int64, pending: Fix?, lastUploadAtMs: Int64?) {
+    func activate(_ c: SessionConfig, startedAtMs: Int64, pending: Fix?, lastUploadAtMs: Int64?) {
         config = c
         self.startedAtMs = startedAtMs
         lastFix = pending.flatMap(sanitized)
@@ -131,6 +110,7 @@ final class SessionEngine {
         uploader.onStop = { [weak self] in self?.stop($0) }
         uploader.begin(c, pending: lastFix, lastSuccessMs: lastUploadAtMs)
         source.start(c)
+        observeTermination()
         scheduleExpiry(c)
     }
 
@@ -169,9 +149,18 @@ final class SessionEngine {
     }
 
     private func authorizationChanged(_ status: CLAuthorizationStatus) {
-        guard config != nil else { return }
-        if status == .denied || status == .restricted {
+        guard let c = config else { return }
+        switch status {
+        case .denied, .restricted:
             stop(.permissionRevoked)
+        case .authorizedWhenInUse:
+            source.removeRegions()
+            Log.info("authorization downgraded to whenInUse; session \(c.id) keeps running without relaunch")
+        case .authorizedAlways:
+            source.start(c)
+            Log.info("authorization upgraded to always; session \(c.id) can relaunch")
+        default:
+            break
         }
     }
 

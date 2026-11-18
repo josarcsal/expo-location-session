@@ -39,7 +39,7 @@ final class SessionStore {
         defaults.removeObject(forKey: Key.lastUploadAtMs)
     }
 
-    func load() -> StoredSession {
+    func load(protectedDataAvailable: Bool) -> StoredSession {
         var query = baseQuery()
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -54,9 +54,11 @@ final class SessionStore {
             return .unavailable
         }
         guard let data = item as? Data,
-              let config = try? JSONDecoder().decode(SessionConfig.self, from: data),
-              let startedAt = (defaults.object(forKey: Key.startedAtMs) as? NSNumber)?.int64Value else {
+              let config = try? JSONDecoder().decode(SessionConfig.self, from: data) else {
             return .corrupt
+        }
+        guard let startedAt = (defaults.object(forKey: Key.startedAtMs) as? NSNumber)?.int64Value else {
+            return protectedDataAvailable ? .corrupt : .unavailable
         }
         return .session(config, startedAtMs: startedAt)
     }
