@@ -127,7 +127,11 @@ final class SessionEngine {
     private func handle(_ fixes: [Fix]) {
         dispatchPrecondition(condition: .onQueue(.main))
         for fix in fixes {
-            guard config != nil, !stopping else { return }
+            guard let c = config, !stopping else { return }
+            if nowMs() >= c.expiresAtMs || fix.timestampMs >= c.expiresAtMs {
+                evaluate(fix: nil)
+                return
+            }
             guard acceptFix(fix, startedAtMs: startedAtMs) else { continue }
             uploader.put(fix)
             lastFix = fix
