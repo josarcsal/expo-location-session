@@ -12,7 +12,9 @@
     "clean": "git clean -dfX",
     "release": "semantic-release",
     "build": "npm run typecheck && bob build",
-    "codegen": "nitrogen --logLevel=\"debug\" && npm run build && node post-script.js"
+    "build:plugin": "tsc -p plugin",
+    "codegen": "nitrogen --logLevel=\"debug\" && npm run build && node post-script.js",
+    "prepare": "npm run build:plugin"
   },
   "keywords": [
     "react-native",
@@ -20,7 +22,6 @@
   ],
   "files": [
     "src",
-    "react-native.config.js",
     "lib",
     "nitrogen",
     "cpp",
@@ -36,6 +37,7 @@
     "ios/**/*.cpp",
     "ios/**/*.swift",
     "app.plugin.js",
+    "plugin/build",
     "*.podspec",
     "README.md"
   ],
@@ -53,20 +55,28 @@
     "@semantic-release/changelog": "^6.0.3",
     "@semantic-release/git": "^10.0.1",
     "@types/jest": "^29.5.12",
+    "@types/node": "^26.6.6",
     "@types/react": "~19.3.0",
+    "conventional-changelog-conventionalcommits": "^10.2.1",
+    "expo": "~58.0.26",
     "nitrogen": "0.37.2",
     "react": "19.3.0",
     "react-native": "0.88.1",
     "react-native-builder-bob": "^0.40.18",
     "react-native-nitro-modules": "0.37.2",
-    "conventional-changelog-conventionalcommits": "^10.2.1",
     "semantic-release": "^25.0.7",
     "typescript": "^6.0.3"
   },
   "peerDependencies": {
     "react": "*",
     "react-native": "*",
-    "react-native-nitro-modules": ">=0.37.0"
+    "react-native-nitro-modules": ">=0.37.0",
+    "expo": "*"
+  },
+  "peerDependenciesMeta": {
+    "expo": {
+      "optional": true
+    }
   },
   "eslintConfig": {
     "root": true,

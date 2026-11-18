@@ -5,7 +5,6 @@ import { readFileSync } from 'node:fs'
 const port = Number(process.env.PORT ?? 8443)
 const { TLS_CERT, TLS_KEY } = process.env
 
-const commands = []
 let failNext = 0
 
 const handler = (req, res) => {
@@ -15,22 +14,6 @@ const handler = (req, res) => {
     console.log(`${new Date().toISOString()} next ${failNext} upload(s) -> 503`)
     res.writeHead(202)
     return res.end()
-  }
-  if (url.pathname === '/cmd') {
-    if (req.method === 'GET') {
-      const next = commands.shift()
-      res.writeHead(next ? 200 : 204)
-      return res.end(next ?? '')
-    }
-    let cmd = ''
-    req.on('data', (chunk) => (cmd += chunk))
-    req.on('end', () => {
-      commands.push(cmd.trim())
-      console.log(`${new Date().toISOString()} queued ${cmd.trim()}`)
-      res.writeHead(202)
-      res.end()
-    })
-    return
   }
   const status = failNext > 0 ? (failNext--, 503) : Number(url.searchParams.get('status') ?? 204)
   let body = ''

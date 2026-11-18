@@ -85,13 +85,17 @@ class LocationTrackingService : Service() {
         manager.createNotificationChannel(channel)
     }
 
+    private fun smallIcon(): Int =
+        resources.getIdentifier(ICON_NAME, "drawable", packageName).takeIf { it != 0 }
+            ?: android.R.drawable.ic_menu_mylocation
+
     private fun notification(title: String, text: String?): Notification {
         val launch = packageManager.getLaunchIntentForPackage(packageName)
         val content = launch?.let {
             PendingIntent.getActivity(this, 0, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         }
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setSmallIcon(smallIcon())
             .setContentTitle(title)
             .setContentText(text)
             .setContentIntent(content)
@@ -111,6 +115,7 @@ class LocationTrackingService : Service() {
             private set
         const val CHANNEL_ID = "expo_location_session"
         private const val NOTIFICATION_ID = 0x454c53
+        private const val ICON_NAME = "expo_location_session_notification_icon"
         private const val PLACEHOLDER_CHANNEL_NAME = "Location"
         private const val PLACEHOLDER_TITLE = "Location sharing"
     }
