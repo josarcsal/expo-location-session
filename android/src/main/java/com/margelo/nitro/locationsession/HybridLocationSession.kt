@@ -61,7 +61,7 @@ class HybridLocationSession : HybridLocationSessionSpec() {
     }
 
     override fun requestPermission(level: PermissionLevel): Promise<NativePermissionStatus> = onMain { ctx, promise ->
-        Permissions.request(ctx, NitroModules.applicationContext?.currentActivity, level == PermissionLevel.ALWAYS) {
+        Permissions.request(ctx, { NitroModules.applicationContext?.currentActivity }, level == PermissionLevel.ALWAYS) {
             promise.resolve(nativePermission(it))
         }
     }

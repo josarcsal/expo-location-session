@@ -26,6 +26,7 @@ class LocationTrackingService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        SessionEngine.serviceStartDelivered()
         if (intent == null) {
             ElsLog.info("service restarted by the system")
             SessionEngine.resumeIfNeeded(this)
@@ -33,6 +34,9 @@ class LocationTrackingService : Service() {
         val c = SessionEngine.activeConfig
         if (c == null || !promoted) {
             if (c == null) ElsLog.info("service has no active session; stopping")
+            if (promoted && promote(notification(PLACEHOLDER_TITLE, null))) {
+                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            }
             stopSelf()
             return START_NOT_STICKY
         }

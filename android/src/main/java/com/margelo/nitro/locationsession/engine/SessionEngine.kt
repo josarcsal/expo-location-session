@@ -50,6 +50,7 @@ object SessionEngine {
     private var lastFix: Fix? = null
     private var stopping = false
     private var expiryRunnable: Runnable? = null
+    private var serviceStartPending = false
 
     val activeConfig: SessionConfig? get() = config
 
@@ -91,7 +92,12 @@ object SessionEngine {
             store.wipe()
             throw LocationSessionException("INTERNAL", "Could not persist the session")
         }
-        activate(context, c, now, null, null)
+        try {
+            activate(context, c, now, null, null)
+        } catch (e: Exception) {
+            teardown(context, c, null)
+            throw LocationSessionException("INTERNAL", "Could not start the session: $e")
+        }
         ElsLog.info("started session ${c.id}")
     }
 
@@ -202,7 +208,7 @@ object SessionEngine {
         scheduleExpiry(ctx, c)
     }
 
-    private fun teardown(ctx: Context, c: SessionConfig, reason: StopReason) {
+    private fun teardown(ctx: Context, c: SessionConfig, reason: StopReason?) {
         expiryRunnable?.let { main.removeCallbacks(it) }
         expiryRunnable = null
         cancelAlarm(ctx)
@@ -210,10 +216,14 @@ object SessionEngine {
         stopService(ctx)
         uploader.reset()
         store.wipe()
-        store.lastStop = LastStop(reason, nowMs(), c.id)
         config = null
         lastFix = null
         stopping = false
+        if (reason == null) {
+            ElsLog.info("discarded session ${c.id} after a failed start")
+            return
+        }
+        store.lastStop = LastStop(reason, nowMs(), c.id)
         ElsLog.info("stopped session ${c.id} reason=${reason.wire}")
         events.emit("stop", JSONObject().put("reason", reason.wire).put("sessionId", c.id))
     }
@@ -294,15 +304,29 @@ object SessionEngine {
     }
 
     private fun startService(ctx: Context) {
+        if (!Permissions.hasForeground(ctx) || !(Permissions.hasBackground(ctx) || isAppInForeground(ctx))) {
+            ElsLog.info("skipping foreground service start: location FGS would not be allowed")
+            return
+        }
         try {
             ContextCompat.startForegroundService(ctx, Intent(ctx, LocationTrackingService::class.java))
+            serviceStartPending = true
         } catch (e: Exception) {
             ElsLog.info("foreground service start denied: $e")
         }
     }
 
     private fun stopService(ctx: Context) {
+        if (serviceStartPending) {
+            ElsLog.info("service start pending; it stops itself after promoting")
+            return
+        }
         ctx.stopService(Intent(ctx, LocationTrackingService::class.java))
+    }
+
+    fun serviceStartDelivered() {
+        assertMain()
+        serviceStartPending = false
     }
 
     private fun isAppInForeground(ctx: Context): Boolean {

@@ -2,9 +2,11 @@ package com.margelo.nitro.locationsession.engine
 
 import android.Manifest
 import android.app.Activity
+import android.app.Application
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Bundle
 import androidx.core.content.ContextCompat
 import com.facebook.react.modules.core.PermissionAwareActivity
 import com.facebook.react.modules.core.PermissionListener
@@ -19,8 +21,14 @@ object Permissions {
     private const val REQUESTED_NOTIFICATIONS = "requestedNotifications"
     private const val REQUEST_CODE = 0x454c
 
-    private val queue = ArrayDeque<Pair<Boolean, (PermissionSnapshot) -> Unit>>()
-    private var requesting = false
+    private class Pending(val always: Boolean, val completion: (PermissionSnapshot) -> Unit)
+
+    private val queue = ArrayDeque<Pending>()
+    private var inFlight: Pending? = null
+    private var requestActivity: Activity? = null
+    private var requestToken = 0
+    private var currentActivity: () -> Activity? = { null }
+    private var observing = false
 
     private fun granted(ctx: Context, permission: String): Boolean =
         ContextCompat.checkSelfPermission(ctx, permission) == PackageManager.PERMISSION_GRANTED
@@ -74,21 +82,54 @@ object Permissions {
         )
     }
 
-    fun request(ctx: Context, activity: Activity?, always: Boolean, completion: (PermissionSnapshot) -> Unit) {
+    fun request(ctx: Context, activity: () -> Activity?, always: Boolean, completion: (PermissionSnapshot) -> Unit) {
         assertMain()
-        queue.addLast(always to completion)
-        runNext(ctx, activity)
+        currentActivity = activity
+        observe(ctx)
+        queue.addLast(Pending(always, completion))
+        runNext(ctx)
     }
 
-    private fun runNext(ctx: Context, activity: Activity?) {
-        if (requesting) return
+    private fun runNext(ctx: Context) {
+        if (inFlight != null) return
         val next = queue.removeFirstOrNull() ?: return
-        requesting = true
-        perform(ctx, activity, next.first) { snapshot ->
-            next.second(snapshot)
-            requesting = false
-            runNext(ctx, activity)
+        val activity = currentActivity()
+        inFlight = next
+        requestActivity = activity
+        val token = ++requestToken
+        perform(ctx, activity, next.always) { snapshot ->
+            if (token != requestToken || inFlight !== next) return@perform
+            inFlight = null
+            requestActivity = null
+            next.completion(snapshot)
+            runNext(ctx)
         }
+    }
+
+    private fun observe(ctx: Context) {
+        if (observing) return
+        val app = ctx.applicationContext as? Application ?: return
+        observing = true
+        app.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
+            override fun onActivityDestroyed(activity: Activity) {
+                val current = inFlight ?: return
+                if (requestActivity !== activity) return
+                ElsLog.info("activity destroyed during a permission request; resolving pending requests")
+                inFlight = null
+                requestActivity = null
+                requestToken++
+                val snapshot = status(ctx, null)
+                val pending = listOf(current) + queue
+                queue.clear()
+                pending.forEach { it.completion(snapshot) }
+            }
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
+            override fun onActivityStarted(activity: Activity) {}
+            override fun onActivityResumed(activity: Activity) {}
+            override fun onActivityPaused(activity: Activity) {}
+            override fun onActivityStopped(activity: Activity) {}
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
+        })
     }
 
     private fun perform(ctx: Context, activity: Activity?, always: Boolean, completion: (PermissionSnapshot) -> Unit) {
@@ -107,23 +148,33 @@ object Permissions {
                 !hasBackground(ctx) &&
                 declares(ctx, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
             if (wantsBackground) {
-                store.setFlag(REQUESTED_BACKGROUND)
-                ask(aware, arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION)) { finish() }
+                ask(aware, arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION)) {
+                    store.setFlag(REQUESTED_BACKGROUND)
+                    finish()
+                }
             } else {
                 finish()
             }
         }
         val first = mutableListOf<String>()
+        val flags = mutableListOf<String>()
         if (!hasForeground(ctx)) {
             first += Manifest.permission.ACCESS_FINE_LOCATION
             first += Manifest.permission.ACCESS_COARSE_LOCATION
-            store.setFlag(REQUESTED_FOREGROUND)
+            flags += REQUESTED_FOREGROUND
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !notificationsGranted(ctx)) {
             first += Manifest.permission.POST_NOTIFICATIONS
-            store.setFlag(REQUESTED_NOTIFICATIONS)
+            flags += REQUESTED_NOTIFICATIONS
         }
-        if (first.isEmpty()) askBackground() else ask(aware, first.toTypedArray()) { askBackground() }
+        if (first.isEmpty()) {
+            askBackground()
+        } else {
+            ask(aware, first.toTypedArray()) {
+                flags.forEach(store::setFlag)
+                askBackground()
+            }
+        }
     }
 
     private fun ask(activity: PermissionAwareActivity, permissions: Array<String>, done: () -> Unit) {

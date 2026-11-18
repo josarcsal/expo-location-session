@@ -20,6 +20,8 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 
 class Uploader(context: Context, private val store: SessionStore, private val events: EventBus) {
     var onStop: ((StopReason) -> Unit)? = null
@@ -27,6 +29,7 @@ class Uploader(context: Context, private val store: SessionStore, private val ev
     private val appContext = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
     private val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "expo-location-session.upload") }
+    private val watchdog = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "expo-location-session.upload-watchdog") }
 
     private var config: SessionConfig? = null
     private var slot = PendingSlot()
@@ -37,7 +40,7 @@ class Uploader(context: Context, private val store: SessionStore, private val ev
     private var inFlight = false
     @Volatile private var connection: HttpURLConnection? = null
     private var timer: Runnable? = null
-    private var epoch = 0
+    @Volatile private var epoch = 0
     private var flushCompletion: (() -> Unit)? = null
     private var flushTarget = 0
     private val settledWaiters = mutableListOf<() -> Unit>()
@@ -56,7 +59,7 @@ class Uploader(context: Context, private val store: SessionStore, private val ev
         assertMain()
         epoch += 1
         inFlight = false
-        connection?.let { conn -> Thread { runCatching { conn.disconnect() } }.start() }
+        connection?.let { conn -> watchdog.execute { runCatching { conn.disconnect() } } }
         connection = null
         cancelTimer()
         config = null
@@ -173,16 +176,20 @@ class Uploader(context: Context, private val store: SessionStore, private val ev
         val sentEpoch = epoch
         inFlight = true
         executor.execute {
-            val status = post(c, body)
+            val status = post(c, body, sentEpoch)
             main.post { finish(sentGeneration, status, sentEpoch) }
         }
     }
 
-    private fun post(c: SessionConfig, body: String): Int? {
+    private fun post(c: SessionConfig, body: String, sentEpoch: Int): Int? {
+        if (sentEpoch != epoch) return null
         var conn: HttpURLConnection? = null
+        var deadline: ScheduledFuture<*>? = null
         return try {
             conn = URL(c.uploadUrl).openConnection() as HttpURLConnection
             connection = conn
+            val watched = conn
+            deadline = watchdog.schedule({ runCatching { watched.disconnect() } }, TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
             conn.requestMethod = "POST"
             conn.connectTimeout = TIMEOUT_MS
             conn.readTimeout = TIMEOUT_MS
@@ -192,6 +199,7 @@ class Uploader(context: Context, private val store: SessionStore, private val ev
             c.uploadHeaders.forEach { (name, value) -> conn.setRequestProperty(name, value) }
             val bytes = body.toByteArray(Charsets.UTF_8)
             conn.setFixedLengthStreamingMode(bytes.size)
+            if (sentEpoch != epoch) return null
             conn.outputStream.use { it.write(bytes) }
             val status = conn.responseCode
             runCatching { (if (status >= 400) conn.errorStream else conn.inputStream)?.use { it.readBytes() } }
@@ -200,6 +208,7 @@ class Uploader(context: Context, private val store: SessionStore, private val ev
             ElsLog.info("upload failed: ${e.javaClass.simpleName}")
             null
         } finally {
+            deadline?.cancel(false)
             conn?.disconnect()
             if (connection === conn) connection = null
         }
