@@ -148,10 +148,16 @@ export function addListener<E extends keyof LocationSessionEventMap>(
   event: E,
   callback: (payload: LocationSessionEventMap[E]) => void,
 ): () => void {
-  const session = getNative();
-  const id = session.addListener(event, (payloadJson) => {
-    callback(JSON.parse(payloadJson) as LocationSessionEventMap[E]);
-  });
+  let session: LocationSessionSpec;
+  let id: number;
+  try {
+    session = getNative();
+    id = session.addListener(event, (payloadJson) => {
+      callback(JSON.parse(payloadJson) as LocationSessionEventMap[E]);
+    });
+  } catch (error) {
+    throw toLocationSessionError(error);
+  }
   let removed = false;
   return () => {
     if (removed) return;
