@@ -153,8 +153,8 @@ export default function App() {
             : '…'}
         </Text>
         <View style={styles.row}>
-          <Button title="When in use" onPress={() => request('whenInUse')} />
-          <Button title="Always" onPress={() => request('always')} />
+          <Button title="When in use" onPress={() => request('whenInUse')} testID="permission-when-in-use" />
+          <Button title="Always" onPress={() => request('always')} testID="permission-always" />
         </View>
 
         <Text style={styles.heading}>Upload</Text>
@@ -174,6 +174,7 @@ export default function App() {
           autoCapitalize="none"
           autoCorrect={false}
           placeholder="Headers (JSON)"
+          testID="headers"
         />
 
         <Text style={styles.heading}>Session</Text>
@@ -193,15 +194,16 @@ export default function App() {
             value={expiryMinutes}
             onChangeText={setExpiryMinutes}
             keyboardType="number-pad"
+            testID="expiry-minutes"
           />
         </View>
         <View style={styles.row}>
-          <Button title="Start" onPress={startSession} />
-          <Button title="Stop" onPress={stopSession} />
+          <Button title="Start" onPress={startSession} testID="start" />
+          <Button title="Stop" onPress={stopSession} testID="stop" />
         </View>
 
         <Text style={styles.heading}>State</Text>
-        <Text>{session ? JSON.stringify(session, null, 2) : '…'}</Text>
+        <Text testID="state">{session ? JSON.stringify(session, null, 2) : '…'}</Text>
 
         <Text style={styles.heading}>Events</Text>
         {log.map((line, index) => (
