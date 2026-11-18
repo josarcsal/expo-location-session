@@ -11,6 +11,7 @@ import androidx.annotation.Keep
 import com.facebook.jni.HybridData
 import com.facebook.proguard.annotations.DoNotStrip
 import dalvik.annotation.optimization.FastNative
+import com.margelo.nitro.core.Promise
 import com.margelo.nitro.core.HybridObject
 
 /**
@@ -31,7 +32,40 @@ abstract class HybridLocationSessionSpec: HybridObject() {
   // Methods
   @DoNotStrip
   @Keep
-  abstract fun sum(num1: Double, num2: Double): Double
+  abstract fun getPermissionStatus(): Promise<NativePermissionStatus>
+  
+  @DoNotStrip
+  @Keep
+  abstract fun requestPermission(level: PermissionLevel): Promise<NativePermissionStatus>
+  
+  @DoNotStrip
+  @Keep
+  abstract fun getCurrentPosition(accuracy: Accuracy, timeoutMs: Double, maxAgeMs: Double): Promise<NativeLocation>
+  
+  @DoNotStrip
+  @Keep
+  abstract fun start(config: NativeSessionConfig): Promise<Unit>
+  
+  @DoNotStrip
+  @Keep
+  abstract fun stop(): Promise<Unit>
+  
+  @DoNotStrip
+  @Keep
+  abstract fun getState(): Promise<NativeSessionState>
+  
+  abstract fun addListener(event: SessionEvent, callback: (payloadJson: String) -> Unit): Double
+  
+  @DoNotStrip
+  @Keep
+  private fun addListener_cxx(event: SessionEvent, callback: Func_void_std__string): Double {
+    val __result = addListener(event, callback)
+    return __result
+  }
+  
+  @DoNotStrip
+  @Keep
+  abstract fun removeListener(id: Double): Unit
 
   // Default implementation of `HybridObject.toString()`
   override fun toString(): String {

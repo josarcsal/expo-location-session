@@ -54,7 +54,14 @@ namespace margelo::nitro::locationsession {
 
   public:
     // Methods
-    double sum(double num1, double num2) override;
+    std::shared_ptr<Promise<NativePermissionStatus>> getPermissionStatus() override;
+    std::shared_ptr<Promise<NativePermissionStatus>> requestPermission(PermissionLevel level) override;
+    std::shared_ptr<Promise<NativeLocation>> getCurrentPosition(Accuracy accuracy, double timeoutMs, double maxAgeMs) override;
+    std::shared_ptr<Promise<void>> start(const NativeSessionConfig& config) override;
+    std::shared_ptr<Promise<void>> stop() override;
+    std::shared_ptr<Promise<NativeSessionState>> getState() override;
+    double addListener(SessionEvent event, const std::function<void(const std::string& /* payloadJson */)>& callback) override;
+    void removeListener(double id) override;
 
   private:
     jni::global_ref<JHybridLocationSessionSpec::JavaPart> _javaPart;

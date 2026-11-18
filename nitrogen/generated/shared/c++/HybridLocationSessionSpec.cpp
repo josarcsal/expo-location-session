@@ -14,7 +14,14 @@ namespace margelo::nitro::locationsession {
     HybridObject::loadHybridMethods();
     // load custom methods/properties
     registerHybrids(this, [](Prototype& prototype) {
-      prototype.registerHybridMethod("sum", &HybridLocationSessionSpec::sum);
+      prototype.registerHybridMethod("getPermissionStatus", &HybridLocationSessionSpec::getPermissionStatus);
+      prototype.registerHybridMethod("requestPermission", &HybridLocationSessionSpec::requestPermission);
+      prototype.registerHybridMethod("getCurrentPosition", &HybridLocationSessionSpec::getCurrentPosition);
+      prototype.registerHybridMethod("start", &HybridLocationSessionSpec::start);
+      prototype.registerHybridMethod("stop", &HybridLocationSessionSpec::stop);
+      prototype.registerHybridMethod("getState", &HybridLocationSessionSpec::getState);
+      prototype.registerHybridMethod("addListener", &HybridLocationSessionSpec::addListener);
+      prototype.registerHybridMethod("removeListener", &HybridLocationSessionSpec::removeListener);
     });
   }
 

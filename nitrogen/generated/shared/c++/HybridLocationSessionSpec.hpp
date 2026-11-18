@@ -13,9 +13,31 @@
 #error NitroModules cannot be found! Are you sure you installed NitroModules properly?
 #endif
 
+// Forward declaration of `NativePermissionStatus` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativePermissionStatus; }
+// Forward declaration of `PermissionLevel` to properly resolve imports.
+namespace margelo::nitro::locationsession { enum class PermissionLevel; }
+// Forward declaration of `NativeLocation` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeLocation; }
+// Forward declaration of `Accuracy` to properly resolve imports.
+namespace margelo::nitro::locationsession { enum class Accuracy; }
+// Forward declaration of `NativeSessionConfig` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeSessionConfig; }
+// Forward declaration of `NativeSessionState` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeSessionState; }
+// Forward declaration of `SessionEvent` to properly resolve imports.
+namespace margelo::nitro::locationsession { enum class SessionEvent; }
 
-
-
+#include "NativePermissionStatus.hpp"
+#include <NitroModules/Promise.hpp>
+#include "PermissionLevel.hpp"
+#include "NativeLocation.hpp"
+#include "Accuracy.hpp"
+#include "NativeSessionConfig.hpp"
+#include "NativeSessionState.hpp"
+#include "SessionEvent.hpp"
+#include <string>
+#include <functional>
 
 namespace margelo::nitro::locationsession {
 
@@ -48,7 +70,14 @@ namespace margelo::nitro::locationsession {
 
     public:
       // Methods
-      virtual double sum(double num1, double num2) = 0;
+      virtual std::shared_ptr<Promise<NativePermissionStatus>> getPermissionStatus() = 0;
+      virtual std::shared_ptr<Promise<NativePermissionStatus>> requestPermission(PermissionLevel level) = 0;
+      virtual std::shared_ptr<Promise<NativeLocation>> getCurrentPosition(Accuracy accuracy, double timeoutMs, double maxAgeMs) = 0;
+      virtual std::shared_ptr<Promise<void>> start(const NativeSessionConfig& config) = 0;
+      virtual std::shared_ptr<Promise<void>> stop() = 0;
+      virtual std::shared_ptr<Promise<NativeSessionState>> getState() = 0;
+      virtual double addListener(SessionEvent event, const std::function<void(const std::string& /* payloadJson */)>& callback) = 0;
+      virtual void removeListener(double id) = 0;
 
     protected:
       // Hybrid Setup

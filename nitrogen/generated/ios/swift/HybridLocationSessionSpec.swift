@@ -13,7 +13,14 @@ public protocol HybridLocationSessionSpec_protocol: HybridObject {
   
 
   // Methods
-  func sum(num1: Double, num2: Double) throws -> Double
+  func getPermissionStatus() throws -> Promise<NativePermissionStatus>
+  func requestPermission(level: PermissionLevel) throws -> Promise<NativePermissionStatus>
+  func getCurrentPosition(accuracy: Accuracy, timeoutMs: Double, maxAgeMs: Double) throws -> Promise<NativeLocation>
+  func start(config: NativeSessionConfig) throws -> Promise<Void>
+  func stop() throws -> Promise<Void>
+  func getState() throws -> Promise<NativeSessionState>
+  func addListener(event: SessionEvent, callback: @escaping (_ payloadJson: String) -> Void) throws -> Double
+  func removeListener(id: Double) throws -> Void
 }
 
 public extension HybridLocationSessionSpec_protocol {
