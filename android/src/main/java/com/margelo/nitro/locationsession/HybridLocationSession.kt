@@ -3,6 +3,8 @@ package com.margelo.nitro.locationsession
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import androidx.annotation.Keep
+import com.facebook.proguard.annotations.DoNotStrip
 import com.margelo.nitro.NitroModules
 import com.margelo.nitro.core.Promise
 import com.margelo.nitro.locationsession.core.Destination
@@ -20,6 +22,8 @@ import java.util.Collections
 import kotlin.math.abs
 import kotlin.math.roundToLong
 
+@DoNotStrip
+@Keep
 class HybridLocationSession : HybridLocationSessionSpec() {
     private val main = Handler(Looper.getMainLooper())
     private val listenerIds: MutableSet<Double> = Collections.synchronizedSet(HashSet())
