@@ -1,6 +1,5 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
-#import "LocationSession-Swift.h"
 
 @interface ELSBootstrapLoader : NSObject
 @end
@@ -12,8 +11,14 @@
                                                     object:nil
                                                      queue:nil
                                                 usingBlock:^(NSNotification *note) {
-    BOOL locationLaunch = note.userInfo[UIApplicationLaunchOptionsLocationKey] != nil;
-    [ELSBootstrap didFinishLaunching:locationLaunch];
+    Class bridge = NSClassFromString(@"ELSBootstrap");
+    SEL selector = NSSelectorFromString(@"didFinishLaunching:");
+    if (![bridge respondsToSelector:selector]) {
+      NSLog(@"[expo-location-session] ELSBootstrap bridge not found");
+      return;
+    }
+    NSNumber *locationLaunch = @(note.userInfo[UIApplicationLaunchOptionsLocationKey] != nil);
+    ((void (*)(id, SEL, NSNumber *))[bridge methodForSelector:selector])(bridge, selector, locationLaunch);
   }];
 }
 

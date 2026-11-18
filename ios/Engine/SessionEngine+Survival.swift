@@ -3,9 +3,10 @@ import Foundation
 import UIKit
 
 @objc(ELSBootstrap)
-public final class ELSBootstrap: NSObject {
+final class ELSBootstrap: NSObject {
     @objc(didFinishLaunching:)
-    public static func didFinishLaunching(locationLaunch: Bool) {
+    static func didFinishLaunching(_ location: NSNumber?) {
+        let locationLaunch = location?.boolValue ?? false
         let run = {
             Log.info("bootstrap launch location=\(locationLaunch) appState=\(UIApplication.shared.applicationState.rawValue)")
             SessionEngine.shared.resumeIfNeeded()
@@ -24,9 +25,9 @@ extension SessionEngine {
         guard config == nil else { return }
         let protectedData = UIApplication.shared.isProtectedDataAvailable
         switch store.load(protectedDataAvailable: protectedData) {
-        case .none:
+        case .none where protectedData:
             stopWaitingForProtectedData()
-        case .unavailable:
+        case .none, .unavailable:
             Log.info("persisted session not readable yet protectedData=\(protectedData); waiting")
             waitForProtectedData()
         case .corrupt:
@@ -50,22 +51,24 @@ extension SessionEngine {
     }
 
     private func waitForProtectedData() {
-        guard protectedDataObserver == nil else { return }
-        protectedDataObserver = NotificationCenter.default.addObserver(
-            forName: UIApplication.protectedDataDidBecomeAvailableNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Log.info("protected data available")
-            self?.stopWaitingForProtectedData()
-            self?.resumeIfNeeded()
+        guard protectedDataObservers.isEmpty else { return }
+        let center = NotificationCenter.default
+        protectedDataObservers = [
+            UIApplication.protectedDataDidBecomeAvailableNotification,
+            UIApplication.didBecomeActiveNotification,
+        ].map { name in
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Log.info("retrying resume after \(name.rawValue)")
+                self?.stopWaitingForProtectedData()
+                self?.resumeIfNeeded()
+            }
         }
+        Log.info("waiting for protectedDataDidBecomeAvailable or didBecomeActive")
     }
 
     private func stopWaitingForProtectedData() {
-        guard let observer = protectedDataObserver else { return }
-        NotificationCenter.default.removeObserver(observer)
-        protectedDataObserver = nil
+        protectedDataObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        protectedDataObservers.removeAll()
     }
 
     func observeTermination() {

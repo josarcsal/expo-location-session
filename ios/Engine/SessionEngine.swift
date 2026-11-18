@@ -32,7 +32,7 @@ final class SessionEngine {
     private(set) var lastFix: Fix?
     private var stopping = false
     private var expiryTimer: Timer?
-    var protectedDataObserver: NSObjectProtocol?
+    var protectedDataObservers: [NSObjectProtocol] = []
     var terminateObserver: NSObjectProtocol?
 
     private init() {
