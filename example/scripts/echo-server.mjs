@@ -15,6 +15,7 @@ const handler = (req, res) => {
     res.writeHead(202);
     return res.end();
   }
+  if (url.pathname === '/logs') return logs(req, res, url);
   const status = failNext > 0 ? (failNext--, 503) : Number(url.searchParams.get('status') ?? 204);
   let body = '';
   req.on('data', (chunk) => (body += chunk));
@@ -22,6 +23,29 @@ const handler = (req, res) => {
     console.log(`${new Date().toISOString()} ${req.method} ${url.pathname}${url.search} -> ${status} ${body}`);
     res.writeHead(status);
     res.end();
+  });
+};
+
+const logs = (req, res, url) => {
+  const status = Number(url.searchParams.get('status') ?? 204);
+  const delayMs = Number(url.searchParams.get('delayMs') ?? 0);
+  let body = '';
+  req.on('data', (chunk) => (body += chunk));
+  req.on('end', () => {
+    let summary;
+    try {
+      const { install, lines } = JSON.parse(body);
+      const seqs = lines.map((line) => line.seq);
+      summary = `install=${install?.id} lines=${lines.length} seq=${Math.min(...seqs)}..${Math.max(...seqs)} auth=${req.headers.authorization ?? '-'}`;
+      if (process.env.LOG_LINES) lines.forEach((line) => console.log(`  ${JSON.stringify(line)}`));
+    } catch {
+      summary = `unparseable body (${body.length} bytes)`;
+    }
+    console.log(`${new Date().toISOString()} POST /logs${url.search} -> ${status} after ${delayMs}ms ${summary}`);
+    setTimeout(() => {
+      res.writeHead(status);
+      res.end();
+    }, delayMs);
   });
 };
 

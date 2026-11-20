@@ -2,7 +2,10 @@ import { AppState, Button, Platform, ScrollView, StyleSheet, Switch, Text, TextI
 import { useCallback, useEffect, useState } from 'react';
 import {
   addListener,
+  configureDebug,
+  flushDebugLog,
   getCurrentPosition,
+  getDebugLog,
   getPermissionStatus,
   getState,
   LocationSessionError,
@@ -17,6 +20,9 @@ import { StatusBar } from 'expo-status-bar';
 
 const DEFAULT_URL = 'https://localhost:8443/u';
 const DEFAULT_HEADERS = '{ "Authorization": "Bearer demo" }';
+const DEFAULT_DEBUG_URL = 'https://localhost:8443/logs';
+const DEBUG_FLUSH_INTERVAL_MS = 10_000;
+const DEBUG_MAX_FILE_BYTES = 100_000;
 const DESTINATION_RADIUS_METERS = 100;
 const MAX_LOG_LINES = 100;
 const BACKGROUND_COLOR = '#fff';
@@ -37,6 +43,9 @@ export default function App() {
   const [expiryMinutes, setExpiryMinutes] = useState('30');
   const [destination, setDestination] = useState<Destination | null>(null);
   const [log, setLog] = useState<string[]>([]);
+  const [debugUrl, setDebugUrl] = useState(DEFAULT_DEBUG_URL);
+  const [debugEnabled, setDebugEnabled] = useState(false);
+  const [debugEvents, setDebugEvents] = useState(0);
 
   const append = useCallback((line: string) => {
     console.log(`ELS ${line}`);
@@ -75,6 +84,32 @@ export default function App() {
       append(`destination ${position.latitude.toFixed(5)}, ${position.longitude.toFixed(5)}`);
     } catch (error) {
       append(`getCurrentPosition rejected ${describe(error)}`);
+    }
+  };
+
+  const toggleDebug = async (enabled: boolean) => {
+    try {
+      await configureDebug({
+        enabled,
+        url: debugUrl || undefined,
+        headers: JSON.parse(headers || '{}'),
+        flushIntervalMs: DEBUG_FLUSH_INTERVAL_MS,
+        maxFileBytes: DEBUG_MAX_FILE_BYTES,
+      });
+      setDebugEnabled(enabled);
+      append(`debug ${enabled ? 'on' : 'off'}`);
+    } catch (error) {
+      append(`configureDebug rejected ${describe(error)}`);
+    }
+  };
+
+  const flushDebug = async () => {
+    try {
+      const { sent } = await flushDebugLog();
+      const lines = await getDebugLog();
+      append(`debug flush sent ${sent}, ${lines.length} lines, last seq ${lines.at(-1)?.seq ?? '-'}`);
+    } catch (error) {
+      append(`flushDebugLog rejected ${describe(error)}`);
     }
   };
 
@@ -132,6 +167,7 @@ export default function App() {
         refresh();
       }),
       addListener('error', (p) => append(`error ${p.code}: ${p.message}`)),
+      addListener('log', () => setDebugEvents((n) => n + 1)),
     ];
     const appState = AppState.addEventListener('change', (next) => {
       if (next === 'active') refresh();
@@ -200,6 +236,22 @@ export default function App() {
         <View style={styles.row}>
           <Button title="Start" onPress={startSession} testID="start" />
           <Button title="Stop" onPress={stopSession} testID="stop" />
+        </View>
+
+        <Text style={styles.heading}>Debug log ({debugEvents} events)</Text>
+        <TextInput
+          style={styles.input}
+          value={debugUrl}
+          onChangeText={setDebugUrl}
+          autoCapitalize="none"
+          autoCorrect={false}
+          placeholder="Debug URL"
+          selectTextOnFocus
+          testID="debug-url"
+        />
+        <View style={styles.row}>
+          <Switch value={debugEnabled} onValueChange={toggleDebug} testID="debug-toggle" />
+          <Button title="Flush" onPress={flushDebug} testID="debug-flush" />
         </View>
 
         <Text style={styles.heading}>State</Text>
