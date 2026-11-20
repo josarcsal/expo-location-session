@@ -12,6 +12,9 @@ final class DebugLogger {
     private let keychainService = "expo-location-session"
     private let keychainAccount = "debugHeaders"
     private let maxPendingLines = 1000
+    private let maxEarlyLines = 200
+    private let checkpointEvery: Int64 = 256
+    private let chunkBytes = 256 * 1024
 
     private enum Key {
         static let options = "debugOptions"
@@ -25,6 +28,16 @@ final class DebugLogger {
         var firstSeq: Int64?
         var lastSeq: Int64?
         var size: Int64 = 0
+        var checkpoints: [(seq: Int64, offset: UInt64)] = []
+    }
+
+    private struct EarlyLine {
+        var level: String
+        var tag: String
+        var msg: String
+        var data: [String: Any]?
+        var sessionId: String?
+        var t: Int64
     }
 
     private struct StoredOptions: Codable {
@@ -43,6 +56,10 @@ final class DebugLogger {
     private var handle: FileHandle?
     private var pending: [(seq: Int64, line: String)] = []
     private var droppedPending = 0
+    private var early: [EarlyLine] = []
+    private var droppedEarly = 0
+    private var protectedData: Bool?
+    private var protectedObserver: NSObjectProtocol?
     private var timer: DispatchSourceTimer?
     private var observers: [NSObjectProtocol] = []
     private weak var events: EventBus?
@@ -74,12 +91,23 @@ final class DebugLogger {
         let t = nowMs()
         queue.async {
             self.loadIfNeeded()
-            guard self.active else { return }
-            self.append(level, tag, msg, data: data, sessionId: sessionId, t: t)
+            if self.active {
+                self.append(level, tag, msg, data: data, sessionId: sessionId, t: t)
+            } else if self.options == nil, self.protectedData != true {
+                if self.early.count < self.maxEarlyLines {
+                    self.early.append(EarlyLine(level: level, tag: tag, msg: msg, data: data, sessionId: sessionId, t: t))
+                } else {
+                    self.droppedEarly += 1
+                }
+            }
         }
     }
 
     func processStarted(launchKeys: [String], locationLaunch: Bool, appState: Int, protectedData: Bool) {
+        queue.async {
+            self.protectedData = protectedData
+            if !protectedData { self.retryWhenProtectedDataAvailable() }
+        }
         log("info", "lifecycle", "process start", data: [
             "pid": pid,
             "libVersion": DebugLogger.libVersion,
@@ -99,16 +127,16 @@ final class DebugLogger {
             let newest = active ? current : (defaults.integer(forKey: Key.fileIndex) == 1 ? 1 : 0)
             var lines: [String] = []
             for index in [1 - newest, newest] {
-                guard let data = try? Data(contentsOf: fileURL(index)) else { continue }
-                lines.append(contentsOf: splitLines(data))
+                forEachLine(fileURL(index), from: 0) { line, seq, _ in
+                    guard seq != nil else { return true }
+                    lines.append(String(decoding: line, as: UTF8.self))
+                    if limit > 0, lines.count >= 2 * limit { lines.removeFirst(lines.count - limit) }
+                    return true
+                }
             }
             lines.append(contentsOf: pending.map(\.line))
-            var valid: [String] = []
-            for line in lines.reversed() {
-                if limit > 0, valid.count >= limit { break }
-                if lineSeq(line) != nil { valid.append(line) }
-            }
-            return "[" + valid.reversed().joined(separator: ",") + "]"
+            if limit > 0, lines.count > limit { lines.removeFirst(lines.count - limit) }
+            return "[" + lines.joined(separator: ",") + "]"
         }
     }
 
@@ -155,20 +183,65 @@ final class DebugLogger {
     }
 
     private func loadIfNeeded() {
-        guard options == nil, let data = defaults.data(forKey: Key.options),
-              let stored = try? JSONDecoder().decode(StoredOptions.self, from: data) else { return }
+        guard options == nil else { return }
+        guard let data = defaults.data(forKey: Key.options),
+              let stored = try? JSONDecoder().decode(StoredOptions.self, from: data) else {
+            if protectedData == true { dropEarly() }
+            return
+        }
         options = DebugOptions(enabled: stored.enabled, url: stored.url, headers: [:], flushIntervalMs: stored.flushIntervalMs, maxFileBytes: stored.maxFileBytes)
-        if stored.enabled { activate() }
+        if stored.enabled {
+            activate()
+            replayEarly()
+        } else {
+            dropEarly()
+        }
+    }
+
+    private func replayEarly() {
+        let lines = early
+        let dropped = droppedEarly
+        dropEarly()
+        for e in lines {
+            append(e.level, e.tag, e.msg, data: e.data, sessionId: e.sessionId, t: e.t)
+        }
+        if dropped > 0 {
+            append("warn", "debug", "lines dropped before debug options were readable", data: ["count": dropped], sessionId: nil, t: nowMs())
+        }
+    }
+
+    private func dropEarly() {
+        early.removeAll()
+        droppedEarly = 0
+    }
+
+    private func retryWhenProtectedDataAvailable() {
+        guard protectedObserver == nil else { return }
+        protectedObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.protectedDataDidBecomeAvailableNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.queue.async {
+                if let o = self.protectedObserver { NotificationCenter.default.removeObserver(o) }
+                self.protectedObserver = nil
+                self.protectedData = true
+                self.loadIfNeeded()
+            }
+        }
     }
 
     private func apply(_ o: DebugOptions) {
         options = o
         cachedHeaders = o.headers
         guard o.enabled else {
+            dropEarly()
             deactivate()
             return
         }
         activate()
+        replayEarly()
         restartTimer()
         var data: [String: Any] = [
             "flushIntervalMs": o.flushIntervalMs,
@@ -263,6 +336,7 @@ final class DebugLogger {
             guard let h = openHandle() else { break }
             let entry = pending[0]
             let bytes = Data((entry.line + "\n").utf8)
+            let offset = UInt64(files[current].size)
             do {
                 try h.write(contentsOf: bytes)
             } catch {
@@ -274,6 +348,9 @@ final class DebugLogger {
             files[current].size += Int64(bytes.count)
             if files[current].firstSeq == nil { files[current].firstSeq = entry.seq }
             files[current].lastSeq = entry.seq
+            if entry.seq - (files[current].checkpoints.last?.seq ?? Int64.min / 2) >= checkpointEvery {
+                files[current].checkpoints.append((entry.seq, offset))
+            }
             if files[current].size >= (options?.maxFileBytes ?? 1_000_000) { rotate() }
         }
         if pending.isEmpty, droppedPending > 0 {
@@ -322,24 +399,45 @@ final class DebugLogger {
     }
 
     private func scan(_ url: URL) -> FileState {
-        guard let h = try? FileHandle(forUpdating: url) else { return FileState() }
-        defer { try? h.close() }
-        guard let size = try? h.seekToEnd(), size > 0 else { return FileState(size: 0) }
-        let chunk: UInt64 = 64 * 1024
-        try? h.seek(toOffset: 0)
-        let head = (try? h.read(upToCount: Int(min(size, chunk)))) ?? Data()
-        let tailStart = size > chunk ? size - chunk : 0
-        try? h.seek(toOffset: tailStart)
-        let tail = (try? h.readToEnd()) ?? Data()
-        var state = FileState(size: Int64(size))
-        state.firstSeq = splitLines(head).lazy.compactMap(lineSeq).first
-        state.lastSeq = splitLines(tail).reversed().lazy.compactMap(lineSeq).first
-        if tail.last != UInt8(ascii: "\n") {
-            _ = try? h.seekToEnd()
-            try? h.write(contentsOf: Data("\n".utf8))
-            state.size += 1
+        var state = FileState()
+        var end: UInt64 = 0
+        forEachLine(url, from: 0) { line, seq, offset in
+            end = offset + UInt64(line.count) + 1
+            guard let seq else { return true }
+            if state.firstSeq == nil { state.firstSeq = seq }
+            state.lastSeq = seq
+            if seq - (state.checkpoints.last?.seq ?? Int64.min / 2) >= checkpointEvery {
+                state.checkpoints.append((seq, offset))
+            }
+            return true
         }
+        guard let h = try? FileHandle(forUpdating: url) else { return state }
+        defer { try? h.close() }
+        if let size = try? h.seekToEnd(), size > end {
+            try? h.truncate(atOffset: end)
+        }
+        state.size = Int64(end)
         return state
+    }
+
+    private func forEachLine(_ url: URL, from offset: UInt64, _ body: (Data, Int64?, UInt64) -> Bool) {
+        guard let h = try? FileHandle(forReadingFrom: url) else { return }
+        defer { try? h.close() }
+        do { try h.seek(toOffset: offset) } catch { return }
+        var buffer = Data()
+        var bufferOffset = offset
+        while let chunk = try? h.read(upToCount: chunkBytes), !chunk.isEmpty {
+            buffer.append(chunk)
+            var start = buffer.startIndex
+            while let newline = buffer[start...].firstIndex(of: UInt8(ascii: "\n")) {
+                let line = buffer[start..<newline]
+                let lineOffset = bufferOffset + UInt64(start - buffer.startIndex)
+                if !line.isEmpty, !body(line, lineSeq(line), lineOffset) { return }
+                start = buffer.index(after: newline)
+            }
+            bufferOffset += UInt64(start - buffer.startIndex)
+            buffer = Data(buffer[start...])
+        }
     }
 
     func makeBatch() -> (request: URLRequest, toSeq: Int64, count: Int)? {
@@ -347,20 +445,25 @@ final class DebugLogger {
         let firsts = files.compactMap(\.firstSeq)
         let lasts = files.compactMap(\.lastSeq)
         guard let low = firsts.min(), let high = lasts.max(), low <= high else { return nil }
-        let cursor = (defaults.object(forKey: Key.cursor) as? NSNumber)?.int64Value ?? 0
-        guard var plan = planBatch(fileSeqRange: low...high, cursor: cursor) else { return nil }
-        if plan.lostFrom != nil, plan.toSeq - plan.fromSeq + 1 >= 500, let smaller = planBatch(fileSeqRange: low...high, cursor: cursor, max: 499) {
-            plan = smaller
-        }
+        var cursor = (defaults.object(forKey: Key.cursor) as? NSNumber)?.int64Value ?? 0
         guard let headers = loadHeaders() else { return nil }
-        var lines = readLines(from: plan.fromSeq, to: plan.toSeq)
-        if let from = plan.lostFrom, let to = plan.lostTo {
-            let lost = LogLine(seq: to, t: nowMs(), pid: pid, level: "warn", tag: "debug", msg: "lines lost", data: ["from": from, "to": to])
-            lines.insert(encodeLogLine(lost), at: 0)
-        }
-        guard !lines.isEmpty else {
-            setCursor(plan.toSeq)
-            return nil
+        var lines: [String] = []
+        var toSeq: Int64 = 0
+        while lines.isEmpty {
+            guard var plan = planBatch(fileSeqRange: low...high, cursor: cursor) else { return nil }
+            if plan.lostFrom != nil, plan.toSeq - plan.fromSeq + 1 >= 500, let smaller = planBatch(fileSeqRange: low...high, cursor: cursor, max: 499) {
+                plan = smaller
+            }
+            lines = readLines(from: plan.fromSeq, to: plan.toSeq)
+            if let from = plan.lostFrom, let to = plan.lostTo {
+                let lost = LogLine(seq: to, t: nowMs(), pid: pid, level: "warn", tag: "debug", msg: "lines lost", data: ["from": from, "to": to])
+                lines.insert(encodeLogLine(lost), at: 0)
+            }
+            toSeq = plan.toSeq
+            if lines.isEmpty {
+                setCursor(toSeq)
+                cursor = toSeq
+            }
         }
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
         request.httpMethod = "POST"
@@ -370,7 +473,7 @@ final class DebugLogger {
         }
         let install = (try? JSONSerialization.data(withJSONObject: installInfo())).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
         request.httpBody = Data("{\"install\":\(install),\"lines\":[\(lines.joined(separator: ","))]}".utf8)
-        return (request, plan.toSeq, lines.count)
+        return (request, toSeq, lines.count)
     }
 
     func delivered(upTo seq: Int64) {
@@ -393,12 +496,19 @@ final class DebugLogger {
         var out: [String] = []
         for index in [1 - current, current] {
             let state = files[index]
-            guard let first = state.firstSeq, let last = state.lastSeq, last >= from, first <= to,
-                  let data = try? Data(contentsOf: fileURL(index)) else { continue }
-            for line in splitLines(data) {
-                guard let s = lineSeq(line), s >= from, s <= to else { continue }
-                out.append(line)
+            guard let first = state.firstSeq, let last = state.lastSeq, last >= from, first <= to else { continue }
+            let start = state.checkpoints.last { $0.seq <= from }?.offset ?? 0
+            var done = false
+            forEachLine(fileURL(index), from: start) { line, seq, _ in
+                guard let seq else { return true }
+                if seq > to {
+                    done = true
+                    return false
+                }
+                if seq >= from { out.append(String(decoding: line, as: UTF8.self)) }
+                return true
             }
+            if done { break }
         }
         return out
     }
@@ -471,16 +581,6 @@ final class DebugLogger {
 
     private func fileURL(_ index: Int) -> URL {
         directoryURL.appendingPathComponent("debug-\(index).jsonl")
-    }
-
-    private func splitLines(_ data: Data) -> [String] {
-        data.split(separator: UInt8(ascii: "\n")).map { String(decoding: $0, as: UTF8.self) }
-    }
-
-    private func lineSeq(_ line: String) -> Int64? {
-        guard let data = line.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        return (obj["seq"] as? NSNumber)?.int64Value
     }
 
     static let libVersion: String = {

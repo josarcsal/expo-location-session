@@ -36,6 +36,21 @@ private func opts(enabled: Bool = true, url: String? = "https://x.dev/logs", flu
         #expect(data["y"] as? Int == 1)
         #expect(!json.contains("\n"))
     }
+
+    @Test func seqLeadsTheLine() throws {
+        let json = encodeLogLine(LogLine(seq: 4321, t: 2, pid: 3, level: "info", tag: "debug", msg: "m", data: ["seq": 9]))
+        #expect(json.hasPrefix("{\"seq\":4321,"))
+        #expect(lineSeq(Data(json.utf8)) == 4321)
+        let obj = try #require(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        #expect(obj["seq"] as? Int == 4321)
+        #expect(obj["msg"] as? String == "m")
+    }
+
+    @Test func lineSeqRejectsOtherShapes() {
+        #expect(lineSeq(Data("{\"t\":1,\"seq\":2}".utf8)) == nil)
+        #expect(lineSeq(Data("{\"seq\":12".utf8)) == nil)
+        #expect(lineSeq(Data("{\"seq\":,".utf8)) == nil)
+    }
 }
 
 @Suite struct DebugBatchTests {

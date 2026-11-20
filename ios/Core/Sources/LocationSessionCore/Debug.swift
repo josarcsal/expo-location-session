@@ -72,7 +72,6 @@ public func validateDebugOptions(_ o: DebugOptions) -> String? {
 
 public func encodeLogLine(_ line: LogLine) -> String {
     var obj: [String: Any] = [
-        "seq": line.seq,
         "t": line.t,
         "pid": line.pid,
         "level": line.level,
@@ -81,13 +80,33 @@ public func encodeLogLine(_ line: LogLine) -> String {
     ]
     if let s = line.sessionId { obj["sessionId"] = s }
     if let d = line.data, let clean = sanitize(d) { obj["data"] = clean }
-    guard let data = try? JSONSerialization.data(withJSONObject: obj, options: [.withoutEscapingSlashes]),
-          let json = String(data: data, encoding: .utf8) else {
+    let body: String
+    if let data = try? JSONSerialization.data(withJSONObject: obj, options: [.withoutEscapingSlashes]),
+       let json = String(data: data, encoding: .utf8) {
+        body = json
+    } else {
         obj.removeValue(forKey: "data")
         let fallback = (try? JSONSerialization.data(withJSONObject: obj)) ?? Data("{}".utf8)
-        return String(decoding: fallback, as: UTF8.self)
+        body = String(decoding: fallback, as: UTF8.self)
     }
-    return json
+    let rest = body.dropFirst()
+    return "{\"seq\":\(line.seq)" + (rest == "}" ? "" : ",") + rest
+}
+
+private let seqPrefix = Array("{\"seq\":".utf8)
+
+public func lineSeq<C: BidirectionalCollection>(_ bytes: C) -> Int64? where C.Element == UInt8 {
+    guard bytes.count > seqPrefix.count + 2, bytes.starts(with: seqPrefix) else { return nil }
+    var index = bytes.index(bytes.startIndex, offsetBy: seqPrefix.count)
+    var value: Int64 = 0
+    var digits = 0
+    while index != bytes.endIndex, bytes[index] >= 0x30, bytes[index] <= 0x39, digits < 18 {
+        value = value * 10 + Int64(bytes[index] - 0x30)
+        digits += 1
+        index = bytes.index(after: index)
+    }
+    guard digits > 0, index != bytes.endIndex, bytes[index] == UInt8(ascii: ","), bytes.last == UInt8(ascii: "}") else { return nil }
+    return value
 }
 
 public func planBatch(fileSeqRange: ClosedRange<Int64>, cursor: Int64, max: Int = 500) -> BatchPlan? {
