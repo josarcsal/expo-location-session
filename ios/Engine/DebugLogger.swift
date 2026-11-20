@@ -340,6 +340,7 @@ final class DebugLogger {
             do {
                 try h.write(contentsOf: bytes)
             } catch {
+                try? h.truncate(atOffset: offset)
                 try? h.close()
                 handle = nil
                 break
