@@ -63,6 +63,42 @@ class HybridLocationSession: HybridLocationSessionSpec {
         onMain { promise in promise.resolve(withResult: nativeState(self.engine.state())) }
     }
 
+    func configureDebug(options: NativeDebugOptions) throws -> Promise<Void> {
+        onMain { promise in
+            do {
+                try DebugLogger.shared.configure(debugOptions(options))
+                promise.resolve()
+            } catch let error as LocationSessionError {
+                promise.reject(withError: runtimeError(error))
+            } catch {
+                promise.reject(withError: RuntimeError.error(withMessage: "INTERNAL: \(error)"))
+            }
+        }
+    }
+
+    func getDebugLog(limit: Double) throws -> Promise<String> {
+        onMain { promise in
+            guard limit.isFinite, limit >= 0, limit <= Double(Int32.max) else {
+                promise.reject(withError: RuntimeError.error(withMessage: "INVALID_CONFIG: limit must be a non-negative number"))
+                return
+            }
+            promise.resolve(withResult: DebugLogger.shared.read(limit: Int(limit)))
+        }
+    }
+
+    func clearDebugLog() throws -> Promise<Void> {
+        onMain { promise in
+            DebugLogger.shared.clear()
+            promise.resolve()
+        }
+    }
+
+    func flushDebugLog() throws -> Promise<Double> {
+        onMain { promise in
+            DebugLogger.shared.flush { promise.resolve(withResult: Double($0)) }
+        }
+    }
+
     func addListener(event: SessionEvent, callback: @escaping (String) -> Void) throws -> Double {
         guard let kind = EventBus.Event(rawValue: event.stringValue) else {
             throw RuntimeError.error(withMessage: "INVALID_EVENT: \(event.stringValue)")
@@ -118,6 +154,13 @@ private func sessionConfig(_ c: NativeSessionConfig) throws -> SessionConfig {
         uploadExtrasJson: c.uploadExtrasJson,
         uploadMinIntervalMs: minInterval
     )
+}
+
+private func debugOptions(_ o: NativeDebugOptions) throws -> DebugOptions {
+    guard let flush = milliseconds(o.flushIntervalMs), let maxBytes = milliseconds(o.maxFileBytes) else {
+        throw LocationSessionError(code: "INVALID_CONFIG", message: "flushIntervalMs and maxFileBytes must be finite numbers")
+    }
+    return DebugOptions(enabled: o.enabled, url: o.url, headers: o.headers, flushIntervalMs: flush, maxFileBytes: maxBytes)
 }
 
 private func nativeLocation(_ f: Fix) -> NativeLocation {

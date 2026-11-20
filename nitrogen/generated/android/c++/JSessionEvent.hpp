@@ -54,6 +54,9 @@ namespace margelo::nitro::locationsession {
         case SessionEvent::ERROR:
           static const auto fieldERROR = clazz->getStaticField<JSessionEvent>("ERROR");
           return clazz->getStaticFieldValue(fieldERROR);
+        case SessionEvent::LOG:
+          static const auto fieldLOG = clazz->getStaticField<JSessionEvent>("LOG");
+          return clazz->getStaticFieldValue(fieldLOG);
         default:
           std::string stringValue = std::to_string(static_cast<int>(value));
           throw std::invalid_argument("Invalid enum value (" + stringValue + "!");

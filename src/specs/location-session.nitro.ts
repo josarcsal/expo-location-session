@@ -4,7 +4,7 @@ export type Accuracy = 'high' | 'balanced' | 'low';
 export type PermissionLevel = 'whenInUse' | 'always';
 export type PermissionValue = 'granted' | 'denied' | 'undetermined';
 export type SessionStatus = 'idle' | 'running';
-export type SessionEvent = 'location' | 'upload' | 'stop' | 'error';
+export type SessionEvent = 'location' | 'upload' | 'stop' | 'error' | 'log';
 
 export interface NativeDestination {
   latitude: number;
@@ -57,6 +57,14 @@ export interface NativeSessionState {
   lastStopSessionId?: string;
 }
 
+export interface NativeDebugOptions {
+  enabled: boolean;
+  url?: string;
+  headers: Record<string, string>;
+  flushIntervalMs: number;
+  maxFileBytes: number;
+}
+
 export interface LocationSession extends HybridObject<{ ios: 'swift'; android: 'kotlin' }> {
   getPermissionStatus(): Promise<NativePermissionStatus>;
   requestPermission(level: PermissionLevel): Promise<NativePermissionStatus>;
@@ -64,6 +72,10 @@ export interface LocationSession extends HybridObject<{ ios: 'swift'; android: '
   start(config: NativeSessionConfig): Promise<void>;
   stop(): Promise<void>;
   getState(): Promise<NativeSessionState>;
+  configureDebug(options: NativeDebugOptions): Promise<void>;
+  getDebugLog(limit: number): Promise<string>;
+  clearDebugLog(): Promise<void>;
+  flushDebugLog(): Promise<number>;
   addListener(event: SessionEvent, callback: (payloadJson: string) => void): number;
   removeListener(id: number): void;
 }

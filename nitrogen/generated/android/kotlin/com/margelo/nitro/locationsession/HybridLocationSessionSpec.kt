@@ -54,6 +54,22 @@ abstract class HybridLocationSessionSpec: HybridObject() {
   @Keep
   abstract fun getState(): Promise<NativeSessionState>
   
+  @DoNotStrip
+  @Keep
+  abstract fun configureDebug(options: NativeDebugOptions): Promise<Unit>
+  
+  @DoNotStrip
+  @Keep
+  abstract fun getDebugLog(limit: Double): Promise<String>
+  
+  @DoNotStrip
+  @Keep
+  abstract fun clearDebugLog(): Promise<Unit>
+  
+  @DoNotStrip
+  @Keep
+  abstract fun flushDebugLog(): Promise<Double>
+  
   abstract fun addListener(event: SessionEvent, callback: (payloadJson: String) -> Unit): Double
   
   @DoNotStrip

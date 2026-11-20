@@ -12,6 +12,8 @@
 namespace margelo::nitro::locationsession { enum class Accuracy; }
 // Forward declaration of `HybridLocationSessionSpec` to properly resolve imports.
 namespace margelo::nitro::locationsession { class HybridLocationSessionSpec; }
+// Forward declaration of `NativeDebugOptions` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeDebugOptions; }
 // Forward declaration of `NativeDestination` to properly resolve imports.
 namespace margelo::nitro::locationsession { struct NativeDestination; }
 // Forward declaration of `NativeLocation` to properly resolve imports.
@@ -34,6 +36,7 @@ namespace margelo::nitro::locationsession { enum class SessionStatus; }
 // Include C++ defined types
 #include "Accuracy.hpp"
 #include "HybridLocationSessionSpec.hpp"
+#include "NativeDebugOptions.hpp"
 #include "NativeDestination.hpp"
 #include "NativeLocation.hpp"
 #include "NativePermissionStatus.hpp"

@@ -25,6 +25,8 @@ public extension SessionEvent {
         self = .stop
       case "error":
         self = .error
+      case "log":
+        self = .log
       default:
         return nil
     }
@@ -43,6 +45,8 @@ public extension SessionEvent {
         return "stop"
       case .error:
         return "error"
+      case .log:
+        return "log"
     }
   }
 }

@@ -20,6 +20,10 @@ namespace margelo::nitro::locationsession {
       prototype.registerHybridMethod("start", &HybridLocationSessionSpec::start);
       prototype.registerHybridMethod("stop", &HybridLocationSessionSpec::stop);
       prototype.registerHybridMethod("getState", &HybridLocationSessionSpec::getState);
+      prototype.registerHybridMethod("configureDebug", &HybridLocationSessionSpec::configureDebug);
+      prototype.registerHybridMethod("getDebugLog", &HybridLocationSessionSpec::getDebugLog);
+      prototype.registerHybridMethod("clearDebugLog", &HybridLocationSessionSpec::clearDebugLog);
+      prototype.registerHybridMethod("flushDebugLog", &HybridLocationSessionSpec::flushDebugLog);
       prototype.registerHybridMethod("addListener", &HybridLocationSessionSpec::addListener);
       prototype.registerHybridMethod("removeListener", &HybridLocationSessionSpec::removeListener);
     });

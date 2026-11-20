@@ -33,6 +33,7 @@ namespace margelo::nitro::locationsession {
     UPLOAD      SWIFT_NAME(upload) = 1,
     STOP      SWIFT_NAME(stop) = 2,
     ERROR      SWIFT_NAME(error) = 3,
+    LOG      SWIFT_NAME(log) = 4,
   } CLOSED_ENUM;
 
 } // namespace margelo::nitro::locationsession
@@ -49,6 +50,7 @@ namespace margelo::nitro {
         case hashString("upload"): return margelo::nitro::locationsession::SessionEvent::UPLOAD;
         case hashString("stop"): return margelo::nitro::locationsession::SessionEvent::STOP;
         case hashString("error"): return margelo::nitro::locationsession::SessionEvent::ERROR;
+        case hashString("log"): return margelo::nitro::locationsession::SessionEvent::LOG;
         default: [[unlikely]]
           throw std::invalid_argument("Cannot convert \"" + unionValue + "\" to enum SessionEvent - invalid value!");
       }
@@ -59,6 +61,7 @@ namespace margelo::nitro {
         case margelo::nitro::locationsession::SessionEvent::UPLOAD: return JSIConverter<std::string>::toJSI(runtime, "upload");
         case margelo::nitro::locationsession::SessionEvent::STOP: return JSIConverter<std::string>::toJSI(runtime, "stop");
         case margelo::nitro::locationsession::SessionEvent::ERROR: return JSIConverter<std::string>::toJSI(runtime, "error");
+        case margelo::nitro::locationsession::SessionEvent::LOG: return JSIConverter<std::string>::toJSI(runtime, "log");
         default: [[unlikely]]
           throw std::invalid_argument("Cannot convert SessionEvent to JS - invalid value: "
                                     + std::to_string(static_cast<int>(arg)) + "!");
@@ -74,6 +77,7 @@ namespace margelo::nitro {
         case hashString("upload"):
         case hashString("stop"):
         case hashString("error"):
+        case hashString("log"):
           return true;
         default:
           return false;

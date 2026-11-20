@@ -57,11 +57,35 @@ export type UploadResult = { ok: boolean; status?: number; at: number };
 export type StopEvent = { reason: StopReason; sessionId: string };
 export type ErrorEvent = { code: string; message: string };
 
+export type DebugOptions = {
+  enabled: boolean;
+  url?: string;
+  headers?: Record<string, string>;
+  flushIntervalMs?: number;
+  maxFileBytes?: number;
+};
+
+export type DebugLogLevel = 'debug' | 'info' | 'warn' | 'error';
+export type DebugLogTag =
+  'lifecycle' | 'permission' | 'location' | 'upload' | 'stop' | 'service' | 'gate' | 'region' | 'store' | 'debug';
+
+export type DebugLogLine = {
+  seq: number;
+  t: number;
+  pid: number;
+  level: DebugLogLevel;
+  tag: DebugLogTag;
+  msg: string;
+  sessionId?: string;
+  data?: Record<string, unknown>;
+};
+
 export type LocationSessionEventMap = {
   location: Location;
   upload: UploadResult;
   stop: StopEvent;
   error: ErrorEvent;
+  log: DebugLogLine;
 };
 
 export type CurrentPositionOptions = {

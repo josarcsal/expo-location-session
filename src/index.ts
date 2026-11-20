@@ -8,6 +8,8 @@ import type {
 import {
   LocationSessionError,
   type CurrentPositionOptions,
+  type DebugLogLine,
+  type DebugOptions,
   type Location,
   type LocationSessionEventMap,
   type PermissionLevel,
@@ -24,6 +26,8 @@ const DEFAULT_DISTANCE_FILTER_METERS = 50;
 const DEFAULT_MIN_INTERVAL_MS = 15000;
 const DEFAULT_TIMEOUT_MS = 15000;
 const DEFAULT_MAX_AGE_MS = 0;
+const DEFAULT_DEBUG_FLUSH_INTERVAL_MS = 60000;
+const DEFAULT_DEBUG_MAX_FILE_BYTES = 1_000_000;
 const ERROR_PREFIX = /(?:^|\s)([A-Z][A-Z0-9_]+): ?([\s\S]*)$/;
 
 let native: LocationSessionSpec | undefined;
@@ -142,6 +146,40 @@ export function stop(): Promise<void> {
 
 export function getState(): Promise<SessionState> {
   return call(async (s) => toSessionState(await s.getState()));
+}
+
+export function configureDebug(options: DebugOptions): Promise<void> {
+  return call((s) =>
+    s.configureDebug({
+      enabled: options.enabled,
+      url: options.url,
+      headers: options.headers ?? {},
+      flushIntervalMs: options.flushIntervalMs ?? DEFAULT_DEBUG_FLUSH_INTERVAL_MS,
+      maxFileBytes: options.maxFileBytes ?? DEFAULT_DEBUG_MAX_FILE_BYTES,
+    }),
+  );
+}
+
+export function getDebugLog(opts: { limit?: number } = {}): Promise<DebugLogLine[]> {
+  return call(async (s) => {
+    const json = await s.getDebugLog(opts.limit ?? 0);
+    let lines: unknown;
+    try {
+      lines = JSON.parse(json);
+    } catch {
+      throw new LocationSessionError('INTERNAL', 'debug log is not valid JSON');
+    }
+    if (!Array.isArray(lines)) throw new LocationSessionError('INTERNAL', 'debug log is not a JSON array');
+    return lines as DebugLogLine[];
+  });
+}
+
+export function clearDebugLog(): Promise<void> {
+  return call((s) => s.clearDebugLog());
+}
+
+export function flushDebugLog(): Promise<{ sent: number }> {
+  return call(async (s) => ({ sent: await s.flushDebugLog() }));
 }
 
 export function addListener<E extends keyof LocationSessionEventMap>(

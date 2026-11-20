@@ -7,11 +7,13 @@ import androidx.annotation.Keep
 import com.facebook.proguard.annotations.DoNotStrip
 import com.margelo.nitro.NitroModules
 import com.margelo.nitro.core.Promise
+import com.margelo.nitro.locationsession.core.DebugOptions
 import com.margelo.nitro.locationsession.core.Destination
 import com.margelo.nitro.locationsession.core.Fix
 import com.margelo.nitro.locationsession.core.SessionConfig
 import com.margelo.nitro.locationsession.core.StopReason
 import com.margelo.nitro.locationsession.engine.CurrentPosition
+import com.margelo.nitro.locationsession.engine.DebugLogger
 import com.margelo.nitro.locationsession.engine.EngineState
 import com.margelo.nitro.locationsession.engine.Grant
 import com.margelo.nitro.locationsession.engine.LocationSessionException
@@ -94,12 +96,34 @@ class HybridLocationSession : HybridLocationSessionSpec() {
         promise.resolve(nativeState(SessionEngine.state(ctx)))
     }
 
+    override fun configureDebug(options: NativeDebugOptions): Promise<Unit> = onMain { ctx, promise ->
+        DebugLogger.configure(ctx, debugOptions(options))
+        promise.resolve(Unit)
+    }
+
+    override fun getDebugLog(limit: Double): Promise<String> = onMain { ctx, promise ->
+        if (!limit.isFinite() || limit < 0 || limit > Int.MAX_VALUE) {
+            throw LocationSessionException("INVALID_CONFIG", "limit must be a non-negative number")
+        }
+        promise.resolve(DebugLogger.read(ctx, limit.toInt()))
+    }
+
+    override fun clearDebugLog(): Promise<Unit> = onMain { ctx, promise ->
+        DebugLogger.clear(ctx)
+        promise.resolve(Unit)
+    }
+
+    override fun flushDebugLog(): Promise<Double> = onMain { ctx, promise ->
+        DebugLogger.flush(ctx) { promise.resolve(it.toDouble()) }
+    }
+
     override fun addListener(event: SessionEvent, callback: (payloadJson: String) -> Unit): Double {
         val name = when (event) {
             SessionEvent.LOCATION -> "location"
             SessionEvent.UPLOAD -> "upload"
             SessionEvent.STOP -> "stop"
             SessionEvent.ERROR -> "error"
+            SessionEvent.LOG -> "log"
         }
         val id = SessionEngine.events.add(name, callback)
         listenerIds.add(id)
@@ -149,6 +173,15 @@ private fun sessionConfig(c: NativeSessionConfig): SessionConfig {
         notificationText = c.androidNotificationText,
         notificationChannelName = c.androidNotificationChannelName
     )
+}
+
+private fun debugOptions(o: NativeDebugOptions): DebugOptions {
+    val flush = milliseconds(o.flushIntervalMs)
+    val maxBytes = milliseconds(o.maxFileBytes)
+    if (flush == null || maxBytes == null) {
+        throw LocationSessionException("INVALID_CONFIG", "flushIntervalMs and maxFileBytes must be finite numbers")
+    }
+    return DebugOptions(o.enabled, o.url, o.headers, flush, maxBytes)
 }
 
 private fun Grant.native(): PermissionValue = when (this) {

@@ -3,7 +3,7 @@ import os
 
 final class EventBus {
     enum Event: String {
-        case location, upload, stop, error
+        case location, upload, stop, error, log
     }
 
     private let lock = NSLock()

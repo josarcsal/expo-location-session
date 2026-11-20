@@ -25,6 +25,8 @@ namespace margelo::nitro::locationsession { enum class Accuracy; }
 namespace margelo::nitro::locationsession { struct NativeSessionConfig; }
 // Forward declaration of `NativeSessionState` to properly resolve imports.
 namespace margelo::nitro::locationsession { struct NativeSessionState; }
+// Forward declaration of `NativeDebugOptions` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeDebugOptions; }
 // Forward declaration of `SessionEvent` to properly resolve imports.
 namespace margelo::nitro::locationsession { enum class SessionEvent; }
 
@@ -35,8 +37,9 @@ namespace margelo::nitro::locationsession { enum class SessionEvent; }
 #include "Accuracy.hpp"
 #include "NativeSessionConfig.hpp"
 #include "NativeSessionState.hpp"
-#include "SessionEvent.hpp"
+#include "NativeDebugOptions.hpp"
 #include <string>
+#include "SessionEvent.hpp"
 #include <functional>
 
 namespace margelo::nitro::locationsession {
@@ -76,6 +79,10 @@ namespace margelo::nitro::locationsession {
       virtual std::shared_ptr<Promise<void>> start(const NativeSessionConfig& config) = 0;
       virtual std::shared_ptr<Promise<void>> stop() = 0;
       virtual std::shared_ptr<Promise<NativeSessionState>> getState() = 0;
+      virtual std::shared_ptr<Promise<void>> configureDebug(const NativeDebugOptions& options) = 0;
+      virtual std::shared_ptr<Promise<std::string>> getDebugLog(double limit) = 0;
+      virtual std::shared_ptr<Promise<void>> clearDebugLog() = 0;
+      virtual std::shared_ptr<Promise<double>> flushDebugLog() = 0;
       virtual double addListener(SessionEvent event, const std::function<void(const std::string& /* payloadJson */)>& callback) = 0;
       virtual void removeListener(double id) = 0;
 

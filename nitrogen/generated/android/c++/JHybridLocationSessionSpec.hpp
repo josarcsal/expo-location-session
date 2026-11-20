@@ -60,6 +60,10 @@ namespace margelo::nitro::locationsession {
     std::shared_ptr<Promise<void>> start(const NativeSessionConfig& config) override;
     std::shared_ptr<Promise<void>> stop() override;
     std::shared_ptr<Promise<NativeSessionState>> getState() override;
+    std::shared_ptr<Promise<void>> configureDebug(const NativeDebugOptions& options) override;
+    std::shared_ptr<Promise<std::string>> getDebugLog(double limit) override;
+    std::shared_ptr<Promise<void>> clearDebugLog() override;
+    std::shared_ptr<Promise<double>> flushDebugLog() override;
     double addListener(SessionEvent event, const std::function<void(const std::string& /* payloadJson */)>& callback) override;
     void removeListener(double id) override;
 

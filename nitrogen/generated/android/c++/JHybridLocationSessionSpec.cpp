@@ -25,6 +25,8 @@ namespace margelo::nitro::locationsession { enum class Accuracy; }
 namespace margelo::nitro::locationsession { struct NativeSessionConfig; }
 // Forward declaration of `NativeDestination` to properly resolve imports.
 namespace margelo::nitro::locationsession { struct NativeDestination; }
+// Forward declaration of `NativeDebugOptions` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeDebugOptions; }
 // Forward declaration of `SessionEvent` to properly resolve imports.
 namespace margelo::nitro::locationsession { enum class SessionEvent; }
 
@@ -52,6 +54,8 @@ namespace margelo::nitro::locationsession { enum class SessionEvent; }
 #include "NativeDestination.hpp"
 #include "JNativeDestination.hpp"
 #include <unordered_map>
+#include "NativeDebugOptions.hpp"
+#include "JNativeDebugOptions.hpp"
 #include "SessionEvent.hpp"
 #include "JSessionEvent.hpp"
 #include <functional>
@@ -177,6 +181,68 @@ namespace margelo::nitro::locationsession {
       __result->cthis()->addOnResolvedListener([=](const jni::alias_ref<jni::JObject>& __boxedResult) {
         auto __result = jni::static_ref_cast<JNativeSessionState>(__boxedResult);
         __promise->resolve(__result->toCpp());
+      });
+      __result->cthis()->addOnRejectedListener([=](const jni::alias_ref<jni::JThrowable>& __throwable) {
+        jni::JniException __jniError(__throwable);
+        __promise->reject(std::make_exception_ptr(__jniError));
+      });
+      return __promise;
+    }();
+  }
+  std::shared_ptr<Promise<void>> JHybridLocationSessionSpec::configureDebug(const NativeDebugOptions& options) {
+    static const auto method = _javaPart->javaClassStatic()->getMethod<jni::local_ref<JPromise::javaobject>(jni::alias_ref<JNativeDebugOptions> /* options */)>("configureDebug");
+    auto __result = method(_javaPart, JNativeDebugOptions::fromCpp(options));
+    return [&]() {
+      auto __promise = Promise<void>::create();
+      __result->cthis()->addOnResolvedListener([=](const jni::alias_ref<jni::JObject>& /* unit */) {
+        __promise->resolve();
+      });
+      __result->cthis()->addOnRejectedListener([=](const jni::alias_ref<jni::JThrowable>& __throwable) {
+        jni::JniException __jniError(__throwable);
+        __promise->reject(std::make_exception_ptr(__jniError));
+      });
+      return __promise;
+    }();
+  }
+  std::shared_ptr<Promise<std::string>> JHybridLocationSessionSpec::getDebugLog(double limit) {
+    static const auto method = _javaPart->javaClassStatic()->getMethod<jni::local_ref<JPromise::javaobject>(double /* limit */)>("getDebugLog");
+    auto __result = method(_javaPart, limit);
+    return [&]() {
+      auto __promise = Promise<std::string>::create();
+      __result->cthis()->addOnResolvedListener([=](const jni::alias_ref<jni::JObject>& __boxedResult) {
+        auto __result = jni::static_ref_cast<jni::JString>(__boxedResult);
+        __promise->resolve(__result->toStdString());
+      });
+      __result->cthis()->addOnRejectedListener([=](const jni::alias_ref<jni::JThrowable>& __throwable) {
+        jni::JniException __jniError(__throwable);
+        __promise->reject(std::make_exception_ptr(__jniError));
+      });
+      return __promise;
+    }();
+  }
+  std::shared_ptr<Promise<void>> JHybridLocationSessionSpec::clearDebugLog() {
+    static const auto method = _javaPart->javaClassStatic()->getMethod<jni::local_ref<JPromise::javaobject>()>("clearDebugLog");
+    auto __result = method(_javaPart);
+    return [&]() {
+      auto __promise = Promise<void>::create();
+      __result->cthis()->addOnResolvedListener([=](const jni::alias_ref<jni::JObject>& /* unit */) {
+        __promise->resolve();
+      });
+      __result->cthis()->addOnRejectedListener([=](const jni::alias_ref<jni::JThrowable>& __throwable) {
+        jni::JniException __jniError(__throwable);
+        __promise->reject(std::make_exception_ptr(__jniError));
+      });
+      return __promise;
+    }();
+  }
+  std::shared_ptr<Promise<double>> JHybridLocationSessionSpec::flushDebugLog() {
+    static const auto method = _javaPart->javaClassStatic()->getMethod<jni::local_ref<JPromise::javaobject>()>("flushDebugLog");
+    auto __result = method(_javaPart);
+    return [&]() {
+      auto __promise = Promise<double>::create();
+      __result->cthis()->addOnResolvedListener([=](const jni::alias_ref<jni::JObject>& __boxedResult) {
+        auto __result = jni::static_ref_cast<jni::JDouble>(__boxedResult);
+        __promise->resolve(__result->value());
       });
       __result->cthis()->addOnRejectedListener([=](const jni::alias_ref<jni::JThrowable>& __throwable) {
         jni::JniException __jniError(__throwable);

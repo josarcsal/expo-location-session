@@ -19,7 +19,8 @@ enum class SessionEvent(@DoNotStrip @Keep val value: Int) {
   LOCATION(0),
   UPLOAD(1),
   STOP(2),
-  ERROR(3);
+  ERROR(3),
+  LOG(4);
 
   companion object
 }

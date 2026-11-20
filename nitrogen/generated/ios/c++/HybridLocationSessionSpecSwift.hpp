@@ -30,6 +30,8 @@ namespace margelo::nitro::locationsession { struct NativeDestination; }
 namespace margelo::nitro::locationsession { struct NativeSessionState; }
 // Forward declaration of `SessionStatus` to properly resolve imports.
 namespace margelo::nitro::locationsession { enum class SessionStatus; }
+// Forward declaration of `NativeDebugOptions` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeDebugOptions; }
 // Forward declaration of `SessionEvent` to properly resolve imports.
 namespace margelo::nitro::locationsession { enum class SessionEvent; }
 
@@ -46,6 +48,7 @@ namespace margelo::nitro::locationsession { enum class SessionEvent; }
 #include <unordered_map>
 #include "NativeSessionState.hpp"
 #include "SessionStatus.hpp"
+#include "NativeDebugOptions.hpp"
 #include "SessionEvent.hpp"
 #include <functional>
 
@@ -141,6 +144,38 @@ namespace margelo::nitro::locationsession {
     }
     inline std::shared_ptr<Promise<NativeSessionState>> getState() override {
       auto __result = _swiftPart.getState();
+      if (__result.hasError()) [[unlikely]] {
+        std::rethrow_exception(__result.error());
+      }
+      auto __value = std::move(__result.value());
+      return __value;
+    }
+    inline std::shared_ptr<Promise<void>> configureDebug(const NativeDebugOptions& options) override {
+      auto __result = _swiftPart.configureDebug(std::forward<decltype(options)>(options));
+      if (__result.hasError()) [[unlikely]] {
+        std::rethrow_exception(__result.error());
+      }
+      auto __value = std::move(__result.value());
+      return __value;
+    }
+    inline std::shared_ptr<Promise<std::string>> getDebugLog(double limit) override {
+      auto __result = _swiftPart.getDebugLog(std::forward<decltype(limit)>(limit));
+      if (__result.hasError()) [[unlikely]] {
+        std::rethrow_exception(__result.error());
+      }
+      auto __value = std::move(__result.value());
+      return __value;
+    }
+    inline std::shared_ptr<Promise<void>> clearDebugLog() override {
+      auto __result = _swiftPart.clearDebugLog();
+      if (__result.hasError()) [[unlikely]] {
+        std::rethrow_exception(__result.error());
+      }
+      auto __value = std::move(__result.value());
+      return __value;
+    }
+    inline std::shared_ptr<Promise<double>> flushDebugLog() override {
+      auto __result = _swiftPart.flushDebugLog();
       if (__result.hasError()) [[unlikely]] {
         std::rethrow_exception(__result.error());
       }
