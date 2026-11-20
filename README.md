@@ -135,9 +135,10 @@ configureDebug(options: DebugOptions): Promise<void>
 getDebugLog(opts?: { limit?: number }): Promise<DebugLogLine[]>
 clearDebugLog(): Promise<void>
 flushDebugLog(): Promise<{ sent: number }>
+getDebugInstallId(): Promise<string>
 ```
 
-The last four are described in [Debug logging](#debug-logging).
+The last five are described in [Debug logging](#debug-logging).
 
 ### Types
 
@@ -237,8 +238,6 @@ Error event codes:
 
 Debug logging writes a line for each lifecycle, permission, location, upload and stop event to a file on the device, and can send those lines to your server. It is meant for testing on real devices, where the process may be killed and relaunched while nobody is watching a console. It is off by default: with it off no file is opened and no request is made.
 
-In 0.1.0-beta.1 the debug API exists on Android but does nothing: `configureDebug` validates its options, `getDebugLog` returns `[]`, `flushDebugLog` returns `{ sent: 0 }` and no `log` events are emitted. The Android logger ships in 0.1.0-beta.2.
-
 ```ts
 await configureDebug({
   enabled: true,
@@ -250,6 +249,7 @@ await configureDebug({
 
 const lines = await getDebugLog({ limit: 200 });
 const { sent } = await flushDebugLog();
+const installId = await getDebugInstallId();
 await clearDebugLog();
 await configureDebug({ enabled: false });
 ```
@@ -271,7 +271,7 @@ type DebugOptions = {
 | `flushIntervalMs` | `60000` | Minimum `10000`. |
 | `maxFileBytes` | `1000000` | `100000` to `10000000`. |
 
-Invalid options reject with `INVALID_CONFIG: <reason>`. `configureDebug` replaces the previous options entirely and the options are persisted, so debug logging stays on after the app is killed and relaunched, including a relaunch by the OS for a location event. `enabled: false` stops writing and sending but keeps the files; `clearDebugLog` deletes them. `getDebugLog` returns the lines in order, newest last; `limit` keeps only the newest ones. `flushDebugLog` sends what is pending now and resolves with the number of lines the server accepted.
+Invalid options reject with `INVALID_CONFIG: <reason>`. `configureDebug` replaces the previous options entirely and the options are persisted, so debug logging stays on after the app is killed and relaunched, including a relaunch by the OS for a location event. `enabled: false` stops writing and sending but keeps the files; `clearDebugLog` deletes them. `getDebugLog` returns the lines in order, newest last; `limit` keeps only the newest ones. `flushDebugLog` sends what is pending now and resolves with the number of lines the server accepted. `getDebugInstallId` resolves with the `install.id` that batches carry (see [Shipping](#shipping)), creating it if it does not exist yet, so your backend can link an install to a user.
 
 ### Line format
 
@@ -292,7 +292,9 @@ type DebugLogLine = {
 
 `seq` increases by one for every line and survives relaunches. `t` is epoch milliseconds. `pid` is the process id, so a new `pid` marks a relaunch; the first line of a process has tag `lifecycle` and records how it was launched. Coordinates appear only in these lines.
 
-The lines are kept in two files, `debug-0.jsonl` and `debug-1.jsonl`. When the current file passes `maxFileBytes` the logger switches to the other one and clears it, so the log holds between `maxFileBytes` and `2 × maxFileBytes`. On iOS the files are in `Application Support/expo-location-session/`, excluded from backup, with file protection `completeUntilFirstUserAuthentication`. Before the first unlock after a reboot the options cannot be read. The logger keeps up to 200 lines logged in that window in memory and writes them once the options load, which is retried when protected data becomes available.
+The lines are kept in two files, `debug-0.jsonl` and `debug-1.jsonl`. When the current file passes `maxFileBytes` the logger switches to the other one and clears it, so the log holds between `maxFileBytes` and `2 × maxFileBytes`. On iOS the files are in `Application Support/expo-location-session/`, excluded from backup, with file protection `completeUntilFirstUserAuthentication`. Before the first unlock after a reboot the options cannot be read. The logger keeps up to 200 lines logged in that window in memory and writes them once the options load, which is retried when protected data becomes available. On Android the files are in `filesDir/expo-location-session/`. The app is not direct-boot aware, so it does not run before the first unlock after a reboot; if storage cannot be read the logger keeps up to 200 lines in memory and does not crash.
+
+If a write fails partway (for example a full disk), the file is truncated back to the end of the last complete line, and the line is kept in memory (up to 1000 lines) until a write succeeds.
 
 ### Shipping
 
@@ -304,22 +306,24 @@ Each batch is a `POST` to `url` with `Content-Type: application/json`, your head
     "id": "6f1c0a52-0d0e-4a43-9d44-7a1d2f6a9b10",
     "platform": "ios",
     "model": "iPhone15,2",
-    "os": "17.5",
+    "os": "iOS 17.5.0",
     "appVersion": "1.4.0 (212)",
-    "libVersion": "0.1.0-beta.1"
+    "libVersion": "0.1.0-beta.2"
   },
   "lines": []
 }
 ```
 
-`install.id` is a UUID generated once and kept across launches. A batch holds at most 500 lines, in `seq` order, and the request times out after 20 seconds. A 2xx response advances a persisted cursor; any other result (including a timeout) leaves it, and the same lines are sent again on the next trigger, so make the endpoint idempotent on `install.id` and `seq`. Changing the URL does not reset the cursor. If a file rotation removed lines that were never sent, the next batch starts with `{ tag: 'debug', msg: 'lines lost', data: { from, to } }` instead of silently skipping sequence numbers.
+On Android `platform` is `"android"`, `model` is the manufacturer and model (`"Google Pixel 8"`), `os` is `"Android 15 (API 35)"` and `appVersion` is `versionName (versionCode)`.
 
-A batch is sent when the process starts, every `flushIntervalMs` while the process is alive, after each location upload completes, when a session is stopping, and on `flushDebugLog()`. Shipping never blocks the location pipeline: it runs on its own queue with its own `URLSession`, a slow or failing debug server does not delay or reorder location uploads, and on iOS it does not start a background task, so it only runs while the process is awake for another reason.
+`install.id` is a UUID generated once and kept across launches. A batch holds at most 500 lines, in `seq` order, and the request times out after 20 seconds. A 2xx response advances a persisted cursor; any other result (including a timeout) leaves it, and the same lines are sent again on the next trigger, so make the endpoint idempotent on `install.id` and `seq`. Changing the URL does not reset the cursor. If a file rotation removed lines that were never sent, the next batch starts with `{ tag: 'debug', msg: 'lines lost', data: { from, to } }` instead of silently skipping sequence numbers. That line reuses `seq` `to`, the last lost one, and counts towards the `sent` that `flushDebugLog` returns.
+
+A batch is sent when the process starts, every `flushIntervalMs` while the process is alive, after each location upload completes, when a session is stopping, and on `flushDebugLog()`. Shipping never blocks the location pipeline: it runs on its own queue with its own `URLSession` on iOS and its own executor with `HttpURLConnection` on Android, one request at a time, and a slow or failing debug server does not delay or reorder location uploads. It never keeps the process awake by itself: on iOS it does not start a background task, and on Android, when the location service is not in the foreground, a batch sent while the background-start gate holds a delivery open gets only the time left in that window (its timeout is shortened, and the window is not extended). Otherwise it only runs while the process is awake for another reason.
 
 ### Privacy
 
-- Coordinates are written only to the debug file and sent only to the debug server. `os_log` on iOS carries no coordinates.
-- The debug headers are stored in the iOS Keychain with `AfterFirstUnlockThisDeviceOnly`. The other options, `seq`, the cursor and `install.id` are stored in `UserDefaults`.
+- Coordinates are written only to the debug file and sent only to the debug server. `os_log` on iOS and logcat on Android carry no coordinates.
+- On iOS the debug headers are stored in the Keychain with `AfterFirstUnlockThisDeviceOnly`; the other options, `seq`, the cursor and `install.id` are stored in `UserDefaults`. On Android all of them, headers included, are stored in the app's private `SharedPreferences`, like the session headers.
 - The `debug configured` line records the header names, not their values, and the URL without its query string.
 - Debug logging is for test builds. Turn it off, or do not ship the code that turns it on, in production.
 

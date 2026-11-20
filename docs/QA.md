@@ -66,14 +66,15 @@ v0.1 is done when every row passes on three physical devices: an iPhone (iOS 17+
 
 ### Debug logging
 
-Android rows are `beta.2`: the Android logger is not in 0.1.0-beta.1. Use the example's debug toggle with the debug URL pointing at the echo server `/logs`.
+The Android logger is in 0.1.0-beta.2 and later. Use the example's debug toggle with the debug URL pointing at the echo server `/logs`; the toggle logs the install id, which batches carry as `install.id`.
 
 | Done | # | Check | Expected | iPhone | Pixel | Samsung / Xiaomi |
 |------|---|-------|----------|--------|-------|------------------|
-| [ ] | 32 | Debug off (default) → `start` → move | No `debug-*.jsonl` file exists and the echo server receives no `/logs` request | | beta.2 | beta.2 |
-| [ ] | 33 | Debug on with the echo server `/logs` → `start` → move | Lines arrive in `seq` order with no gaps; `location` and `upload` lines appear; a batch arrives about every `flushIntervalMs` and after each upload | | beta.2 | beta.2 |
-| [ ] | 34 | Debug on → kill the app → relaunch with the phone locked (Always, as row 16) | Lines with a new `pid` and a `lifecycle` line with the launch reason reach the server | | beta.2 | beta.2 |
-| [ ] | 35 | Debug on → `/logs?delayMs=60000` or `?status=500` as the debug URL → move | Location uploads keep arriving at their normal cadence | | beta.2 | beta.2 |
-| [ ] | 36 | Debug on with a small `maxFileBytes` and no reachable server → move until the files rotate → restore the server | The first batch starts with a `lines lost` line; no `seq` is skipped silently | | beta.2 | beta.2 |
-| [ ] | 37 | Debug on → watch the device console / logcat during a session | No coordinates in `os_log` or logcat | | beta.2 | beta.2 |
-| [ ] | 38 | Debug on, then `configureDebug({ enabled: false })` → move | No new lines and no requests; the files are still there | | beta.2 | beta.2 |
+| [ ] | 32 | Debug off (default) → `start` → move | No `debug-*.jsonl` file exists and the echo server receives no `/logs` request | | | |
+| [ ] | 33 | Debug on with the echo server `/logs` → `start` → move | Lines arrive in `seq` order with no gaps; `location` and `upload` lines appear; a batch arrives about every `flushIntervalMs` and after each upload | | | |
+| [ ] | 34 | Debug on → kill the app → relaunch with the phone locked (Always, as row 16) | Lines with a new `pid` and a `lifecycle` line with the launch reason reach the server | | | |
+| [ ] | 35 | Debug on → `/logs?delayMs=60000` or `?status=500` as the debug URL → move | Location uploads keep arriving at their normal cadence | | | |
+| [ ] | 36 | Debug on with a small `maxFileBytes` and no reachable server → move until the files rotate → restore the server | The first batch starts with a `lines lost` line; no `seq` is skipped silently | | | |
+| [ ] | 37 | Debug on → watch the device console / logcat during a session | No coordinates in `os_log` or logcat | | | |
+| [ ] | 38 | Debug on, then `configureDebug({ enabled: false })` → move | No new lines and no requests; the files are still there | | | |
+| [ ] | 39 | Debug on → compare the install id the example logs with `install.id` in a batch | They are equal | | | |
