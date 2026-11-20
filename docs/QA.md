@@ -5,7 +5,7 @@ v0.1 is done when every row passes on three physical devices: an iPhone (iOS 17+
 ## Setup
 
 - The example app (`example/`) as a development build, driven by hand or with Maestro flows.
-- A reachable HTTPS upload endpoint, for example `example/scripts/echo-server.mjs` with TLS (see the README). It answers `?status=<code>` and `/fail?n=<count>`.
+- A reachable HTTPS upload endpoint, for example `example/scripts/echo-server.mjs` with TLS (see the README). It answers `?status=<code>` and `/fail?n=<count>`, and takes debug batches at `/logs` (`?status=<code>`, `?delayMs=<ms>`).
 - A session that expires well after the test unless the row says otherwise.
 - iOS: watch the device console for the `expo-location-session` subsystem.
 - Android: `adb logcat -s ELS ExpoLocationSession`. Every service promotion logs `service promoted via <route>` under the `ELS` tag.
@@ -63,3 +63,17 @@ v0.1 is done when every row passes on three physical devices: an iPhone (iOS 17+
 |------|---|-------|----------|--------|-------|------------------|
 | [ ] | 30 | Android release build with R8 minify (`android.enableMinifyInReleaseBuilds=true`): `start` → kill the process (release builds are not debuggable: use an OEM kill, or `adb root` and `kill -9` on an emulator) → relaunch from the launcher | `start` resolves, uploads arrive, the session resumes after the relaunch | n/a | | |
 | [ ] | 31 | iOS build with static frameworks (`expo-build-properties` `ios.useFrameworks: "static"`): Always → `start` → kill → relaunch | `bootstrap launch` is logged at launch and the session resumes | | n/a | n/a |
+
+### Debug logging
+
+Android rows are `beta.2`: the Android logger is not in 0.1.0-beta.1. Use the example's debug toggle with the debug URL pointing at the echo server `/logs`.
+
+| Done | # | Check | Expected | iPhone | Pixel | Samsung / Xiaomi |
+|------|---|-------|----------|--------|-------|------------------|
+| [ ] | 32 | Debug off (default) → `start` → move | No `debug-*.jsonl` file exists and the echo server receives no `/logs` request | | beta.2 | beta.2 |
+| [ ] | 33 | Debug on with the echo server `/logs` → `start` → move | Lines arrive in `seq` order with no gaps; `location` and `upload` lines appear; a batch arrives about every `flushIntervalMs` and after each upload | | beta.2 | beta.2 |
+| [ ] | 34 | Debug on → kill the app → relaunch with the phone locked (Always, as row 16) | Lines with a new `pid` and a `lifecycle` line with the launch reason reach the server | | beta.2 | beta.2 |
+| [ ] | 35 | Debug on → `/logs?delayMs=60000` or `?status=500` as the debug URL → move | Location uploads keep arriving at their normal cadence | | beta.2 | beta.2 |
+| [ ] | 36 | Debug on with a small `maxFileBytes` and no reachable server → move until the files rotate → restore the server | The first batch starts with a `lines lost` line; no `seq` is skipped silently | | beta.2 | beta.2 |
+| [ ] | 37 | Debug on → watch the device console / logcat during a session | No coordinates in `os_log` or logcat | | beta.2 | beta.2 |
+| [ ] | 38 | Debug on, then `configureDebug({ enabled: false })` → move | No new lines and no requests; the files are still there | | beta.2 | beta.2 |

@@ -1,6 +1,6 @@
 {
   "name": "expo-location-session",
-  "version": "0.1.0-alpha.0",
+  "version": "0.1.0-beta.1",
   "description": "Background location sessions for React Native, uploaded natively",
   "main": "./lib/commonjs/index.js",
   "module": "./lib/module/index.js",

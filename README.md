@@ -2,7 +2,7 @@
 
 Background location sessions for React Native. A session sends the device position to your server from native code (Swift on iOS, Kotlin on Android). It keeps working when the app is in the background, when the screen is locked and, with the right permission, after the app has been killed. It stops itself on arrival at a destination or at an expiry time, even if JavaScript never runs.
 
-Built with [Nitro Modules](https://nitro.margelo.com). Status: v0.1 alpha. One session at a time, latest position only.
+Built with [Nitro Modules](https://nitro.margelo.com). Status: v0.1 beta. One session at a time, latest position only.
 
 ## Requirements
 
@@ -131,7 +131,13 @@ start(config: SessionConfig): Promise<void>
 stop(): Promise<void>
 getState(): Promise<SessionState>
 addListener(event, callback): () => void
+configureDebug(options: DebugOptions): Promise<void>
+getDebugLog(opts?: { limit?: number }): Promise<DebugLogLine[]>
+clearDebugLog(): Promise<void>
+flushDebugLog(): Promise<{ sent: number }>
 ```
+
+The last four are described in [Debug logging](#debug-logging).
 
 ### Types
 
@@ -217,14 +223,109 @@ addListener('location', (l: Location) => {});
 addListener('upload', (r: { ok: boolean; status?: number; at: number }) => {});
 addListener('stop', (s: { reason: StopReason; sessionId: string }) => {});
 addListener('error', (e: { code: string; message: string }) => {});
+addListener('log', (line: DebugLogLine) => {});
 ```
 
-`addListener` returns an unsubscribe function. Events reach JS only while the JS runtime is alive; the native session does not depend on them. `upload.status` is missing when the request failed without a response (timeout, no network).
+`log` events are emitted only while debug logging is on. `addListener` returns an unsubscribe function. Events reach JS only while the JS runtime is alive; the native session does not depend on them. `upload.status` is missing when the request failed without a response (timeout, no network).
 
 Error event codes:
 
 - `UPLOAD_DROPPED`: the server answered a 4xx other than 401, 403 or 410 (or, on Android, the body could not be encoded). That location is dropped and the session keeps running.
 - `FGS_PROMOTION_FAILED` (Android): Android refused to restart the foreground service for 10 minutes. The session then stops with reason `stopped`. See [Android](#android).
+
+## Debug logging
+
+Debug logging writes a line for each lifecycle, permission, location, upload and stop event to a file on the device, and can send those lines to your server. It is meant for testing on real devices, where the process may be killed and relaunched while nobody is watching a console. It is off by default: with it off no file is opened and no request is made.
+
+In 0.1.0-beta.1 the debug API exists on Android but does nothing: `configureDebug` validates its options, `getDebugLog` returns `[]`, `flushDebugLog` returns `{ sent: 0 }` and no `log` events are emitted. The Android logger ships in 0.1.0-beta.2.
+
+```ts
+await configureDebug({
+  enabled: true,
+  url: 'https://logs.example.com/logs',
+  headers: { Authorization: 'Bearer <token>' },
+  flushIntervalMs: 60000,
+  maxFileBytes: 1_000_000,
+});
+
+const lines = await getDebugLog({ limit: 200 });
+const { sent } = await flushDebugLog();
+await clearDebugLog();
+await configureDebug({ enabled: false });
+```
+
+```ts
+type DebugOptions = {
+  enabled: boolean;
+  url?: string;
+  headers?: Record<string, string>;
+  flushIntervalMs?: number;
+  maxFileBytes?: number;
+};
+```
+
+| Option | Default | Notes |
+| --- | --- | --- |
+| `url` | none | https only. Without it lines are written to the file but never sent. |
+| `headers` | none | Sent with every batch, for example an `Authorization` header. |
+| `flushIntervalMs` | `60000` | Minimum `10000`. |
+| `maxFileBytes` | `1000000` | `100000` to `10000000`. |
+
+Invalid options reject with `INVALID_CONFIG: <reason>`. `configureDebug` replaces the previous options entirely and the options are persisted, so debug logging stays on after the app is killed and relaunched, including a relaunch by the OS for a location event. `enabled: false` stops writing and sending but keeps the files; `clearDebugLog` deletes them. `getDebugLog` returns the lines in order, newest last; `limit` keeps only the newest ones. `flushDebugLog` sends what is pending now and resolves with the number of lines the server accepted.
+
+### Line format
+
+One JSON object per line:
+
+```ts
+type DebugLogLine = {
+  seq: number;
+  t: number;
+  pid: number;
+  level: 'debug' | 'info' | 'warn' | 'error';
+  tag: 'lifecycle' | 'permission' | 'location' | 'upload' | 'stop' | 'service' | 'gate' | 'region' | 'store' | 'debug';
+  msg: string;
+  sessionId?: string;
+  data?: Record<string, unknown>;
+};
+```
+
+`seq` increases by one for every line and survives relaunches. `t` is epoch milliseconds. `pid` is the process id, so a new `pid` marks a relaunch; the first line of a process has tag `lifecycle` and records how it was launched. Coordinates appear only in these lines.
+
+The lines are kept in two files, `debug-0.jsonl` and `debug-1.jsonl`. When the current file passes `maxFileBytes` the logger switches to the other one and clears it, so the log holds between `maxFileBytes` and `2 × maxFileBytes`. On iOS the files are in `Application Support/expo-location-session/`, excluded from backup, with file protection `completeUntilFirstUserAuthentication`. Before the first unlock after a reboot the options cannot be read. The logger keeps up to 200 lines logged in that window in memory and writes them once the options load, which is retried when protected data becomes available.
+
+### Shipping
+
+Each batch is a `POST` to `url` with `Content-Type: application/json`, your headers, and this body:
+
+```json
+{
+  "install": {
+    "id": "6f1c0a52-0d0e-4a43-9d44-7a1d2f6a9b10",
+    "platform": "ios",
+    "model": "iPhone15,2",
+    "os": "17.5",
+    "appVersion": "1.4.0 (212)",
+    "libVersion": "0.1.0-beta.1"
+  },
+  "lines": []
+}
+```
+
+`install.id` is a UUID generated once and kept across launches. A batch holds at most 500 lines, in `seq` order, and the request times out after 20 seconds. A 2xx response advances a persisted cursor; any other result (including a timeout) leaves it, and the same lines are sent again on the next trigger, so make the endpoint idempotent on `install.id` and `seq`. Changing the URL does not reset the cursor. If a file rotation removed lines that were never sent, the next batch starts with `{ tag: 'debug', msg: 'lines lost', data: { from, to } }` instead of silently skipping sequence numbers.
+
+A batch is sent when the process starts, every `flushIntervalMs` while the process is alive, after each location upload completes, when a session is stopping, and on `flushDebugLog()`. Shipping never blocks the location pipeline: it runs on its own queue with its own `URLSession`, a slow or failing debug server does not delay or reorder location uploads, and on iOS it does not start a background task, so it only runs while the process is awake for another reason.
+
+### Privacy
+
+- Coordinates are written only to the debug file and sent only to the debug server. `os_log` on iOS carries no coordinates.
+- The debug headers are stored in the iOS Keychain with `AfterFirstUnlockThisDeviceOnly`. The other options, `seq`, the cursor and `install.id` are stored in `UserDefaults`.
+- The `debug configured` line records the header names, not their values, and the URL without its query string.
+- Debug logging is for test builds. Turn it off, or do not ship the code that turns it on, in production.
+
+### Cost
+
+With debug logging on, the app makes a network request every `flushIntervalMs` while the process is alive, plus one after each location upload and one when a session stops. The file can grow to `2 × maxFileBytes`. Use a longer `flushIntervalMs` when measuring battery.
 
 ## Upload contract
 
@@ -344,7 +445,7 @@ Stopping removes location updates, regions, geofences, alarms and the Android no
 
 ## Example app
 
-`example/` is an Expo development build with a screen to request permissions, pick a destination, start and stop a session against a configurable URL, and see the state and event log.
+`example/` is an Expo development build with a screen to request permissions, pick a destination, start and stop a session against a configurable URL, and see the state and event log. The Debug log section has a switch that calls `configureDebug` (default URL `https://localhost:8443/logs`, 10 s flush interval, 100 kB files), a field for the debug URL, a `Flush` button and a count of `log` events.
 
 ```sh
 yarn install
@@ -354,7 +455,7 @@ yarn install
 yarn ios       # or: yarn android
 ```
 
-Run the local echo server in another terminal. It prints every request body and answers `204`, or the status in `?status=` (for example `?status=401`); a request to `/fail?n=3` makes the next 3 uploads answer 503.
+Run the local echo server in another terminal. It prints every request body and answers `204`, or the status in `?status=` (for example `?status=401`); a request to `/fail?n=3` makes the next 3 uploads answer 503. `POST /logs` accepts debug batches: it prints one summary line per batch (install id, line count, `seq` range, `Authorization` header), answers `204` or the status in `?status=`, and waits `?delayMs=` before answering. Set `LOG_LINES=1` to print every line.
 
 ```sh
 TLS_CERT=cert.pem TLS_KEY=key.pem node example/scripts/echo-server.mjs   # https on :8443
