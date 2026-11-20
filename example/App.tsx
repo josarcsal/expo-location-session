@@ -5,6 +5,7 @@ import {
   configureDebug,
   flushDebugLog,
   getCurrentPosition,
+  getDebugInstallId,
   getDebugLog,
   getPermissionStatus,
   getState,
@@ -97,7 +98,7 @@ export default function App() {
         maxFileBytes: DEBUG_MAX_FILE_BYTES,
       });
       setDebugEnabled(enabled);
-      append(`debug ${enabled ? 'on' : 'off'}`);
+      append(`debug ${enabled ? 'on' : 'off'}, install ${await getDebugInstallId()}`);
     } catch (error) {
       append(`configureDebug rejected ${describe(error)}`);
     }

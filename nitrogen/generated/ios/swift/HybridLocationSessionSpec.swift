@@ -23,6 +23,7 @@ public protocol HybridLocationSessionSpec_protocol: HybridObject {
   func getDebugLog(limit: Double) throws -> Promise<String>
   func clearDebugLog() throws -> Promise<Void>
   func flushDebugLog() throws -> Promise<Double>
+  func getDebugInstallId() throws -> Promise<String>
   func addListener(event: SessionEvent, callback: @escaping (_ payloadJson: String) -> Void) throws -> Double
   func removeListener(id: Double) throws -> Void
 }

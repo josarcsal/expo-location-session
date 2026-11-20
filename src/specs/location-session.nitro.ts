@@ -76,6 +76,7 @@ export interface LocationSession extends HybridObject<{ ios: 'swift'; android: '
   getDebugLog(limit: number): Promise<string>;
   clearDebugLog(): Promise<void>;
   flushDebugLog(): Promise<number>;
+  getDebugInstallId(): Promise<string>;
   addListener(event: SessionEvent, callback: (payloadJson: string) => void): number;
   removeListener(id: number): void;
 }

@@ -251,6 +251,22 @@ namespace margelo::nitro::locationsession {
       return __promise;
     }();
   }
+  std::shared_ptr<Promise<std::string>> JHybridLocationSessionSpec::getDebugInstallId() {
+    static const auto method = _javaPart->javaClassStatic()->getMethod<jni::local_ref<JPromise::javaobject>()>("getDebugInstallId");
+    auto __result = method(_javaPart);
+    return [&]() {
+      auto __promise = Promise<std::string>::create();
+      __result->cthis()->addOnResolvedListener([=](const jni::alias_ref<jni::JObject>& __boxedResult) {
+        auto __result = jni::static_ref_cast<jni::JString>(__boxedResult);
+        __promise->resolve(__result->toStdString());
+      });
+      __result->cthis()->addOnRejectedListener([=](const jni::alias_ref<jni::JThrowable>& __throwable) {
+        jni::JniException __jniError(__throwable);
+        __promise->reject(std::make_exception_ptr(__jniError));
+      });
+      return __promise;
+    }();
+  }
   double JHybridLocationSessionSpec::addListener(SessionEvent event, const std::function<void(const std::string& /* payloadJson */)>& callback) {
     static const auto method = _javaPart->javaClassStatic()->getMethod<double(jni::alias_ref<JSessionEvent> /* event */, jni::alias_ref<JFunc_void_std__string::javaobject> /* callback */)>("addListener_cxx");
     auto __result = method(_javaPart, JSessionEvent::fromCpp(event), JFunc_void_std__string_cxx::fromCpp(callback));

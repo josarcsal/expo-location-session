@@ -121,6 +121,12 @@ class HybridLocationSession : HybridLocationSessionSpec() {
         DebugLogger.flush(ctx) { promise.resolve(it.toDouble()) }
     }
 
+    override fun getDebugInstallId(): Promise<String> = onMain { ctx, promise ->
+        DebugLogger.installId(ctx) { id ->
+            if (id != null) promise.resolve(id) else promise.reject(RuntimeException("INTERNAL: Debug storage is not available"))
+        }
+    }
+
     override fun addListener(event: SessionEvent, callback: (payloadJson: String) -> Unit): Double {
         val name = when (event) {
             SessionEvent.LOCATION -> "location"

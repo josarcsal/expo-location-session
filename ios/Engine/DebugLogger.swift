@@ -513,14 +513,19 @@ final class DebugLogger {
         return out
     }
 
+    func installId() -> String {
+        queue.sync { storedInstallId() }
+    }
+
+    private func storedInstallId() -> String {
+        if let existing = defaults.string(forKey: Key.installId) { return existing }
+        let id = UUID().uuidString.lowercased()
+        defaults.set(id, forKey: Key.installId)
+        return id
+    }
+
     private func installInfo() -> [String: Any] {
-        let id: String
-        if let existing = defaults.string(forKey: Key.installId) {
-            id = existing
-        } else {
-            id = UUID().uuidString.lowercased()
-            defaults.set(id, forKey: Key.installId)
-        }
+        let id = storedInstallId()
         let info = Bundle.main.infoDictionary ?? [:]
         let short = info["CFBundleShortVersionString"] as? String ?? "0"
         let build = info["CFBundleVersion"] as? String ?? "0"

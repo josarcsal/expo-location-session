@@ -83,6 +83,7 @@ namespace margelo::nitro::locationsession {
       virtual std::shared_ptr<Promise<std::string>> getDebugLog(double limit) = 0;
       virtual std::shared_ptr<Promise<void>> clearDebugLog() = 0;
       virtual std::shared_ptr<Promise<double>> flushDebugLog() = 0;
+      virtual std::shared_ptr<Promise<std::string>> getDebugInstallId() = 0;
       virtual double addListener(SessionEvent event, const std::function<void(const std::string& /* payloadJson */)>& callback) = 0;
       virtual void removeListener(double id) = 0;
 

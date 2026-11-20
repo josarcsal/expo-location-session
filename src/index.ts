@@ -182,6 +182,10 @@ export function flushDebugLog(): Promise<{ sent: number }> {
   return call(async (s) => ({ sent: await s.flushDebugLog() }));
 }
 
+export function getDebugInstallId(): Promise<string> {
+  return call((s) => s.getDebugInstallId());
+}
+
 export function addListener<E extends keyof LocationSessionEventMap>(
   event: E,
   callback: (payload: LocationSessionEventMap[E]) => void,

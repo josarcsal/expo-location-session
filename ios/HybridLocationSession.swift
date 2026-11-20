@@ -99,6 +99,12 @@ class HybridLocationSession: HybridLocationSessionSpec {
         return promise
     }
 
+    func getDebugInstallId() throws -> Promise<String> {
+        offMain { promise in
+            promise.resolve(withResult: DebugLogger.shared.installId())
+        }
+    }
+
     func addListener(event: SessionEvent, callback: @escaping (String) -> Void) throws -> Double {
         guard let kind = EventBus.Event(rawValue: event.stringValue) else {
             throw RuntimeError.error(withMessage: "INVALID_EVENT: \(event.stringValue)")

@@ -182,6 +182,14 @@ namespace margelo::nitro::locationsession {
       auto __value = std::move(__result.value());
       return __value;
     }
+    inline std::shared_ptr<Promise<std::string>> getDebugInstallId() override {
+      auto __result = _swiftPart.getDebugInstallId();
+      if (__result.hasError()) [[unlikely]] {
+        std::rethrow_exception(__result.error());
+      }
+      auto __value = std::move(__result.value());
+      return __value;
+    }
     inline double addListener(SessionEvent event, const std::function<void(const std::string& /* payloadJson */)>& callback) override {
       auto __result = _swiftPart.addListener(static_cast<int>(event), callback);
       if (__result.hasError()) [[unlikely]] {

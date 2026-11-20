@@ -70,6 +70,10 @@ abstract class HybridLocationSessionSpec: HybridObject() {
   @Keep
   abstract fun flushDebugLog(): Promise<Double>
   
+  @DoNotStrip
+  @Keep
+  abstract fun getDebugInstallId(): Promise<String>
+  
   abstract fun addListener(event: SessionEvent, callback: (payloadJson: String) -> Unit): Double
   
   @DoNotStrip
