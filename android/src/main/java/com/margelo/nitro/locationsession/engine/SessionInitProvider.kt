@@ -7,7 +7,10 @@ import android.net.Uri
 
 class SessionInitProvider : ContentProvider() {
     override fun onCreate(): Boolean {
-        context?.let(SessionEngine::attach)
+        context?.let {
+            DebugLogger.processStarted(it)
+            SessionEngine.attach(it)
+        }
         return true
     }
 

@@ -46,6 +46,7 @@ android {
     targetSdkVersion getExtOrIntegerDefault("targetSdkVersion")
     consumerProguardFiles "consumer-rules.pro"
     buildConfigField "boolean", "IS_NEW_ARCHITECTURE_ENABLED", isNewArchitectureEnabled().toString()
+    buildConfigField "String", "LIB_VERSION", "\"${new groovy.json.JsonSlurper().parse(file("../package.json")).version}\""
 
     externalNativeBuild {
       cmake {

@@ -97,20 +97,24 @@ class HybridLocationSession : HybridLocationSessionSpec() {
     }
 
     override fun configureDebug(options: NativeDebugOptions): Promise<Unit> = onMain { ctx, promise ->
-        DebugLogger.configure(ctx, debugOptions(options))
-        promise.resolve(Unit)
+        DebugLogger.configure(ctx, debugOptions(options)) { error ->
+            when (error) {
+                null -> promise.resolve(Unit)
+                is LocationSessionException -> promise.reject(RuntimeException(error.message))
+                else -> promise.reject(RuntimeException("INTERNAL: $error"))
+            }
+        }
     }
 
     override fun getDebugLog(limit: Double): Promise<String> = onMain { ctx, promise ->
         if (!limit.isFinite() || limit < 0 || limit > Int.MAX_VALUE) {
             throw LocationSessionException("INVALID_CONFIG", "limit must be a non-negative number")
         }
-        promise.resolve(DebugLogger.read(ctx, limit.toInt()))
+        DebugLogger.read(ctx, limit.toInt()) { promise.resolve(it) }
     }
 
     override fun clearDebugLog(): Promise<Unit> = onMain { ctx, promise ->
-        DebugLogger.clear(ctx)
-        promise.resolve(Unit)
+        DebugLogger.clear(ctx) { promise.resolve(Unit) }
     }
 
     override fun flushDebugLog(): Promise<Double> = onMain { ctx, promise ->

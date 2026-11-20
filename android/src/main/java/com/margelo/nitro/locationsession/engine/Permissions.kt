@@ -2,18 +2,26 @@ package com.margelo.nitro.locationsession.engine
 
 import android.Manifest
 import android.app.Activity
+import android.app.ActivityManager
+import android.app.AlarmManager
 import android.app.Application
+import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.facebook.react.modules.core.PermissionAwareActivity
 import com.facebook.react.modules.core.PermissionListener
 
 enum class Grant(val wire: String) { GRANTED("granted"), DENIED("denied"), UNDETERMINED("undetermined") }
 
-data class PermissionSnapshot(val foreground: Grant, val background: Grant, val precise: Boolean, val notifications: Grant)
+data class PermissionSnapshot(val foreground: Grant, val background: Grant, val precise: Boolean, val notifications: Grant) {
+    fun toMap(): Map<String, Any?> =
+        mapOf("foreground" to foreground.wire, "background" to background.wire, "precise" to precise, "notifications" to notifications.wire)
+}
 
 object Permissions {
     private const val REQUESTED_FOREGROUND = "requestedForeground"
@@ -74,18 +82,46 @@ object Permissions {
         } else {
             grant(notificationsGranted(ctx), REQUESTED_NOTIFICATIONS, Manifest.permission.POST_NOTIFICATIONS)
         }
-        return PermissionSnapshot(
+        val snapshot = PermissionSnapshot(
             foreground = foreground,
             background = background,
             precise = granted(ctx, Manifest.permission.ACCESS_FINE_LOCATION),
             notifications = notifications
         )
+        ElsLog.debug("permission", "status", snapshot.toMap())
+        return snapshot
+    }
+
+    fun capabilities(ctx: Context): Map<String, Any?> {
+        val power = ctx.getSystemService(PowerManager::class.java)
+        val activity = ctx.getSystemService(ActivityManager::class.java)
+        val data = mutableMapOf<String, Any?>(
+            "fineLocation" to granted(ctx, Manifest.permission.ACCESS_FINE_LOCATION),
+            "coarseLocation" to granted(ctx, Manifest.permission.ACCESS_COARSE_LOCATION),
+            "backgroundLocation" to hasBackground(ctx),
+            "postNotifications" to notificationsGranted(ctx),
+            "notificationsEnabled" to NotificationManagerCompat.from(ctx).areNotificationsEnabled(),
+            "exactAlarms" to (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || ctx.getSystemService(AlarmManager::class.java)?.canScheduleExactAlarms() == true),
+            "ignoringBatteryOptimizations" to power?.isIgnoringBatteryOptimizations(ctx.packageName),
+            "powerSaveMode" to power?.isPowerSaveMode,
+            "deviceIdle" to power?.isDeviceIdleMode
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            data["backgroundRestricted"] = activity?.isBackgroundRestricted
+            data["standbyBucket"] = try {
+                ctx.getSystemService(UsageStatsManager::class.java)?.appStandbyBucket
+            } catch (e: Exception) {
+                null
+            }
+        }
+        return data
     }
 
     fun request(ctx: Context, activity: () -> Activity?, always: Boolean, completion: (PermissionSnapshot) -> Unit) {
         assertMain()
         currentActivity = activity
         observe(ctx)
+        ElsLog.debug("permission", "request", mapOf("always" to always, "queued" to (inFlight != null)), level = "info")
         queue.addLast(Pending(always, completion))
         runNext(ctx)
     }
@@ -101,6 +137,7 @@ object Permissions {
             if (token != requestToken || inFlight !== next) return@perform
             inFlight = null
             requestActivity = null
+            ElsLog.debug("permission", "request result", snapshot.toMap(), level = "info")
             next.completion(snapshot)
             runNext(ctx)
         }
@@ -114,7 +151,7 @@ object Permissions {
             override fun onActivityDestroyed(activity: Activity) {
                 val current = inFlight ?: return
                 if (requestActivity !== activity) return
-                ElsLog.info("activity destroyed during a permission request; resolving pending requests")
+                ElsLog.info("permission", "activity destroyed during a permission request; resolving pending requests", level = "warn")
                 inFlight = null
                 requestActivity = null
                 requestToken++
@@ -136,7 +173,7 @@ object Permissions {
         val aware = activity as? PermissionAwareActivity
         val finish = { completion(status(ctx, activity)) }
         if (aware == null) {
-            ElsLog.info("requestPermission without a PermissionAwareActivity; returning current status")
+            ElsLog.info("permission", "requestPermission without a PermissionAwareActivity; returning current status", level = "warn")
             finish()
             return
         }
@@ -185,7 +222,7 @@ object Permissions {
                 true
             })
         } catch (e: Exception) {
-            ElsLog.info("requestPermissions failed: $e")
+            ElsLog.info("permission", "requestPermissions failed: ${e.javaClass.simpleName}", level = "warn")
             done()
         }
     }

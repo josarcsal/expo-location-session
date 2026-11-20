@@ -18,6 +18,7 @@ import org.json.JSONObject
 class LaunchGate : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val kind = Kind.fromAction(intent.action) ?: return
+        DebugLogger.launched("gate", mapOf("gateKind" to kind.route))
         val pending = goAsync()
         finishOnce(pending) { finish -> onDelivery(context, kind, intent, finish) }
     }
@@ -57,10 +58,25 @@ class LaunchGate : BroadcastReceiver() {
             deliveryRoute = kind.route
             deniedDuringDelivery = false
             try {
-                ElsLog.info("gate delivery ${kind.route}")
+                ElsLog.info(
+                    "gate",
+                    "gate delivery ${kind.route}",
+                    mapOf(
+                        "kind" to kind.route,
+                        "hasLocationResult" to (kind == Kind.LOCATION && LocationResult.hasResult(intent)),
+                        "serviceAlive" to LocationTrackingService.isAlive,
+                        "serviceForeground" to LocationTrackingService.isForeground,
+                        "startPending" to startPending,
+                        "appInForeground" to SessionEngine.isAppInForeground(ctx)
+                    )
+                )
                 if (kind == Kind.RECOVERY_GEOFENCE) {
-                    GeofencingEvent.fromIntent(intent)?.takeIf { it.hasError() }?.let {
-                        ElsLog.info("recovery geofence error ${it.errorCode}")
+                    GeofencingEvent.fromIntent(intent)?.let { event ->
+                        if (event.hasError()) {
+                            ElsLog.info("region", "recovery geofence error ${event.errorCode}", level = "warn")
+                        } else {
+                            ElsLog.debug("region", "recovery geofence transition", mapOf("transition" to event.geofenceTransition), level = "info")
+                        }
                     }
                     RecoveryGeofence.remove(ctx)
                 }
@@ -70,6 +86,7 @@ class LaunchGate : BroadcastReceiver() {
                     promote(ctx)
                     enforceDeadline(ctx)
                 } else if (!SessionEngine.isActive && (kind == Kind.EXACT_ALARM || kind == Kind.RECOVERY_GEOFENCE)) {
+                    ElsLog.debug("gate", "no live session; clearing retries", mapOf("kind" to kind.route), level = "info")
                     clear(ctx)
                 }
                 when (kind) {
@@ -92,15 +109,39 @@ class LaunchGate : BroadcastReceiver() {
 
         fun promote(ctx: Context) {
             assertMain()
-            if (LocationTrackingService.isForeground || startPending || deniedDuringDelivery) return
+            if (LocationTrackingService.isForeground || startPending || deniedDuringDelivery) {
+                ElsLog.debug(
+                    "gate",
+                    "promote skipped",
+                    mapOf(
+                        "deliveryRoute" to deliveryRoute,
+                        "serviceForeground" to LocationTrackingService.isForeground,
+                        "startPending" to startPending,
+                        "deniedDuringDelivery" to deniedDuringDelivery
+                    )
+                )
+                return
+            }
             val appInForeground = SessionEngine.isAppInForeground(ctx)
             val route = if (appInForeground) "foregroundApp" else deliveryRoute ?: "background"
+            ElsLog.debug(
+                "gate",
+                "promote attempt via $route",
+                mapOf(
+                    "route" to route,
+                    "appInForeground" to appInForeground,
+                    "hasForeground" to Permissions.hasForeground(ctx),
+                    "hasBackground" to Permissions.hasBackground(ctx),
+                    "serviceAlive" to LocationTrackingService.isAlive
+                ),
+                level = "info"
+            )
             if (!Permissions.hasForeground(ctx) || !(Permissions.hasBackground(ctx) || appInForeground)) {
-                ElsLog.info("skipping foreground service start via $route: location FGS would not be allowed")
+                ElsLog.info("gate", "skipping foreground service start via $route: location FGS would not be allowed", mapOf("route" to route))
                 return
             }
             if (LocationTrackingService.isAlive) {
-                ElsLog.route("service alive but not foreground via $route")
+                ElsLog.route("service alive but not foreground via $route", mapOf("route" to route, "outcome" to "denied"))
                 onDenied(ctx, route)
                 return
             }
@@ -108,13 +149,13 @@ class LaunchGate : BroadcastReceiver() {
                 ContextCompat.startForegroundService(ctx, Intent(ctx, LocationTrackingService::class.java))
                 startPending = true
                 startedRoute = route
-                ElsLog.route("foreground service start allowed via $route")
+                ElsLog.route("foreground service start allowed via $route", mapOf("route" to route, "outcome" to "allowed"))
             } catch (e: Exception) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && e is ForegroundServiceStartNotAllowedException) {
-                    ElsLog.route("foreground service start denied via $route")
+                    ElsLog.route("foreground service start denied via $route", mapOf("route" to route, "outcome" to "denied"))
                     onDenied(ctx, route)
                 } else {
-                    ElsLog.route("foreground service start failed via $route: $e")
+                    ElsLog.route("foreground service start failed via $route: ${e.javaClass.simpleName}", mapOf("route" to route, "outcome" to "failed", "error" to e.toString()))
                     onDenied(ctx, route)
                 }
             }
@@ -140,9 +181,13 @@ class LaunchGate : BroadcastReceiver() {
             assertMain()
             val route = startedRoute ?: "systemRestart"
             startedRoute = null
-            ElsLog.route("service promoted via $route")
             val store = SessionStore(ctx)
-            if (store.firstPromotionFailureAtMs != null) {
+            val firstFailure = store.firstPromotionFailureAtMs
+            ElsLog.route(
+                "service promoted via $route",
+                mapOf("route" to route, "afterFailureMs" to firstFailure?.let { nowMs() - it })
+            )
+            if (firstFailure != null) {
                 store.firstPromotionFailureAtMs = null
                 cancelRetry(ctx)
                 RecoveryGeofence.remove(ctx)
@@ -157,16 +202,25 @@ class LaunchGate : BroadcastReceiver() {
         private fun onDenied(ctx: Context, route: String) {
             if (deliveryRoute != null) deniedDuringDelivery = true
             val store = SessionStore(ctx)
-            if (store.firstPromotionFailureAtMs == null) store.firstPromotionFailureAtMs = nowMs()
+            val now = nowMs()
+            val firstFailure = store.firstPromotionFailureAtMs ?: now.also { store.firstPromotionFailureAtMs = it }
+            val exactAlarms = canScheduleExactAlarms(ctx)
+            val clock = mapOf(
+                "route" to route,
+                "firstFailureAtMs" to firstFailure,
+                "elapsedMs" to now - firstFailure,
+                "giveUpAtMs" to firstFailure + PROMOTION_DEADLINE_MS,
+                "canScheduleExactAlarms" to exactAlarms
+            )
             when {
                 route == Kind.EXACT_ALARM.route || route == Kind.RECOVERY_GEOFENCE.route ->
-                    ElsLog.route("second consecutive denial; waiting for the next delivery")
-                canScheduleExactAlarms(ctx) && scheduleRetry(ctx) ->
-                    ElsLog.route("retry scheduled via exactAlarm")
+                    ElsLog.route("second consecutive denial; waiting for the next delivery", clock + ("retry" to "nextDelivery"))
+                exactAlarms && scheduleRetry(ctx) ->
+                    ElsLog.route("retry scheduled via exactAlarm", clock + ("retry" to "exactAlarm"))
                 else -> {
-                    ElsLog.route("retry scheduled via recoveryGeofence")
+                    ElsLog.route("retry scheduled via recoveryGeofence", clock + ("retry" to "recoveryGeofence"))
                     RecoveryGeofence.arm(ctx, SessionEngine.lastKnownFix) { armed ->
-                        if (!armed) ElsLog.route("recovery geofence unavailable; waiting for the next delivery")
+                        if (!armed) ElsLog.route("recovery geofence unavailable; waiting for the next delivery", mapOf("retry" to "nextDelivery"))
                     }
                 }
             }
@@ -176,8 +230,11 @@ class LaunchGate : BroadcastReceiver() {
             if (!SessionEngine.isActive || LocationTrackingService.isForeground || startPending) return
             val first = SessionStore(ctx).firstPromotionFailureAtMs ?: return
             val elapsed = nowMs() - first
-            if (elapsed < PROMOTION_DEADLINE_MS) return
-            ElsLog.route("no promotion for ${elapsed / 1000}s; stopping the session")
+            if (elapsed < PROMOTION_DEADLINE_MS) {
+                ElsLog.debug("gate", "promotion clock", mapOf("elapsedMs" to elapsed, "giveUpAtMs" to first + PROMOTION_DEADLINE_MS))
+                return
+            }
+            ElsLog.route("no promotion for ${elapsed / 1000}s; stopping the session", mapOf("elapsedMs" to elapsed))
             SessionEngine.events.emit(
                 "error",
                 JSONObject()
@@ -198,7 +255,7 @@ class LaunchGate : BroadcastReceiver() {
                 alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, nowMs(), pendingIntent(ctx, Kind.EXACT_ALARM))
                 true
             } catch (e: SecurityException) {
-                ElsLog.info("exact alarm denied: $e")
+                ElsLog.info("gate", "exact alarm denied: ${e.javaClass.simpleName}", level = "warn")
                 false
             }
         }
@@ -211,12 +268,24 @@ class LaunchGate : BroadcastReceiver() {
 
 private const val ASYNC_BUDGET_MS = 9_000L
 
+private var openWindows = 0
+
+@Volatile
+internal var asyncDeadlineMs = 0L
+    private set
+
 internal fun finishOnce(pending: BroadcastReceiver.PendingResult, run: (() -> Unit) -> Unit) {
     val handler = Handler(Looper.getMainLooper())
+    val openedAt = nowMs()
     var done = false
+    openWindows += 1
+    asyncDeadlineMs = openedAt + ASYNC_BUDGET_MS
     val finish = {
         if (!done) {
             done = true
+            openWindows -= 1
+            if (openWindows == 0) asyncDeadlineMs = 0L
+            ElsLog.debug("gate", "delivery finished", mapOf("heldMs" to nowMs() - openedAt))
             pending.finish()
         }
     }
@@ -227,7 +296,7 @@ internal fun finishOnce(pending: BroadcastReceiver.PendingResult, run: (() -> Un
             finish()
         }
     } catch (e: Exception) {
-        ElsLog.info("receiver failed: $e")
+        ElsLog.info("gate", "receiver failed: ${e.javaClass.simpleName}", mapOf("error" to e.toString()), level = "error")
         finish()
     }
 }

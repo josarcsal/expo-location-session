@@ -32,16 +32,38 @@ class SessionStore(context: Context) {
         } catch (e: Exception) {
             return false
         }
-        return prefs.edit()
+        val saved = prefs.edit()
             .putString(CONFIG, json)
             .putLong(STARTED_AT, startedAtMs)
             .remove(PENDING_FIX)
             .remove(LAST_UPLOAD_AT)
             .remove(FIRST_PROMOTION_FAILURE_AT)
             .commit()
+        ElsLog.debug(
+            "store",
+            if (saved) "session persisted" else "session not persisted",
+            mapOf("startedAtMs" to startedAtMs, "expiresAtMs" to config.expiresAtMs),
+            config.id,
+            level = if (saved) "info" else "error"
+        )
+        return saved
     }
 
-    fun load(): StoredSession {
+    fun load(): StoredSession = read().also {
+        when (it) {
+            StoredSession.None -> ElsLog.debug("store", "no persisted session")
+            StoredSession.Corrupt -> ElsLog.debug("store", "persisted session corrupt", level = "warn")
+            is StoredSession.Session -> ElsLog.debug(
+                "store",
+                "persisted session loaded",
+                mapOf("startedAtMs" to it.startedAtMs, "expiresAtMs" to it.config.expiresAtMs),
+                it.config.id,
+                level = "info"
+            )
+        }
+    }
+
+    private fun read(): StoredSession {
         val json = prefs.getString(CONFIG, null)
         val hasStarted = prefs.contains(STARTED_AT)
         if (json == null) return if (hasStarted) StoredSession.Corrupt else StoredSession.None
@@ -105,13 +127,14 @@ class SessionStore(context: Context) {
     }
 
     fun wipe() {
-        prefs.edit()
+        val wiped = prefs.edit()
             .remove(CONFIG)
             .remove(STARTED_AT)
             .remove(PENDING_FIX)
             .remove(LAST_UPLOAD_AT)
             .remove(FIRST_PROMOTION_FAILURE_AT)
             .commit()
+        ElsLog.debug("store", "session wiped", mapOf("committed" to wiped), level = "info")
     }
 }
 

@@ -51,7 +51,6 @@ fun validateDebugOptions(o: DebugOptions): String? {
 
 fun encodeLogLine(line: LogLine): String {
     val obj = JSONObject()
-        .put("seq", line.seq)
         .put("t", line.t)
         .put("pid", line.pid)
         .put("level", line.level)
@@ -59,7 +58,25 @@ fun encodeLogLine(line: LogLine): String {
         .put("msg", line.msg)
     line.sessionId?.let { obj.put("sessionId", it) }
     line.data?.let { obj.put("data", sanitizeMap(it)) }
-    return obj.toString()
+    val rest = obj.toString().substring(1)
+    return "{\"seq\":${line.seq}" + (if (rest == "}") "" else ",") + rest
+}
+
+private val SEQ_PREFIX = "{\"seq\":".toByteArray(Charsets.UTF_8)
+
+fun lineSeq(bytes: ByteArray, start: Int = 0, end: Int = bytes.size): Long? {
+    if (end - start <= SEQ_PREFIX.size + 2) return null
+    for (i in SEQ_PREFIX.indices) if (bytes[start + i] != SEQ_PREFIX[i]) return null
+    var index = start + SEQ_PREFIX.size
+    var value = 0L
+    var digits = 0
+    while (index < end && bytes[index] in '0'.code.toByte()..'9'.code.toByte() && digits < 18) {
+        value = value * 10 + (bytes[index] - '0'.code.toByte())
+        digits++
+        index++
+    }
+    if (digits == 0 || index >= end || bytes[index] != ','.code.toByte() || bytes[end - 1] != '}'.code.toByte()) return null
+    return value
 }
 
 fun planBatch(fileSeqRange: LongRange, cursor: Long, max: Int = 500): BatchPlan? {

@@ -61,11 +61,16 @@ object SessionEngine {
         lifecycleAttached = true
         (ctx.applicationContext as? Application)?.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
             override fun onActivityResumed(activity: Activity) {
+                ElsLog.debug("lifecycle", "activity resumed", level = "info")
                 resumeIfNeeded(activity)
             }
-            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
+                DebugLogger.launched("activity", mapOf("restored" to (savedInstanceState != null)))
+            }
             override fun onActivityStarted(activity: Activity) {}
-            override fun onActivityPaused(activity: Activity) {}
+            override fun onActivityPaused(activity: Activity) {
+                ElsLog.debug("lifecycle", "activity paused", level = "info")
+            }
             override fun onActivityStopped(activity: Activity) {}
             override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
             override fun onActivityDestroyed(activity: Activity) {}
@@ -76,6 +81,7 @@ object SessionEngine {
         assertMain()
         app?.let { return it }
         val context = ctx.applicationContext
+        DebugLogger.init(context)
         attach(context)
         app = context
         store = SessionStore(context)
@@ -106,12 +112,25 @@ object SessionEngine {
             teardown(context, c, null)
             throw LocationSessionException("INTERNAL", "Could not start the session: $e")
         }
-        ElsLog.info("started session ${c.id}")
+        ElsLog.info(
+            "lifecycle",
+            "started session ${c.id}",
+            mapOf(
+                "expiresAtMs" to c.expiresAtMs,
+                "accuracy" to c.accuracy,
+                "distanceFilterMeters" to c.distanceFilterMeters,
+                "uploadMinIntervalMs" to c.uploadMinIntervalMs,
+                "destination" to c.destination?.let { mapOf("latitude" to it.latitude, "longitude" to it.longitude, "radiusMeters" to it.radiusMeters) }
+            ),
+            c.id
+        )
+        ElsLog.debug("permission", "capabilities", Permissions.capabilities(context), c.id, level = "info")
     }
 
     fun stop(ctx: Context, reason: StopReason) {
         val context = init(ctx)
         val c = config ?: (store.load() as? StoredSession.Session)?.config ?: return
+        ElsLog.debug("stop", "stop requested", mapOf("reason" to reason.wire, "nowMs" to nowMs(), "expiresAtMs" to c.expiresAtMs), c.id, level = "info")
         teardown(context, c, reason)
     }
 
@@ -136,20 +155,32 @@ object SessionEngine {
         val context = init(ctx)
         resumeIfNeeded(context)
         if (config == null) {
-            ElsLog.info("location delivery without an active session; removing updates")
+            ElsLog.info("location", "location delivery without an active session; removing updates", mapOf("fixes" to fixes.size))
             removeUpdates(context)
             settled()
             return
         }
         for (raw in fixes) {
-            val c = config ?: break
-            if (stopping) break
-            val fix = sanitized(raw) ?: continue
+            val c = config
+            if (c == null || stopping) {
+                logFix(raw, "dropped", if (c == null) "no session" else "stopping", c?.id)
+                break
+            }
+            val fix = sanitized(raw)
+            if (fix == null) {
+                logFix(raw, "dropped", "invalid", c.id)
+                continue
+            }
             if (nowMs() >= c.expiresAtMs || fix.timestampMs >= c.expiresAtMs) {
+                logFix(fix, "dropped", "after expiry", c.id)
                 evaluate(context, null)
                 break
             }
-            if (!acceptFix(fix, startedAtMs)) continue
+            if (!acceptFix(fix, startedAtMs)) {
+                logFix(fix, "dropped", "before session start", c.id)
+                continue
+            }
+            logFix(fix, "accepted", null, c.id)
             uploader.put(fix)
             lastFix = fix
             events.emit("location", locationPayload(fix))
@@ -177,7 +208,7 @@ object SessionEngine {
         when (val stored = store.load()) {
             StoredSession.None -> return
             StoredSession.Corrupt -> {
-                ElsLog.info("discarding unreadable persisted session")
+                ElsLog.info("store", "discarding unreadable persisted session", level = "warn")
                 store.wipe()
                 removeUpdates(context)
                 cancelAlarm(context)
@@ -193,11 +224,11 @@ object SessionEngine {
                         removeUpdates(context)
                         stopService(context)
                         scheduleAlarm(context, c)
-                        ElsLog.info("session ${c.id} paused until the app is opened (no background location)")
+                        ElsLog.info("lifecycle", "session ${c.id} paused until the app is opened (no background location)", sessionId = c.id)
                     }
                     else -> {
                         activate(context, c, stored.startedAtMs, store.pendingFix, store.lastUploadAtMs)
-                        ElsLog.info("resumed session ${c.id}")
+                        ElsLog.info("store", "resumed session ${c.id}", mapOf("pendingFix" to (store.pendingFix != null)), c.id)
                         lastFix?.let { evaluate(context, it) } ?: uploader.pump()
                     }
                 }
@@ -230,11 +261,12 @@ object SessionEngine {
         lastFix = null
         stopping = false
         if (reason == null) {
-            ElsLog.info("discarded session ${c.id} after a failed start")
+            ElsLog.info("stop", "discarded session ${c.id} after a failed start", sessionId = c.id)
             return
         }
         store.lastStop = LastStop(reason, nowMs(), c.id)
-        ElsLog.info("stopped session ${c.id} reason=${reason.wire}")
+        ElsLog.info("stop", "stopped session ${c.id} reason=${reason.wire}", mapOf("reason" to reason.wire), c.id)
+        DebugLogger.onStopping()
         events.emit("stop", JSONObject().put("reason", reason.wire).put("sessionId", c.id))
     }
 
@@ -246,8 +278,34 @@ object SessionEngine {
             if (fix != null) uploader.pump()
             return
         }
+        val inputs = mutableMapOf<String, Any?>("reason" to reason.wire, "nowMs" to nowMs(), "expiresAtMs" to c.expiresAtMs)
+        val d = c.destination
+        if (d != null && fix != null) {
+            val distance = FloatArray(1)
+            Location.distanceBetween(d.latitude, d.longitude, fix.latitude, fix.longitude, distance)
+            inputs["distanceMeters"] = distance[0].toDouble()
+            inputs["accuracy"] = fix.accuracy
+            inputs["radiusMeters"] = d.radiusMeters
+        }
+        ElsLog.debug("stop", "stop decision", inputs, c.id, level = "info")
         stopping = true
         uploader.flush { stop(ctx, reason) }
+    }
+
+    private fun logFix(fix: Fix, outcome: String, reason: String?, sessionId: String?) {
+        val data = mutableMapOf<String, Any?>(
+            "latitude" to fix.latitude,
+            "longitude" to fix.longitude,
+            "accuracy" to fix.accuracy,
+            "timestamp" to fix.timestampMs,
+            "ageMs" to nowMs() - fix.timestampMs,
+            "outcome" to outcome
+        )
+        fix.altitude?.let { data["altitude"] = it }
+        fix.speed?.let { data["speed"] = it }
+        fix.heading?.let { data["heading"] = it }
+        reason?.let { data["reason"] = it }
+        ElsLog.debug("location", "fix $outcome", data, sessionId)
     }
 
     private fun scheduleExpiry(ctx: Context, c: SessionConfig) {
@@ -286,17 +344,27 @@ object SessionEngine {
         try {
             LocationServices.getFusedLocationProviderClient(ctx)
                 .requestLocationUpdates(request, updatesIntent(ctx))
-                .addOnFailureListener { ElsLog.info("requestLocationUpdates failed: $it") }
+                .addOnSuccessListener {
+                    ElsLog.debug(
+                        "location",
+                        "updates requested",
+                        mapOf("priority" to priority, "intervalMs" to 10_000, "distanceFilterMeters" to c.distanceFilterMeters),
+                        c.id,
+                        level = "info"
+                    )
+                }
+                .addOnFailureListener { ElsLog.info("location", "requestLocationUpdates failed: ${it.javaClass.simpleName}", mapOf("error" to it.toString()), c.id, level = "warn") }
         } catch (e: SecurityException) {
-            ElsLog.info("requestLocationUpdates denied: $e")
+            ElsLog.info("location", "requestLocationUpdates denied: ${e.javaClass.simpleName}", sessionId = c.id, level = "warn")
         }
     }
 
     private fun removeUpdates(ctx: Context) {
         try {
             LocationServices.getFusedLocationProviderClient(ctx).removeLocationUpdates(updatesIntent(ctx))
+            ElsLog.debug("location", "updates removed", level = "info")
         } catch (e: Exception) {
-            ElsLog.info("removeLocationUpdates failed: $e")
+            ElsLog.info("location", "removeLocationUpdates failed: ${e.javaClass.simpleName}", level = "warn")
         }
     }
 
@@ -304,7 +372,7 @@ object SessionEngine {
 
     private fun stopService(ctx: Context) {
         if (LaunchGate.startPending) {
-            ElsLog.info("service start pending; it stops itself after promoting")
+            ElsLog.info("service", "service start pending; it stops itself after promoting")
             return
         }
         ctx.stopService(Intent(ctx, LocationTrackingService::class.java))

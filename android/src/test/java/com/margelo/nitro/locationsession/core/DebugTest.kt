@@ -45,6 +45,26 @@ class DebugEncodingTests {
         assertEquals(1, data.getInt("y"))
         assertFalse(json.contains("\n"))
     }
+
+    @Test fun seqLeadsTheLine() {
+        val json = encodeLogLine(LogLine(seq = 4321, t = 2, pid = 3, level = "info", tag = "debug", msg = "m", data = mapOf("seq" to 9)))
+        assertTrue(json.startsWith("{\"seq\":4321,"))
+        assertEquals(4321L, lineSeq(json.toByteArray()))
+        val obj = JSONObject(json)
+        assertEquals(4321L, obj.getLong("seq"))
+        assertEquals("m", obj.getString("msg"))
+    }
+
+    @Test fun lineSeqRejectsOtherShapes() {
+        assertNull(lineSeq("{\"t\":1,\"seq\":2}".toByteArray()))
+        assertNull(lineSeq("{\"seq\":12".toByteArray()))
+        assertNull(lineSeq("{\"seq\":,".toByteArray()))
+    }
+
+    @Test fun lineSeqReadsASlice() {
+        val bytes = "xx{\"seq\":77,\"t\":1}yy".toByteArray()
+        assertEquals(77L, lineSeq(bytes, 2, bytes.size - 2))
+    }
 }
 
 class DebugBatchTests {

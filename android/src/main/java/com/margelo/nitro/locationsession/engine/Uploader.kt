@@ -88,16 +88,20 @@ class Uploader(context: Context, private val store: SessionStore, private val ev
             send()
         } else {
             val last = lastSuccessMs ?: return
-            startTimer(last + c.uploadMinIntervalMs - now) { pump() }
+            val wait = last + c.uploadMinIntervalMs - now
+            ElsLog.debug("upload", "throttled", mapOf("waitMs" to wait, "generation" to generation, "minIntervalMs" to c.uploadMinIntervalMs), c.id)
+            startTimer(wait) { pump() }
         }
     }
 
     fun flush(completion: () -> Unit) {
         assertMain()
         if (config == null || (!inFlight && slot.fix == null)) {
+            ElsLog.debug("upload", "flush skipped, nothing pending", sessionId = config?.id)
             completion()
             return
         }
+        ElsLog.debug("upload", "flush start", mapOf("generation" to generation, "inFlight" to inFlight), config?.id)
         flushCompletion = completion
         flushTarget = generation
         cancelTimer()
@@ -146,6 +150,7 @@ class Uploader(context: Context, private val store: SessionStore, private val ev
 
     private fun completeFlush() {
         val done = flushCompletion
+        if (done != null) ElsLog.debug("upload", "flush end", mapOf("pending" to (slot.fix != null)), config?.id)
         flushCompletion = null
         done?.invoke()
         notifySettled()
@@ -166,7 +171,7 @@ class Uploader(context: Context, private val store: SessionStore, private val ev
             null
         }
         if (body == null) {
-            ElsLog.info("could not encode location; dropping it")
+            ElsLog.info("upload", "could not encode location; dropping it", sessionId = c.id, level = "warn")
             slot.markSent(sentGeneration)
             store.pendingFix = slot.fix
             events.emit("error", JSONObject().put("code", "UPLOAD_DROPPED").put("message", "Location could not be encoded; location dropped"))
@@ -175,9 +180,16 @@ class Uploader(context: Context, private val store: SessionStore, private val ev
         }
         val sentEpoch = epoch
         inFlight = true
+        val startedAt = nowMs()
+        ElsLog.debug(
+            "upload",
+            "attempt",
+            mapOf("generation" to sentGeneration, "attempt" to attempt, "bytes" to body.length, "flush" to (flushCompletion != null), "fixTimestamp" to fix.timestampMs),
+            c.id
+        )
         executor.execute {
             val status = post(c, body, sentEpoch)
-            main.post { finish(sentGeneration, status, sentEpoch) }
+            main.post { finish(sentGeneration, status, sentEpoch, nowMs() - startedAt) }
         }
     }
 
@@ -205,7 +217,7 @@ class Uploader(context: Context, private val store: SessionStore, private val ev
             runCatching { (if (status >= 400) conn.errorStream else conn.inputStream)?.use { it.readBytes() } }
             status
         } catch (e: Exception) {
-            ElsLog.info("upload failed: ${e.javaClass.simpleName}")
+            ElsLog.info("upload", "upload failed: ${e.javaClass.simpleName}", sessionId = c.id, level = "warn")
             null
         } finally {
             deadline?.cancel(false)
@@ -214,15 +226,26 @@ class Uploader(context: Context, private val store: SessionStore, private val ev
         }
     }
 
-    private fun finish(sent: Int, status: Int?, sentEpoch: Int) {
-        if (sentEpoch != epoch) return
+    private fun finish(sent: Int, status: Int?, sentEpoch: Int, durationMs: Long) {
+        if (sentEpoch != epoch) {
+            ElsLog.debug("upload", "stale response ignored", mapOf("status" to status))
+            return
+        }
         inFlight = false
         val at = nowMs()
         val outcome = classify(status)
         val payload = JSONObject().put("ok", outcome == UploadOutcome.Success).put("at", at)
         status?.let { payload.put("status", it) }
         events.emit("upload", payload)
-        ElsLog.info("upload status=${status ?: "none"} outcome=${outcome.javaClass.simpleName}")
+        val detail = mutableMapOf<String, Any?>(
+            "generation" to sent,
+            "outcome" to outcome.javaClass.simpleName,
+            "durationMs" to durationMs,
+            "status" to status
+        )
+        if (outcome == UploadOutcome.Retry) detail["backoffMs"] = backoffMs(attempt)
+        ElsLog.info("upload", "upload status=${status ?: "none"} outcome=${outcome.javaClass.simpleName}", detail, config?.id)
+        DebugLogger.onUploadCompleted()
 
         when (outcome) {
             UploadOutcome.Success -> {

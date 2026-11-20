@@ -23,11 +23,11 @@ object RecoveryGeofence {
                     if (fix == null) done(false) else register(ctx, fix, done)
                 }
                 .addOnFailureListener {
-                    ElsLog.info("recovery geofence: no last location: $it")
+                    ElsLog.info("region", "recovery geofence: no last location: ${it.javaClass.simpleName}", level = "warn")
                     done(false)
                 }
         } catch (e: SecurityException) {
-            ElsLog.info("recovery geofence: last location denied: $e")
+            ElsLog.info("region", "recovery geofence: last location denied", level = "warn")
             done(false)
         }
     }
@@ -48,15 +48,19 @@ object RecoveryGeofence {
             LocationServices.getGeofencingClient(ctx)
                 .addGeofences(request, LaunchGate.pendingIntent(ctx, LaunchGate.Kind.RECOVERY_GEOFENCE))
                 .addOnSuccessListener {
-                    ElsLog.info("recovery geofence armed radius=${radius}m")
+                    ElsLog.info(
+                        "region",
+                        "recovery geofence armed radius=${radius}m",
+                        mapOf("latitude" to center.latitude, "longitude" to center.longitude, "radius" to radius, "expirationMs" to EXPIRATION_MS)
+                    )
                     done(true)
                 }
                 .addOnFailureListener {
-                    ElsLog.info("recovery geofence failed: $it")
+                    ElsLog.info("region", "recovery geofence failed: ${it.javaClass.simpleName}", mapOf("error" to it.toString()), level = "warn")
                     done(false)
                 }
         } catch (e: SecurityException) {
-            ElsLog.info("recovery geofence denied: $e")
+            ElsLog.info("region", "recovery geofence denied", level = "warn")
             done(false)
         }
     }
@@ -64,8 +68,9 @@ object RecoveryGeofence {
     fun remove(ctx: Context) {
         try {
             LocationServices.getGeofencingClient(ctx).removeGeofences(listOf(REQUEST_ID))
+            ElsLog.debug("region", "recovery geofence removed")
         } catch (e: Exception) {
-            ElsLog.info("removeGeofences failed: $e")
+            ElsLog.info("region", "removeGeofences failed: ${e.javaClass.simpleName}", level = "warn")
         }
     }
 }
