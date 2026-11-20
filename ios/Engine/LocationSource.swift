@@ -63,6 +63,13 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
         m.distanceFilter = config.distanceFilterMeters > 0 ? config.distanceFilterMeters : kCLDistanceFilterNone
         m.startUpdatingLocation()
         m.startMonitoringSignificantLocationChanges()
+        Log.debug("location", "manager started", data: [
+            "mode": "standard+significantChange",
+            "desiredAccuracy": m.desiredAccuracy,
+            "distanceFilter": m.distanceFilter,
+            "authorization": m.authorizationStatus.rawValue,
+            "accuracyAuthorization": m.accuracyAuthorization.rawValue,
+        ], sessionId: config.id, level: "info")
         removeRegions(m)
         if let d = config.destination, m.authorizationStatus == .authorizedAlways,
            CLLocationManager.isMonitoringAvailable(for: CLCircularRegion.self) {
@@ -75,6 +82,7 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
             region.notifyOnEntry = true
             region.notifyOnExit = false
             m.startMonitoring(for: region)
+            Log.debug("region", "destination region armed", data: ["latitude": d.latitude, "longitude": d.longitude, "radius": radius], sessionId: config.id, level: "info")
         }
     }
 
@@ -88,6 +96,7 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
         m.delegate = nil
         manager = nil
         lastStatus = nil
+        Log.debug("location", "manager stopped", level: "info")
     }
 
     func removeRegions() {
@@ -128,16 +137,51 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
     private func removeRegions(_ m: CLLocationManager) {
         for region in m.monitoredRegions where region.identifier.hasPrefix(Self.regionPrefix) {
             m.stopMonitoring(for: region)
+            Log.debug("region", "region removed", data: ["id": region.identifier])
         }
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         let fixes = locations.compactMap(makeFix)
+        if fixes.count < locations.count {
+            for location in locations where makeFix(location) == nil {
+                Log.debug("location", "fix dropped invalid", data: [
+                    "latitude": location.coordinate.latitude,
+                    "longitude": location.coordinate.longitude,
+                    "accuracy": location.horizontalAccuracy,
+                    "timestamp": location.timestamp.timeIntervalSince1970 * 1000,
+                ], level: "warn")
+            }
+        }
         guard !fixes.isEmpty else { return }
         onFixes?(fixes)
     }
 
-    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {}
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        let e = error as NSError
+        Log.debug("location", "manager error", data: ["domain": e.domain, "code": e.code], level: "warn")
+    }
+
+    func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
+        Log.debug("region", "region entered", data: ["id": region.identifier], level: "info")
+    }
+
+    func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
+        Log.debug("region", "region exited", data: ["id": region.identifier], level: "info")
+    }
+
+    func locationManager(_ manager: CLLocationManager, monitoringDidFailFor region: CLRegion?, withError error: Error) {
+        let e = error as NSError
+        Log.debug("region", "region monitoring failed", data: ["id": region?.identifier ?? NSNull(), "domain": e.domain, "code": e.code], level: "warn")
+    }
+
+    func locationManagerDidPauseLocationUpdates(_ manager: CLLocationManager) {
+        Log.debug("location", "updates paused by the system", level: "warn")
+    }
+
+    func locationManagerDidResumeLocationUpdates(_ manager: CLLocationManager) {
+        Log.debug("location", "updates resumed by the system", level: "info")
+    }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         let status = manager.authorizationStatus

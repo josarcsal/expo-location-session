@@ -4,11 +4,19 @@ import UIKit
 
 @objc(ELSBootstrap)
 final class ELSBootstrap: NSObject {
-    @objc(didFinishLaunching:)
-    static func didFinishLaunching(_ location: NSNumber?) {
+    @objc(didFinishLaunching:launchKeys:)
+    static func didFinishLaunching(_ location: NSNumber?, launchKeys: NSArray?) {
         let locationLaunch = location?.boolValue ?? false
+        let keys = (launchKeys as? [String] ?? []).sorted()
         let run = {
-            Log.info("bootstrap launch location=\(locationLaunch) appState=\(UIApplication.shared.applicationState.rawValue)")
+            let app = UIApplication.shared
+            DebugLogger.shared.processStarted(
+                launchKeys: keys,
+                locationLaunch: locationLaunch,
+                appState: app.applicationState.rawValue,
+                protectedData: app.isProtectedDataAvailable
+            )
+            Log.info("lifecycle", "bootstrap launch location=\(locationLaunch) appState=\(app.applicationState.rawValue)")
             SessionEngine.shared.resumeIfNeeded()
         }
         if Thread.isMainThread {
@@ -28,23 +36,23 @@ extension SessionEngine {
         case .none where protectedData:
             stopWaitingForProtectedData()
         case .none, .unavailable:
-            Log.info("persisted session not readable yet protectedData=\(protectedData); waiting")
+            Log.info("store", "persisted session not readable yet protectedData=\(protectedData); waiting")
             waitForProtectedData()
         case .corrupt:
             stopWaitingForProtectedData()
-            Log.info("discarding unreadable persisted session")
+            Log.info("store", "discarding unreadable persisted session")
             store.wipe()
             source.stop()
         case let .session(c, startedAt):
             stopWaitingForProtectedData()
-            Log.info("persisted session \(c.id) protectedData=\(protectedData) regionsAtLaunch=\(source.monitoredRegionIds)")
+            Log.info("store", "persisted session \(c.id) protectedData=\(protectedData) regionsAtLaunch=\(source.monitoredRegionIds)", sessionId: c.id)
             if nowMs() >= c.expiresAtMs {
                 teardown(c, .expired)
             } else if !permissions.isAuthorized {
                 teardown(c, .permissionRevoked)
             } else {
                 activate(c, startedAtMs: startedAt, pending: store.pendingFix, lastUploadAtMs: store.lastUploadAtMs)
-                Log.info("resumed session \(c.id)")
+                Log.info("store", "resumed session \(c.id)", sessionId: c.id)
                 if let fix = lastFix { evaluate(fix: fix) } else { uploader.pump() }
             }
         }
@@ -58,12 +66,12 @@ extension SessionEngine {
             UIApplication.didBecomeActiveNotification,
         ].map { name in
             center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                Log.info("retrying resume after \(name.rawValue)")
+                Log.info("lifecycle", "retrying resume after \(name.rawValue)")
                 self?.stopWaitingForProtectedData()
                 self?.resumeIfNeeded()
             }
         }
-        Log.info("waiting for protectedDataDidBecomeAvailable or didBecomeActive")
+        Log.info("lifecycle", "waiting for protectedDataDidBecomeAvailable or didBecomeActive")
     }
 
     private func stopWaitingForProtectedData() {
@@ -86,9 +94,9 @@ extension SessionEngine {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let c = config, permissions.hasAlways else { return }
         if let region = source.armTerminateRegion(at: lastFix) {
-            Log.info("armed terminate region for \(c.id) r=\(region.radius)")
+            Log.info("region", "armed terminate region for \(c.id) r=\(region.radius)", data: ["latitude": region.center.latitude, "longitude": region.center.longitude, "radius": region.radius], sessionId: c.id)
         } else {
-            Log.info("could not arm terminate region for \(c.id)")
+            Log.info("region", "could not arm terminate region for \(c.id)", sessionId: c.id)
         }
     }
 }

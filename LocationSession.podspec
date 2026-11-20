@@ -24,6 +24,10 @@ Pod::Spec.new do |s|
     "cpp/**/*.{hpp,cpp}",
   ]
 
+  s.pod_target_xcconfig = {
+    "GCC_PREPROCESSOR_DEFINITIONS" => "$(inherited) ELS_LIB_VERSION=\\\"#{s.version}\\\"",
+  }
+
   load 'nitrogen/generated/ios/LocationSession+autolinking.rb'
   add_nitrogen_files(s)
 

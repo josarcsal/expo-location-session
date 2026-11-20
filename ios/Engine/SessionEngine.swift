@@ -36,6 +36,7 @@ final class SessionEngine {
     var terminateObserver: NSObjectProtocol?
 
     private init() {
+        DebugLogger.shared.attach(events)
         source.onFixes = { [weak self] in self?.handle($0) }
         source.onAuthorizationChange = { [weak self] in self?.authorizationChanged($0) }
     }
@@ -62,12 +63,13 @@ final class SessionEngine {
             throw LocationSessionError(code: "INTERNAL", message: "Could not persist the session: \(error)")
         }
         activate(c, startedAtMs: now, pending: nil, lastUploadAtMs: nil)
-        Log.info("started session \(c.id)")
+        Log.info("lifecycle", "started session \(c.id)", sessionId: c.id)
     }
 
     func stop(_ reason: StopReason) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let c = config else { return }
+        Log.debug("stop", "stop requested", data: ["reason": reason.rawValue, "nowMs": nowMs(), "expiresAtMs": c.expiresAtMs], sessionId: c.id, level: "info")
         teardown(c, reason)
     }
 
@@ -81,7 +83,8 @@ final class SessionEngine {
         config = nil
         lastFix = nil
         stopping = false
-        Log.info("stopped session \(c.id) reason=\(reason.rawValue)")
+        Log.info("stop", "stopped session \(c.id) reason=\(reason.rawValue)", sessionId: c.id)
+        DebugLogger.shared.onStopping()
         events.emit(.stop, ["reason": reason.rawValue, "sessionId": c.id])
     }
 
@@ -127,12 +130,20 @@ final class SessionEngine {
     private func handle(_ fixes: [Fix]) {
         dispatchPrecondition(condition: .onQueue(.main))
         for fix in fixes {
-            guard let c = config, !stopping else { return }
+            guard let c = config, !stopping else {
+                logFix(fix, outcome: "dropped", reason: config == nil ? "no session" : "stopping")
+                return
+            }
             if nowMs() >= c.expiresAtMs || fix.timestampMs >= c.expiresAtMs {
+                logFix(fix, outcome: "dropped", reason: "after expiry", sessionId: c.id)
                 evaluate(fix: nil)
                 return
             }
-            guard acceptFix(fix, startedAtMs: startedAtMs) else { continue }
+            guard acceptFix(fix, startedAtMs: startedAtMs) else {
+                logFix(fix, outcome: "dropped", reason: "before session start", sessionId: c.id)
+                continue
+            }
+            logFix(fix, outcome: "accepted", reason: nil, sessionId: c.id)
             uploader.put(fix)
             lastFix = fix
             events.emit(.location, locationPayload(fix))
@@ -142,27 +153,44 @@ final class SessionEngine {
 
     func evaluate(fix: Fix?) {
         guard let c = config, !stopping else { return }
-        guard let reason = stopDecision(c, fix: fix, nowMs: nowMs()) else {
+        let now = nowMs()
+        guard let reason = stopDecision(c, fix: fix, nowMs: now) else {
             if fix != nil { uploader.pump() }
             return
         }
+        var inputs: [String: Any] = ["reason": reason.rawValue, "nowMs": now, "expiresAtMs": c.expiresAtMs]
+        if let d = c.destination, let f = fix {
+            inputs["distanceMeters"] = distanceMeters(latitude: d.latitude, longitude: d.longitude, latitude: f.latitude, longitude: f.longitude)
+            inputs["accuracy"] = f.accuracy
+            inputs["radiusMeters"] = d.radiusMeters
+        }
+        Log.debug("stop", "stop decision", data: inputs, sessionId: c.id, level: "info")
         stopping = true
         uploader.flush { [weak self] in
             self?.stop(reason)
         }
     }
 
+    private func logFix(_ fix: Fix, outcome: String, reason: String?, sessionId: String? = nil) {
+        var data = locationPayload(fix)
+        data["ageMs"] = nowMs() - fix.timestampMs
+        data["outcome"] = outcome
+        if let reason { data["reason"] = reason }
+        Log.debug("location", "fix \(outcome)", data: data, sessionId: sessionId)
+    }
+
     private func authorizationChanged(_ status: CLAuthorizationStatus) {
+        Log.debug("permission", "authorization changed", data: ["status": status.rawValue, "sessionRunning": config != nil], sessionId: config?.id, level: "info")
         guard let c = config else { return }
         switch status {
         case .denied, .restricted:
             stop(.permissionRevoked)
         case .authorizedWhenInUse:
             source.removeRegions()
-            Log.info("authorization downgraded to whenInUse; session \(c.id) keeps running without relaunch")
+            Log.info("permission", "authorization downgraded to whenInUse; session \(c.id) keeps running without relaunch", sessionId: c.id)
         case .authorizedAlways:
             source.start(c)
-            Log.info("authorization upgraded to always; session \(c.id) can relaunch")
+            Log.info("permission", "authorization upgraded to always; session \(c.id) can relaunch", sessionId: c.id)
         default:
             break
         }

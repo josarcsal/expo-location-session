@@ -37,9 +37,21 @@ final class SessionStore {
         defaults.set(NSNumber(value: startedAtMs), forKey: Key.startedAtMs)
         defaults.removeObject(forKey: Key.pendingFix)
         defaults.removeObject(forKey: Key.lastUploadAtMs)
+        Log.debug("store", "session persisted", data: ["startedAtMs": startedAtMs, "expiresAtMs": config.expiresAtMs], sessionId: config.id, level: "info")
     }
 
     func load(protectedDataAvailable: Bool) -> StoredSession {
+        let result = read(protectedDataAvailable: protectedDataAvailable)
+        switch result {
+        case .none: Log.debug("store", "no persisted session", data: ["protectedData": protectedDataAvailable])
+        case .unavailable: Log.debug("store", "persisted session unavailable", data: ["protectedData": protectedDataAvailable], level: "warn")
+        case .corrupt: Log.debug("store", "persisted session corrupt", data: ["protectedData": protectedDataAvailable], level: "warn")
+        case let .session(c, startedAt): Log.debug("store", "persisted session loaded", data: ["startedAtMs": startedAt, "expiresAtMs": c.expiresAtMs], sessionId: c.id, level: "info")
+        }
+        return result
+    }
+
+    private func read(protectedDataAvailable: Bool) -> StoredSession {
         var query = baseQuery()
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -51,6 +63,7 @@ final class SessionStore {
         case errSecItemNotFound:
             return defaults.object(forKey: Key.startedAtMs) == nil ? .none : .corrupt
         default:
+            Log.debug("store", "keychain read failed", data: ["status": Int(status)], level: "warn")
             return .unavailable
         }
         guard let data = item as? Data,
@@ -108,7 +121,8 @@ final class SessionStore {
     }
 
     func wipe() {
-        SecItemDelete(baseQuery() as CFDictionary)
+        let status = SecItemDelete(baseQuery() as CFDictionary)
+        Log.debug("store", "session wiped", data: ["keychainStatus": Int(status)], level: "info")
         defaults.removeObject(forKey: Key.startedAtMs)
         defaults.removeObject(forKey: Key.pendingFix)
         defaults.removeObject(forKey: Key.lastUploadAtMs)

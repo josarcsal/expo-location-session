@@ -24,10 +24,20 @@ final class EventBus {
         listeners[id] = nil
     }
 
+    func hasListeners(_ event: Event) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return listeners.values.contains { $0.event == event }
+    }
+
     func emit(_ event: Event, _ payload: [String: Any]) {
         guard JSONSerialization.isValidJSONObject(payload),
               let data = try? JSONSerialization.data(withJSONObject: payload),
               let json = String(data: data, encoding: .utf8) else { return }
+        emit(event, json: json)
+    }
+
+    func emit(_ event: Event, json: String) {
         lock.lock()
         let targets = listeners.values.filter { $0.event == event }.map(\.callback)
         lock.unlock()
@@ -38,11 +48,16 @@ final class EventBus {
 enum Log {
     private static let logger = Logger(subsystem: "expo-location-session", category: "engine")
 
-    static func info(_ message: String) {
+    static func info(_ tag: String, _ message: String, data: [String: Any]? = nil, sessionId: String? = nil) {
         logger.info("\(message, privacy: .public)")
+        DebugLogger.shared.log("info", tag, message, data: data, sessionId: sessionId)
     }
 
-    static func upload(status: Int?, outcome: UploadOutcome) {
-        info("upload status=\(status.map(String.init) ?? "none") outcome=\(outcome)")
+    static func debug(_ tag: String, _ message: String, data: [String: Any]? = nil, sessionId: String? = nil, level: String = "debug") {
+        DebugLogger.shared.log(level, tag, message, data: data, sessionId: sessionId)
+    }
+
+    static func upload(status: Int?, outcome: UploadOutcome, data: [String: Any], sessionId: String?) {
+        info("upload", "upload status=\(status.map(String.init) ?? "none") outcome=\(outcome)", data: data, sessionId: sessionId)
     }
 }

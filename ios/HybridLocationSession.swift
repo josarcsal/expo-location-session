@@ -77,7 +77,7 @@ class HybridLocationSession: HybridLocationSessionSpec {
     }
 
     func getDebugLog(limit: Double) throws -> Promise<String> {
-        onMain { promise in
+        offMain { promise in
             guard limit.isFinite, limit >= 0, limit <= Double(Int32.max) else {
                 promise.reject(withError: RuntimeError.error(withMessage: "INVALID_CONFIG: limit must be a non-negative number"))
                 return
@@ -87,16 +87,16 @@ class HybridLocationSession: HybridLocationSessionSpec {
     }
 
     func clearDebugLog() throws -> Promise<Void> {
-        onMain { promise in
+        offMain { promise in
             DebugLogger.shared.clear()
             promise.resolve()
         }
     }
 
     func flushDebugLog() throws -> Promise<Double> {
-        onMain { promise in
-            DebugLogger.shared.flush { promise.resolve(withResult: Double($0)) }
-        }
+        let promise = Promise<Double>()
+        DebugLogger.shared.flush { promise.resolve(withResult: Double($0)) }
+        return promise
     }
 
     func addListener(event: SessionEvent, callback: @escaping (String) -> Void) throws -> Double {
@@ -120,6 +120,12 @@ class HybridLocationSession: HybridLocationSessionSpec {
     private func onMain<T>(_ body: @escaping (Promise<T>) -> Void) -> Promise<T> {
         let promise = Promise<T>()
         DispatchQueue.main.async { body(promise) }
+        return promise
+    }
+
+    private func offMain<T>(_ body: @escaping (Promise<T>) -> Void) -> Promise<T> {
+        let promise = Promise<T>()
+        DispatchQueue.global(qos: .userInitiated).async { body(promise) }
         return promise
     }
 }

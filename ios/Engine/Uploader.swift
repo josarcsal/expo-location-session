@@ -88,16 +88,20 @@ final class Uploader {
         if shouldUploadNow(lastSuccessMs: lastSuccessMs, nowMs: now, minIntervalMs: c.uploadMinIntervalMs, bypass: false) {
             send()
         } else if let last = lastSuccessMs {
-            schedule(afterMs: last + c.uploadMinIntervalMs - now)
+            let wait = last + c.uploadMinIntervalMs - now
+            Log.debug("upload", "throttled", data: ["waitMs": wait, "generation": generation, "minIntervalMs": c.uploadMinIntervalMs], sessionId: c.id)
+            schedule(afterMs: wait)
         }
     }
 
     func flush(_ completion: @escaping () -> Void) {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard config != nil, inFlight != nil || slot.fix != nil else {
+        guard let c = config, inFlight != nil || slot.fix != nil else {
+            Log.debug("upload", "flush skipped, nothing pending", sessionId: config?.id)
             completion()
             return
         }
+        Log.debug("upload", "flush start", data: ["generation": generation, "inFlight": inFlight != nil], sessionId: c.id)
         flushCompletion = completion
         flushTarget = generation
         timer?.invalidate()
@@ -137,6 +141,9 @@ final class Uploader {
     }
 
     private func completeFlush() {
+        if flushCompletion != nil {
+            Log.debug("upload", "flush end", data: ["pending": slot.fix != nil], sessionId: config?.id)
+        }
         let done = flushCompletion
         flushCompletion = nil
         done?()
@@ -156,21 +163,28 @@ final class Uploader {
         for (name, value) in c.uploadHeaders {
             request.setValue(value, forHTTPHeaderField: name)
         }
-        request.httpBody = buildBody(sessionId: c.id, fix: fix, battery: battery(), extrasJson: c.uploadExtrasJson)
+        let body = buildBody(sessionId: c.id, fix: fix, battery: battery(), extrasJson: c.uploadExtrasJson)
+        request.httpBody = body
         let sentEpoch = epoch
+        let startedAt = nowMs()
+        Log.debug("upload", "attempt", data: ["generation": sentGeneration, "attempt": attempt, "bytes": body.count, "flush": flushCompletion != nil, "fixTimestamp": fix.timestampMs], sessionId: c.id)
         beginBackgroundTask()
         let task = session.dataTask(with: request) { [weak self] _, response, error in
             let status = error == nil ? (response as? HTTPURLResponse)?.statusCode : nil
+            let failure = error.map { "\(($0 as NSError).domain) \(($0 as NSError).code) \($0.localizedDescription)" }
             DispatchQueue.main.async {
-                self?.finish(generation: sentGeneration, status: status, epoch: sentEpoch)
+                self?.finish(generation: sentGeneration, status: status, epoch: sentEpoch, detail: ["latencyMs": nowMs() - startedAt, "bytes": body.count, "error": failure ?? NSNull()])
             }
         }
         inFlight = task
         task.resume()
     }
 
-    private func finish(generation sent: Int, status: Int?, epoch sentEpoch: Int) {
-        guard sentEpoch == epoch else { return }
+    private func finish(generation sent: Int, status: Int?, epoch sentEpoch: Int, detail: [String: Any]) {
+        guard sentEpoch == epoch else {
+            Log.debug("upload", "stale response ignored", data: ["status": status ?? NSNull()])
+            return
+        }
         inFlight = nil
         endBackgroundTask()
         let at = nowMs()
@@ -178,7 +192,13 @@ final class Uploader {
         var payload: [String: Any] = ["ok": outcome == .success, "at": at]
         if let status { payload["status"] = status }
         events.emit(.upload, payload)
-        Log.upload(status: status, outcome: outcome)
+        var data = detail
+        data["generation"] = sent
+        data["outcome"] = "\(outcome)"
+        if let status { data["status"] = status }
+        if case .retry = outcome { data["backoffMs"] = backoffMs(attempt: attempt) }
+        Log.upload(status: status, outcome: outcome, data: data, sessionId: config?.id)
+        DebugLogger.shared.onUploadCompleted()
 
         switch outcome {
         case .success:

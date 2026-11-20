@@ -44,12 +44,22 @@ final class Permissions: NSObject, CLLocationManagerDelegate {
             foreground = .denied
             background = .denied
         }
-        return NativePermissionStatus(
+        let result = NativePermissionStatus(
             foreground: foreground,
             background: background,
             precise: manager.accuracyAuthorization == .fullAccuracy,
             notifications: .granted
         )
+        Log.debug("permission", "status", data: [
+            "authorization": authorizationStatus.rawValue,
+            "accuracyAuthorization": manager.accuracyAuthorization.rawValue,
+            "alwaysRequested": store.alwaysRequested,
+            "foreground": foreground.stringValue,
+            "background": background.stringValue,
+            "lowPowerMode": ProcessInfo.processInfo.isLowPowerModeEnabled,
+            "backgroundRefresh": UIApplication.shared.backgroundRefreshStatus.rawValue,
+        ])
+        return result
     }
 
     func request(always: Bool, completion: @escaping (NativePermissionStatus) -> Void) {
@@ -70,9 +80,12 @@ final class Permissions: NSObject, CLLocationManagerDelegate {
     }
 
     private func perform(always: Bool, completion: @escaping (NativePermissionStatus) -> Void) {
+        Log.debug("permission", "request", data: ["always": always, "authorization": authorizationStatus.rawValue, "alwaysRequested": store.alwaysRequested], level: "info")
         let finish: () -> Void = { [weak self] in
             guard let self else { return }
-            completion(self.status())
+            let result = self.status()
+            Log.debug("permission", "request result", data: ["foreground": result.foreground.stringValue, "background": result.background.stringValue, "precise": result.precise], level: "info")
+            completion(result)
         }
         let askAlways: () -> Void = { [weak self] in
             guard let self else { return }
@@ -124,6 +137,7 @@ final class Permissions: NSObject, CLLocationManagerDelegate {
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        Log.debug("permission", "authorization callback", data: ["authorization": manager.authorizationStatus.rawValue, "accuracyAuthorization": manager.accuracyAuthorization.rawValue, "awaitingPrompt": !waiters.isEmpty])
         guard !waiters.isEmpty, manager.authorizationStatus != promptStartStatus else { return }
         resolveWaiters()
     }
