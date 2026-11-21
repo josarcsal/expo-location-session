@@ -519,8 +519,11 @@ final class DebugLogger {
         return out
     }
 
-    func installId() -> String {
-        queue.sync { storedInstallId() }
+    func installId() -> String? {
+        queue.sync {
+            if defaults.string(forKey: Key.installId) == nil, protectedData == false { return nil }
+            return storedInstallId()
+        }
     }
 
     private func storedInstallId() -> String {

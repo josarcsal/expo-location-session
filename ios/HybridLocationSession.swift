@@ -101,7 +101,11 @@ class HybridLocationSession: HybridLocationSessionSpec {
 
     func getDebugInstallId() throws -> Promise<String> {
         offMain { promise in
-            promise.resolve(withResult: DebugLogger.shared.installId())
+            if let id = DebugLogger.shared.installId() {
+                promise.resolve(withResult: id)
+            } else {
+                promise.reject(withError: RuntimeError.error(withMessage: "INTERNAL: Debug storage is not available"))
+            }
         }
     }
 
