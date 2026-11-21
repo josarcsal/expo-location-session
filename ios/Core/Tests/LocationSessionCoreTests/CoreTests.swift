@@ -68,6 +68,14 @@ private let here = Destination(latitude: 40.4168, longitude: -3.7038, radiusMete
         #expect(acceptFix(fix(ts: 1000), startedAtMs: 1000))
     }
 
+    @Test func duplicateFixIsSamePositionWithinFiveSeconds() {
+        #expect(!isDuplicateFix(fix(lat: 1, lng: 2, ts: 1_000), of: nil))
+        #expect(isDuplicateFix(fix(lat: 1, lng: 2, ts: 1_024), of: fix(lat: 1, lng: 2, ts: 1_000)))
+        #expect(isDuplicateFix(fix(lat: 1, lng: 2, ts: 6_000), of: fix(lat: 1, lng: 2, ts: 1_000)))
+        #expect(!isDuplicateFix(fix(lat: 1, lng: 2, ts: 6_001), of: fix(lat: 1, lng: 2, ts: 1_000)))
+        #expect(!isDuplicateFix(fix(lat: 1, lng: 2.00001, ts: 1_024), of: fix(lat: 1, lng: 2, ts: 1_000)))
+    }
+
     @Test func arrivalNeedsGoodAccuracy() {
         #expect(isArrival(here, fix(lat: 40.4168, lng: -3.7038, acc: 20)))
         #expect(!isArrival(here, fix(lat: 40.4168, lng: -3.7038, acc: 500)))

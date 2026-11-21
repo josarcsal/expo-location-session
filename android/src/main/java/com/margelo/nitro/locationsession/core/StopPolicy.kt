@@ -10,6 +10,14 @@ import kotlin.math.sqrt
 
 fun acceptFix(f: Fix, startedAtMs: Long): Boolean = f.timestampMs >= startedAtMs
 
+const val DUPLICATE_FIX_WINDOW_MS = 5_000L
+
+fun isDuplicateFix(f: Fix, previous: Fix?): Boolean {
+    val p = previous ?: return false
+    return f.latitude == p.latitude && f.longitude == p.longitude &&
+        kotlin.math.abs(f.timestampMs - p.timestampMs) <= DUPLICATE_FIX_WINDOW_MS
+}
+
 fun distanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
     val r = 6_371_000.0
     val p1 = lat1 * PI / 180

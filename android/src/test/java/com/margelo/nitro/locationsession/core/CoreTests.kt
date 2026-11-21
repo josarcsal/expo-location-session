@@ -101,6 +101,14 @@ class StopPolicyTests {
         assertTrue(acceptFix(fix(ts = 1000), startedAtMs = 1000))
     }
 
+    @Test fun duplicateFixIsSamePositionWithinFiveSeconds() {
+        assertFalse(isDuplicateFix(fix(lat = 1.0, lng = 2.0, ts = 1_000), null))
+        assertTrue(isDuplicateFix(fix(lat = 1.0, lng = 2.0, ts = 1_024), fix(lat = 1.0, lng = 2.0, ts = 1_000)))
+        assertTrue(isDuplicateFix(fix(lat = 1.0, lng = 2.0, ts = 6_000), fix(lat = 1.0, lng = 2.0, ts = 1_000)))
+        assertFalse(isDuplicateFix(fix(lat = 1.0, lng = 2.0, ts = 6_001), fix(lat = 1.0, lng = 2.0, ts = 1_000)))
+        assertFalse(isDuplicateFix(fix(lat = 1.0, lng = 2.00001, ts = 1_024), fix(lat = 1.0, lng = 2.0, ts = 1_000)))
+    }
+
     @Test fun arrivalNeedsGoodAccuracy() {
         assertTrue(isArrival(here, fix(lat = 40.4168, lng = -3.7038, acc = 20.0)))
         assertFalse(isArrival(here, fix(lat = 40.4168, lng = -3.7038, acc = 500.0)))

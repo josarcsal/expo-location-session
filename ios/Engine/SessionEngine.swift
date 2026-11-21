@@ -144,6 +144,10 @@ final class SessionEngine {
                 logFix(fix, outcome: "dropped", reason: "before session start", sessionId: c.id)
                 continue
             }
+            if isDuplicateFix(fix, of: lastFix) {
+                logFix(fix, outcome: "dropped", reason: "duplicate", sessionId: c.id)
+                continue
+            }
             logFix(fix, outcome: "accepted", reason: nil, sessionId: c.id)
             uploader.put(fix)
             lastFix = fix

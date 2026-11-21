@@ -18,6 +18,7 @@ import com.margelo.nitro.locationsession.core.Fix
 import com.margelo.nitro.locationsession.core.SessionConfig
 import com.margelo.nitro.locationsession.core.StopReason
 import com.margelo.nitro.locationsession.core.acceptFix
+import com.margelo.nitro.locationsession.core.isDuplicateFix
 import com.margelo.nitro.locationsession.core.stopDecision
 import com.margelo.nitro.locationsession.core.validate
 import org.json.JSONObject
@@ -178,6 +179,10 @@ object SessionEngine {
             }
             if (!acceptFix(fix, startedAtMs)) {
                 logFix(fix, "dropped", "before session start", c.id)
+                continue
+            }
+            if (isDuplicateFix(fix, lastFix)) {
+                logFix(fix, "dropped", "duplicate", c.id)
                 continue
             }
             logFix(fix, "accepted", null, c.id)
