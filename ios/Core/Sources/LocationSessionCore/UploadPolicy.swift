@@ -21,6 +21,8 @@ public func backoffMs(attempt: Int) -> Int64 {
     return attempt < steps.count ? steps[attempt] : 60000
 }
 
+public let finalUploadBudgetMs: Int64 = 30_000
+
 public func shouldUploadNow(lastSuccessMs: Int64?, nowMs: Int64, minIntervalMs: Int64, bypass: Bool) -> Bool {
     if bypass { return true }
     guard let last = lastSuccessMs else { return true }

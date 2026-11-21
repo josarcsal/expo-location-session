@@ -15,6 +15,7 @@ import com.margelo.nitro.locationsession.core.UploadOutcome
 import com.margelo.nitro.locationsession.core.backoffMs
 import com.margelo.nitro.locationsession.core.buildBody
 import com.margelo.nitro.locationsession.core.classify
+import com.margelo.nitro.locationsession.core.FINAL_UPLOAD_BUDGET_MS
 import com.margelo.nitro.locationsession.core.shouldUploadNow
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -40,6 +41,7 @@ class Uploader(context: Context, private val store: SessionStore, private val ev
     private var inFlight = false
     @Volatile private var connection: HttpURLConnection? = null
     private var timer: Runnable? = null
+    private var flushDeadline: Runnable? = null
     @Volatile private var epoch = 0
     private var flushCompletion: (() -> Unit)? = null
     private var flushTarget = 0
@@ -62,6 +64,7 @@ class Uploader(context: Context, private val store: SessionStore, private val ev
         connection?.let { conn -> watchdog.execute { runCatching { conn.disconnect() } } }
         connection = null
         cancelTimer()
+        cancelFlushDeadline()
         config = null
         slot = PendingSlot()
         generation = 0
@@ -105,6 +108,12 @@ class Uploader(context: Context, private val store: SessionStore, private val ev
         flushCompletion = completion
         flushTarget = generation
         cancelTimer()
+        val r = Runnable {
+            flushDeadline = null
+            flushDeadlineReached()
+        }
+        flushDeadline = r
+        main.postDelayed(r, FINAL_UPLOAD_BUDGET_MS)
         if (!inFlight) send()
     }
 
@@ -148,7 +157,26 @@ class Uploader(context: Context, private val store: SessionStore, private val ev
         timer = null
     }
 
+    private fun cancelFlushDeadline() {
+        flushDeadline?.let { main.removeCallbacks(it) }
+        flushDeadline = null
+    }
+
+    private fun flushDeadlineReached() {
+        if (flushCompletion == null) return
+        ElsLog.info(
+            "upload",
+            "final upload deadline reached",
+            mapOf("pending" to (slot.fix != null), "inFlight" to inFlight),
+            config?.id,
+            level = "warn"
+        )
+        cancelTimer()
+        completeFlush()
+    }
+
     private fun completeFlush() {
+        cancelFlushDeadline()
         val done = flushCompletion
         if (done != null) ElsLog.debug("upload", "flush end", mapOf("pending" to (slot.fix != null)), config?.id)
         flushCompletion = null

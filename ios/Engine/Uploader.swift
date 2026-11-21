@@ -29,6 +29,7 @@ final class Uploader {
     private var inFlight: URLSessionDataTask?
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var timer: Timer?
+    private var flushDeadline: Timer?
     private var epoch = 0
     private var flushCompletion: (() -> Void)?
     private var flushTarget = 0
@@ -60,6 +61,8 @@ final class Uploader {
         inFlight = nil
         timer?.invalidate()
         timer = nil
+        flushDeadline?.invalidate()
+        flushDeadline = nil
         endBackgroundTask()
         config = nil
         slot = PendingSlot()
@@ -106,6 +109,11 @@ final class Uploader {
         flushTarget = generation
         timer?.invalidate()
         timer = nil
+        let t = Timer(timeInterval: Double(finalUploadBudgetMs) / 1000, repeats: false) { [weak self] _ in
+            self?.flushDeadlineReached()
+        }
+        RunLoop.main.add(t, forMode: .common)
+        flushDeadline = t
         if inFlight == nil { send() }
     }
 
@@ -140,7 +148,18 @@ final class Uploader {
         timer = t
     }
 
+    private func flushDeadlineReached() {
+        flushDeadline = nil
+        guard flushCompletion != nil else { return }
+        Log.debug("upload", "final upload deadline reached", data: ["pending": slot.fix != nil, "inFlight": inFlight != nil], sessionId: config?.id, level: "warn")
+        timer?.invalidate()
+        timer = nil
+        completeFlush()
+    }
+
     private func completeFlush() {
+        flushDeadline?.invalidate()
+        flushDeadline = nil
         if flushCompletion != nil {
             Log.debug("upload", "flush end", data: ["pending": slot.fix != nil], sessionId: config?.id)
         }

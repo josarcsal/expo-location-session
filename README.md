@@ -374,8 +374,8 @@ Throttle: after a success, locations that arrive within `minIntervalMs` stay pen
 
 Final uploads bypass the throttle:
 
-- Arrival: the arrival location is sent, retried with the same backoff until it is delivered, the server answers with a terminal status, or `expiresAt` passes. Then the session stops with `arrived` (or `unauthorized` / `rejected` if the server answered 401/403/410).
-- Expiry: any pending location gets a single attempt, then the session stops with `expired`.
+- Arrival: the arrival location is sent and retried with the same backoff for at most 30 seconds (and never past `expiresAt`). Then the session stops with `arrived` (or `unauthorized` / `rejected` if the server answered 401/403/410). If it was not delivered in that time, for example with no network, it is dropped: the session does not stay running to deliver it.
+- Expiry: any pending location gets a single attempt, also capped at 30 seconds, then the session stops with `expired`.
 
 ## Stop policy
 

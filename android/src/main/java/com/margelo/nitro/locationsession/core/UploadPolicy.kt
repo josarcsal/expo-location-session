@@ -25,6 +25,8 @@ fun backoffMs(attempt: Int): Long {
     return if (attempt < backoffSteps.size) backoffSteps[attempt] else 60000
 }
 
+const val FINAL_UPLOAD_BUDGET_MS = 30_000L
+
 fun shouldUploadNow(lastSuccessMs: Long?, nowMs: Long, minIntervalMs: Long, bypass: Boolean): Boolean {
     if (bypass) return true
     val last = lastSuccessMs ?: return true
