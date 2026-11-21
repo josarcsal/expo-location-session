@@ -10,6 +10,18 @@
 // Forward declarations of C++ defined types
 // Forward declaration of `HybridLocationSessionSpec` to properly resolve imports.
 namespace margelo::nitro::locationsession { class HybridLocationSessionSpec; }
+// Forward declaration of `NativeDestination` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeDestination; }
+// Forward declaration of `NativeLocation` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeLocation; }
+// Forward declaration of `NativePermissionStatus` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativePermissionStatus; }
+// Forward declaration of `NativeSessionState` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeSessionState; }
+// Forward declaration of `PermissionValue` to properly resolve imports.
+namespace margelo::nitro::locationsession { enum class PermissionValue; }
+// Forward declaration of `SessionStatus` to properly resolve imports.
+namespace margelo::nitro::locationsession { enum class SessionStatus; }
 
 // Forward declarations of Swift defined types
 // Forward declaration of `HybridLocationSessionSpec_cxx` to properly resolve imports.
@@ -17,9 +29,21 @@ namespace LocationSession { class HybridLocationSessionSpec_cxx; }
 
 // Include C++ defined types
 #include "HybridLocationSessionSpec.hpp"
+#include "NativeDestination.hpp"
+#include "NativeLocation.hpp"
+#include "NativePermissionStatus.hpp"
+#include "NativeSessionState.hpp"
+#include "PermissionValue.hpp"
+#include "SessionStatus.hpp"
+#include <NitroModules/Promise.hpp>
+#include <NitroModules/PromiseHolder.hpp>
 #include <NitroModules/Result.hpp>
 #include <exception>
+#include <functional>
 #include <memory>
+#include <optional>
+#include <string>
+#include <unordered_map>
 
 /**
  * Contains specialized versions of C++ templated types so they can be accessed from Swift,
@@ -27,6 +51,332 @@ namespace LocationSession { class HybridLocationSessionSpec_cxx; }
  */
 namespace margelo::nitro::locationsession::bridge::swift {
 
+  // pragma MARK: std::shared_ptr<Promise<NativePermissionStatus>>
+  /**
+   * Specialized version of `std::shared_ptr<Promise<NativePermissionStatus>>`.
+   */
+  using std__shared_ptr_Promise_NativePermissionStatus__ = std::shared_ptr<Promise<NativePermissionStatus>>;
+  inline std::shared_ptr<Promise<NativePermissionStatus>> create_std__shared_ptr_Promise_NativePermissionStatus__() noexcept {
+    return Promise<NativePermissionStatus>::create();
+  }
+  inline PromiseHolder<NativePermissionStatus> wrap_std__shared_ptr_Promise_NativePermissionStatus__(std::shared_ptr<Promise<NativePermissionStatus>> promise) noexcept {
+    return PromiseHolder<NativePermissionStatus>(std::move(promise));
+  }
+  
+  // pragma MARK: std::function<void(const NativePermissionStatus& /* result */)>
+  /**
+   * Specialized version of `std::function<void(const NativePermissionStatus&)>`.
+   */
+  using Func_void_NativePermissionStatus = std::function<void(const NativePermissionStatus& /* result */)>;
+  /**
+   * Wrapper class for a `std::function<void(const NativePermissionStatus& / * result * /)>`, this can be used from Swift.
+   */
+  class Func_void_NativePermissionStatus_Wrapper final {
+  public:
+    explicit Func_void_NativePermissionStatus_Wrapper(std::function<void(const NativePermissionStatus& /* result */)>&& func): _function(std::make_unique<std::function<void(const NativePermissionStatus& /* result */)>>(std::move(func))) {}
+    inline void call(NativePermissionStatus result) const noexcept {
+      _function->operator()(result);
+    }
+  private:
+    std::unique_ptr<std::function<void(const NativePermissionStatus& /* result */)>> _function;
+  } SWIFT_NONCOPYABLE;
+  Func_void_NativePermissionStatus create_Func_void_NativePermissionStatus(void* NON_NULL swiftClosureWrapper) noexcept;
+  inline Func_void_NativePermissionStatus_Wrapper wrap_Func_void_NativePermissionStatus(Func_void_NativePermissionStatus value) noexcept {
+    return Func_void_NativePermissionStatus_Wrapper(std::move(value));
+  }
+  
+  // pragma MARK: std::function<void(const std::exception_ptr& /* error */)>
+  /**
+   * Specialized version of `std::function<void(const std::exception_ptr&)>`.
+   */
+  using Func_void_std__exception_ptr = std::function<void(const std::exception_ptr& /* error */)>;
+  /**
+   * Wrapper class for a `std::function<void(const std::exception_ptr& / * error * /)>`, this can be used from Swift.
+   */
+  class Func_void_std__exception_ptr_Wrapper final {
+  public:
+    explicit Func_void_std__exception_ptr_Wrapper(std::function<void(const std::exception_ptr& /* error */)>&& func): _function(std::make_unique<std::function<void(const std::exception_ptr& /* error */)>>(std::move(func))) {}
+    inline void call(std::exception_ptr error) const noexcept {
+      _function->operator()(error);
+    }
+  private:
+    std::unique_ptr<std::function<void(const std::exception_ptr& /* error */)>> _function;
+  } SWIFT_NONCOPYABLE;
+  Func_void_std__exception_ptr create_Func_void_std__exception_ptr(void* NON_NULL swiftClosureWrapper) noexcept;
+  inline Func_void_std__exception_ptr_Wrapper wrap_Func_void_std__exception_ptr(Func_void_std__exception_ptr value) noexcept {
+    return Func_void_std__exception_ptr_Wrapper(std::move(value));
+  }
+  
+  // pragma MARK: std::optional<double>
+  /**
+   * Specialized version of `std::optional<double>`.
+   */
+  using std__optional_double_ = std::optional<double>;
+  inline std::optional<double> create_std__optional_double_(const double& value) noexcept {
+    return std::optional<double>(value);
+  }
+  inline bool has_value_std__optional_double_(const std::optional<double>& optional) noexcept {
+    return optional.has_value();
+  }
+  inline double get_std__optional_double_(const std::optional<double>& optional) noexcept {
+    return optional.value();
+  }
+  
+  // pragma MARK: std::shared_ptr<Promise<NativeLocation>>
+  /**
+   * Specialized version of `std::shared_ptr<Promise<NativeLocation>>`.
+   */
+  using std__shared_ptr_Promise_NativeLocation__ = std::shared_ptr<Promise<NativeLocation>>;
+  inline std::shared_ptr<Promise<NativeLocation>> create_std__shared_ptr_Promise_NativeLocation__() noexcept {
+    return Promise<NativeLocation>::create();
+  }
+  inline PromiseHolder<NativeLocation> wrap_std__shared_ptr_Promise_NativeLocation__(std::shared_ptr<Promise<NativeLocation>> promise) noexcept {
+    return PromiseHolder<NativeLocation>(std::move(promise));
+  }
+  
+  // pragma MARK: std::function<void(const NativeLocation& /* result */)>
+  /**
+   * Specialized version of `std::function<void(const NativeLocation&)>`.
+   */
+  using Func_void_NativeLocation = std::function<void(const NativeLocation& /* result */)>;
+  /**
+   * Wrapper class for a `std::function<void(const NativeLocation& / * result * /)>`, this can be used from Swift.
+   */
+  class Func_void_NativeLocation_Wrapper final {
+  public:
+    explicit Func_void_NativeLocation_Wrapper(std::function<void(const NativeLocation& /* result */)>&& func): _function(std::make_unique<std::function<void(const NativeLocation& /* result */)>>(std::move(func))) {}
+    inline void call(NativeLocation result) const noexcept {
+      _function->operator()(result);
+    }
+  private:
+    std::unique_ptr<std::function<void(const NativeLocation& /* result */)>> _function;
+  } SWIFT_NONCOPYABLE;
+  Func_void_NativeLocation create_Func_void_NativeLocation(void* NON_NULL swiftClosureWrapper) noexcept;
+  inline Func_void_NativeLocation_Wrapper wrap_Func_void_NativeLocation(Func_void_NativeLocation value) noexcept {
+    return Func_void_NativeLocation_Wrapper(std::move(value));
+  }
+  
+  // pragma MARK: std::shared_ptr<Promise<void>>
+  /**
+   * Specialized version of `std::shared_ptr<Promise<void>>`.
+   */
+  using std__shared_ptr_Promise_void__ = std::shared_ptr<Promise<void>>;
+  inline std::shared_ptr<Promise<void>> create_std__shared_ptr_Promise_void__() noexcept {
+    return Promise<void>::create();
+  }
+  inline PromiseHolder<void> wrap_std__shared_ptr_Promise_void__(std::shared_ptr<Promise<void>> promise) noexcept {
+    return PromiseHolder<void>(std::move(promise));
+  }
+  
+  // pragma MARK: std::function<void()>
+  /**
+   * Specialized version of `std::function<void()>`.
+   */
+  using Func_void = std::function<void()>;
+  /**
+   * Wrapper class for a `std::function<void()>`, this can be used from Swift.
+   */
+  class Func_void_Wrapper final {
+  public:
+    explicit Func_void_Wrapper(std::function<void()>&& func): _function(std::make_unique<std::function<void()>>(std::move(func))) {}
+    inline void call() const noexcept {
+      _function->operator()();
+    }
+  private:
+    std::unique_ptr<std::function<void()>> _function;
+  } SWIFT_NONCOPYABLE;
+  Func_void create_Func_void(void* NON_NULL swiftClosureWrapper) noexcept;
+  inline Func_void_Wrapper wrap_Func_void(Func_void value) noexcept {
+    return Func_void_Wrapper(std::move(value));
+  }
+  
+  // pragma MARK: std::optional<NativeDestination>
+  /**
+   * Specialized version of `std::optional<NativeDestination>`.
+   */
+  using std__optional_NativeDestination_ = std::optional<NativeDestination>;
+  inline std::optional<NativeDestination> create_std__optional_NativeDestination_(const NativeDestination& value) noexcept {
+    return std::optional<NativeDestination>(value);
+  }
+  inline bool has_value_std__optional_NativeDestination_(const std::optional<NativeDestination>& optional) noexcept {
+    return optional.has_value();
+  }
+  inline NativeDestination get_std__optional_NativeDestination_(const std::optional<NativeDestination>& optional) noexcept {
+    return optional.value();
+  }
+  
+  // pragma MARK: std::unordered_map<std::string, std::string>
+  /**
+   * Specialized version of `std::unordered_map<std::string, std::string>`.
+   */
+  using std__unordered_map_std__string__std__string_ = std::unordered_map<std::string, std::string>;
+  inline std::unordered_map<std::string, std::string> create_std__unordered_map_std__string__std__string_(size_t size) noexcept {
+    std::unordered_map<std::string, std::string> map;
+    map.reserve(size);
+    return map;
+  }
+  inline std::vector<std::string> get_std__unordered_map_std__string__std__string__keys(const std__unordered_map_std__string__std__string_& map) noexcept {
+    std::vector<std::string> keys;
+    keys.reserve(map.size());
+    for (const auto& entry : map) {
+      keys.push_back(entry.first);
+    }
+    return keys;
+  }
+  inline std::string get_std__unordered_map_std__string__std__string__value(const std__unordered_map_std__string__std__string_& map, const std::string& key) noexcept {
+    return map.find(key)->second;
+  }
+  inline void emplace_std__unordered_map_std__string__std__string_(std__unordered_map_std__string__std__string_& map, const std::string& key, const std::string& value) noexcept {
+    map.emplace(key, value);
+  }
+  
+  // pragma MARK: std::optional<std::string>
+  /**
+   * Specialized version of `std::optional<std::string>`.
+   */
+  using std__optional_std__string_ = std::optional<std::string>;
+  inline std::optional<std::string> create_std__optional_std__string_(const std::string& value) noexcept {
+    return std::optional<std::string>(value);
+  }
+  inline bool has_value_std__optional_std__string_(const std::optional<std::string>& optional) noexcept {
+    return optional.has_value();
+  }
+  inline std::string get_std__optional_std__string_(const std::optional<std::string>& optional) noexcept {
+    return optional.value();
+  }
+  
+  // pragma MARK: std::optional<NativeLocation>
+  /**
+   * Specialized version of `std::optional<NativeLocation>`.
+   */
+  using std__optional_NativeLocation_ = std::optional<NativeLocation>;
+  inline std::optional<NativeLocation> create_std__optional_NativeLocation_(const NativeLocation& value) noexcept {
+    return std::optional<NativeLocation>(value);
+  }
+  inline bool has_value_std__optional_NativeLocation_(const std::optional<NativeLocation>& optional) noexcept {
+    return optional.has_value();
+  }
+  inline NativeLocation get_std__optional_NativeLocation_(const std::optional<NativeLocation>& optional) noexcept {
+    return optional.value();
+  }
+  
+  // pragma MARK: std::optional<bool>
+  /**
+   * Specialized version of `std::optional<bool>`.
+   */
+  using std__optional_bool_ = std::optional<bool>;
+  inline std::optional<bool> create_std__optional_bool_(const bool& value) noexcept {
+    return std::optional<bool>(value);
+  }
+  inline bool has_value_std__optional_bool_(const std::optional<bool>& optional) noexcept {
+    return optional.has_value();
+  }
+  inline bool get_std__optional_bool_(const std::optional<bool>& optional) noexcept {
+    return optional.value();
+  }
+  
+  // pragma MARK: std::shared_ptr<Promise<NativeSessionState>>
+  /**
+   * Specialized version of `std::shared_ptr<Promise<NativeSessionState>>`.
+   */
+  using std__shared_ptr_Promise_NativeSessionState__ = std::shared_ptr<Promise<NativeSessionState>>;
+  inline std::shared_ptr<Promise<NativeSessionState>> create_std__shared_ptr_Promise_NativeSessionState__() noexcept {
+    return Promise<NativeSessionState>::create();
+  }
+  inline PromiseHolder<NativeSessionState> wrap_std__shared_ptr_Promise_NativeSessionState__(std::shared_ptr<Promise<NativeSessionState>> promise) noexcept {
+    return PromiseHolder<NativeSessionState>(std::move(promise));
+  }
+  
+  // pragma MARK: std::function<void(const NativeSessionState& /* result */)>
+  /**
+   * Specialized version of `std::function<void(const NativeSessionState&)>`.
+   */
+  using Func_void_NativeSessionState = std::function<void(const NativeSessionState& /* result */)>;
+  /**
+   * Wrapper class for a `std::function<void(const NativeSessionState& / * result * /)>`, this can be used from Swift.
+   */
+  class Func_void_NativeSessionState_Wrapper final {
+  public:
+    explicit Func_void_NativeSessionState_Wrapper(std::function<void(const NativeSessionState& /* result */)>&& func): _function(std::make_unique<std::function<void(const NativeSessionState& /* result */)>>(std::move(func))) {}
+    inline void call(NativeSessionState result) const noexcept {
+      _function->operator()(result);
+    }
+  private:
+    std::unique_ptr<std::function<void(const NativeSessionState& /* result */)>> _function;
+  } SWIFT_NONCOPYABLE;
+  Func_void_NativeSessionState create_Func_void_NativeSessionState(void* NON_NULL swiftClosureWrapper) noexcept;
+  inline Func_void_NativeSessionState_Wrapper wrap_Func_void_NativeSessionState(Func_void_NativeSessionState value) noexcept {
+    return Func_void_NativeSessionState_Wrapper(std::move(value));
+  }
+  
+  // pragma MARK: std::shared_ptr<Promise<std::string>>
+  /**
+   * Specialized version of `std::shared_ptr<Promise<std::string>>`.
+   */
+  using std__shared_ptr_Promise_std__string__ = std::shared_ptr<Promise<std::string>>;
+  inline std::shared_ptr<Promise<std::string>> create_std__shared_ptr_Promise_std__string__() noexcept {
+    return Promise<std::string>::create();
+  }
+  inline PromiseHolder<std::string> wrap_std__shared_ptr_Promise_std__string__(std::shared_ptr<Promise<std::string>> promise) noexcept {
+    return PromiseHolder<std::string>(std::move(promise));
+  }
+  
+  // pragma MARK: std::function<void(const std::string& /* result */)>
+  /**
+   * Specialized version of `std::function<void(const std::string&)>`.
+   */
+  using Func_void_std__string = std::function<void(const std::string& /* result */)>;
+  /**
+   * Wrapper class for a `std::function<void(const std::string& / * result * /)>`, this can be used from Swift.
+   */
+  class Func_void_std__string_Wrapper final {
+  public:
+    explicit Func_void_std__string_Wrapper(std::function<void(const std::string& /* result */)>&& func): _function(std::make_unique<std::function<void(const std::string& /* result */)>>(std::move(func))) {}
+    inline void call(std::string result) const noexcept {
+      _function->operator()(result);
+    }
+  private:
+    std::unique_ptr<std::function<void(const std::string& /* result */)>> _function;
+  } SWIFT_NONCOPYABLE;
+  Func_void_std__string create_Func_void_std__string(void* NON_NULL swiftClosureWrapper) noexcept;
+  inline Func_void_std__string_Wrapper wrap_Func_void_std__string(Func_void_std__string value) noexcept {
+    return Func_void_std__string_Wrapper(std::move(value));
+  }
+  
+  // pragma MARK: std::shared_ptr<Promise<double>>
+  /**
+   * Specialized version of `std::shared_ptr<Promise<double>>`.
+   */
+  using std__shared_ptr_Promise_double__ = std::shared_ptr<Promise<double>>;
+  inline std::shared_ptr<Promise<double>> create_std__shared_ptr_Promise_double__() noexcept {
+    return Promise<double>::create();
+  }
+  inline PromiseHolder<double> wrap_std__shared_ptr_Promise_double__(std::shared_ptr<Promise<double>> promise) noexcept {
+    return PromiseHolder<double>(std::move(promise));
+  }
+  
+  // pragma MARK: std::function<void(double /* result */)>
+  /**
+   * Specialized version of `std::function<void(double)>`.
+   */
+  using Func_void_double = std::function<void(double /* result */)>;
+  /**
+   * Wrapper class for a `std::function<void(double / * result * /)>`, this can be used from Swift.
+   */
+  class Func_void_double_Wrapper final {
+  public:
+    explicit Func_void_double_Wrapper(std::function<void(double /* result */)>&& func): _function(std::make_unique<std::function<void(double /* result */)>>(std::move(func))) {}
+    inline void call(double result) const noexcept {
+      _function->operator()(result);
+    }
+  private:
+    std::unique_ptr<std::function<void(double /* result */)>> _function;
+  } SWIFT_NONCOPYABLE;
+  Func_void_double create_Func_void_double(void* NON_NULL swiftClosureWrapper) noexcept;
+  inline Func_void_double_Wrapper wrap_Func_void_double(Func_void_double value) noexcept {
+    return Func_void_double_Wrapper(std::move(value));
+  }
+  
   // pragma MARK: std::shared_ptr<HybridLocationSessionSpec>
   /**
    * Specialized version of `std::shared_ptr<HybridLocationSessionSpec>`.
@@ -39,6 +389,60 @@ namespace margelo::nitro::locationsession::bridge::swift {
   using std__weak_ptr_HybridLocationSessionSpec_ = std::weak_ptr<HybridLocationSessionSpec>;
   inline std__weak_ptr_HybridLocationSessionSpec_ weakify_std__shared_ptr_HybridLocationSessionSpec_(const std::shared_ptr<HybridLocationSessionSpec>& strong) noexcept { return strong; }
   
+  // pragma MARK: Result<std::shared_ptr<Promise<NativePermissionStatus>>>
+  using Result_std__shared_ptr_Promise_NativePermissionStatus___ = Result<std::shared_ptr<Promise<NativePermissionStatus>>>;
+  inline Result_std__shared_ptr_Promise_NativePermissionStatus___ create_Result_std__shared_ptr_Promise_NativePermissionStatus___(const std::shared_ptr<Promise<NativePermissionStatus>>& value) noexcept {
+    return Result<std::shared_ptr<Promise<NativePermissionStatus>>>::withValue(value);
+  }
+  inline Result_std__shared_ptr_Promise_NativePermissionStatus___ create_Result_std__shared_ptr_Promise_NativePermissionStatus___(const std::exception_ptr& error) noexcept {
+    return Result<std::shared_ptr<Promise<NativePermissionStatus>>>::withError(error);
+  }
+  
+  // pragma MARK: Result<std::shared_ptr<Promise<NativeLocation>>>
+  using Result_std__shared_ptr_Promise_NativeLocation___ = Result<std::shared_ptr<Promise<NativeLocation>>>;
+  inline Result_std__shared_ptr_Promise_NativeLocation___ create_Result_std__shared_ptr_Promise_NativeLocation___(const std::shared_ptr<Promise<NativeLocation>>& value) noexcept {
+    return Result<std::shared_ptr<Promise<NativeLocation>>>::withValue(value);
+  }
+  inline Result_std__shared_ptr_Promise_NativeLocation___ create_Result_std__shared_ptr_Promise_NativeLocation___(const std::exception_ptr& error) noexcept {
+    return Result<std::shared_ptr<Promise<NativeLocation>>>::withError(error);
+  }
+  
+  // pragma MARK: Result<std::shared_ptr<Promise<void>>>
+  using Result_std__shared_ptr_Promise_void___ = Result<std::shared_ptr<Promise<void>>>;
+  inline Result_std__shared_ptr_Promise_void___ create_Result_std__shared_ptr_Promise_void___(const std::shared_ptr<Promise<void>>& value) noexcept {
+    return Result<std::shared_ptr<Promise<void>>>::withValue(value);
+  }
+  inline Result_std__shared_ptr_Promise_void___ create_Result_std__shared_ptr_Promise_void___(const std::exception_ptr& error) noexcept {
+    return Result<std::shared_ptr<Promise<void>>>::withError(error);
+  }
+  
+  // pragma MARK: Result<std::shared_ptr<Promise<NativeSessionState>>>
+  using Result_std__shared_ptr_Promise_NativeSessionState___ = Result<std::shared_ptr<Promise<NativeSessionState>>>;
+  inline Result_std__shared_ptr_Promise_NativeSessionState___ create_Result_std__shared_ptr_Promise_NativeSessionState___(const std::shared_ptr<Promise<NativeSessionState>>& value) noexcept {
+    return Result<std::shared_ptr<Promise<NativeSessionState>>>::withValue(value);
+  }
+  inline Result_std__shared_ptr_Promise_NativeSessionState___ create_Result_std__shared_ptr_Promise_NativeSessionState___(const std::exception_ptr& error) noexcept {
+    return Result<std::shared_ptr<Promise<NativeSessionState>>>::withError(error);
+  }
+  
+  // pragma MARK: Result<std::shared_ptr<Promise<std::string>>>
+  using Result_std__shared_ptr_Promise_std__string___ = Result<std::shared_ptr<Promise<std::string>>>;
+  inline Result_std__shared_ptr_Promise_std__string___ create_Result_std__shared_ptr_Promise_std__string___(const std::shared_ptr<Promise<std::string>>& value) noexcept {
+    return Result<std::shared_ptr<Promise<std::string>>>::withValue(value);
+  }
+  inline Result_std__shared_ptr_Promise_std__string___ create_Result_std__shared_ptr_Promise_std__string___(const std::exception_ptr& error) noexcept {
+    return Result<std::shared_ptr<Promise<std::string>>>::withError(error);
+  }
+  
+  // pragma MARK: Result<std::shared_ptr<Promise<double>>>
+  using Result_std__shared_ptr_Promise_double___ = Result<std::shared_ptr<Promise<double>>>;
+  inline Result_std__shared_ptr_Promise_double___ create_Result_std__shared_ptr_Promise_double___(const std::shared_ptr<Promise<double>>& value) noexcept {
+    return Result<std::shared_ptr<Promise<double>>>::withValue(value);
+  }
+  inline Result_std__shared_ptr_Promise_double___ create_Result_std__shared_ptr_Promise_double___(const std::exception_ptr& error) noexcept {
+    return Result<std::shared_ptr<Promise<double>>>::withError(error);
+  }
+  
   // pragma MARK: Result<double>
   using Result_double_ = Result<double>;
   inline Result_double_ create_Result_double_(double value) noexcept {
@@ -46,6 +450,15 @@ namespace margelo::nitro::locationsession::bridge::swift {
   }
   inline Result_double_ create_Result_double_(const std::exception_ptr& error) noexcept {
     return Result<double>::withError(error);
+  }
+  
+  // pragma MARK: Result<void>
+  using Result_void_ = Result<void>;
+  inline Result_void_ create_Result_void_() noexcept {
+    return Result<void>::withValue();
+  }
+  inline Result_void_ create_Result_void_(const std::exception_ptr& error) noexcept {
+    return Result<void>::withError(error);
   }
 
 } // namespace margelo::nitro::locationsession::bridge::swift

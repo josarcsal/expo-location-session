@@ -10,17 +10,23 @@ Pod::Spec.new do |s|
   s.license      = package["license"]
   s.authors      = package["author"]
 
-  s.platforms    = { :ios => min_ios_version_supported, :visionos => 1.0 }
+  s.platforms    = { :ios => min_ios_version_supported }
   s.source       = { :git => "https://github.com/josarcsal/expo-location-session.git", :tag => "#{s.version}" }
 
   s.source_files = [
     # Implementation (Swift)
-    "ios/**/*.{swift}",
+    "ios/*.swift",
+    "ios/Core/Sources/**/*.swift",
+    "ios/Engine/**/*.{swift,m,h}",
     # Autolinking/Registration (Objective-C++)
     "ios/**/*.{m,mm}",
     # Implementation (C++ objects)
     "cpp/**/*.{hpp,cpp}",
   ]
+
+  s.pod_target_xcconfig = {
+    "GCC_PREPROCESSOR_DEFINITIONS" => "$(inherited) ELS_LIB_VERSION=\\\"#{s.version}\\\"",
+  }
 
   load 'nitrogen/generated/ios/LocationSession+autolinking.rb'
   add_nitrogen_files(s)

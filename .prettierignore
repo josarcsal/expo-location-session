@@ -1,0 +1,8 @@
+lib/
+nitrogen/generated/
+plugin/build/
+example/ios/
+example/android/
+ios/Core/.build/
+.superpowers/
+.claude/

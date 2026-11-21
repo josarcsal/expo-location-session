@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "example",
-    "slug": "example",
+    "name": "expo-location-session-example",
+    "slug": "expo-location-session-example",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -23,6 +23,18 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "newArchEnabled": true
+    "newArchEnabled": true,
+    "scheme": "locationsession",
+    "plugins": [
+      [
+        "expo-location-session",
+        {
+          "locationWhenInUseText": "Shares your location with the host during an active session.",
+          "locationAlwaysText": "Keeps sharing your location during an active session when the app is in the background.",
+          "androidNotificationIcon": "./assets/notification-icon.png"
+        }
+      ],
+      "./plugins/with-dev-ca"
+    ]
   }
 }
