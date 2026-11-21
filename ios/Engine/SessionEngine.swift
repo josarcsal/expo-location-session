@@ -27,6 +27,7 @@ final class SessionEngine {
     let source = LocationSource()
     private(set) lazy var uploader = Uploader(store: store, events: events)
 
+    let launchAtMs = nowMs()
     private(set) var config: SessionConfig?
     private var startedAtMs: Int64 = 0
     private(set) var lastFix: Fix?

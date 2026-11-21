@@ -103,6 +103,10 @@ final class DebugLogger {
         }
     }
 
+    func drain() {
+        queue.sync {}
+    }
+
     func processStarted(launchKeys: [String], locationLaunch: Bool, appState: Int, protectedData: Bool) {
         queue.async {
             self.protectedData = protectedData
@@ -313,6 +317,7 @@ final class DebugLogger {
         observers = lifecycle.map { name, msg in
             center.addObserver(forName: name, object: nil, queue: nil) { [weak self] _ in
                 self?.log(name == UIApplication.didReceiveMemoryWarningNotification ? "warn" : "info", "lifecycle", msg)
+                if name == UIApplication.willTerminateNotification { self?.drain() }
             }
         }
         observers.append(center.addObserver(forName: .NSProcessInfoPowerStateDidChange, object: nil, queue: nil) { [weak self] _ in

@@ -51,6 +51,7 @@ extension SessionEngine {
             } else if !permissions.isAuthorized {
                 teardown(c, .permissionRevoked)
             } else {
+                source.expectLaunchEvent(launchAtMs: launchAtMs)
                 activate(c, startedAtMs: startedAt, pending: store.pendingFix, lastUploadAtMs: store.lastUploadAtMs)
                 Log.info("store", "resumed session \(c.id)", sessionId: c.id)
                 if let fix = lastFix { evaluate(fix: fix) } else { uploader.pump() }
@@ -98,5 +99,6 @@ extension SessionEngine {
         } else {
             Log.info("region", "could not arm terminate region for \(c.id)", sessionId: c.id)
         }
+        DebugLogger.shared.drain()
     }
 }

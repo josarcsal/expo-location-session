@@ -32,7 +32,7 @@ v0.1 is done when every row passes on three physical devices: an iPhone (iOS 17+
 | Done | # | Check | Expected | iPhone | Pixel | Samsung / Xiaomi |
 |------|---|-------|----------|--------|-------|------------------|
 | [ ] | 10 | Always → `start` → kill from the app switcher → move ~300 m with the phone locked | The server receives uploads without the app being opened | | n/a | n/a |
-| [ ] | 11 | Same as 10, measure the distance until the first upload after the kill | First upload after roughly 200 m (terminate region), not only after a ~500 m significant change | | n/a | n/a |
+| [ ] | 11 | Same as 10, read the `first location event after launch` line | Note `kind` (`regionExit` or `locations`), `msSinceLaunch` and `distanceFromTerminateCenter`. A `regionExit` should come at roughly 200 m (iOS may report it later); a relaunch inside the region comes from a significant change | | n/a | n/a |
 | [ ] | 12 | When In Use only → `start` → kill from the app switcher → move ~300 m | No uploads while the app is closed | | n/a | n/a |
 | [ ] | 13 | After 12, open the app before `expiresAt` | Session resumes and uploads continue; `getState().survivesProcessDeath` is `false` | | n/a | n/a |
 | [ ] | 14 | Always → `start` → kill → wait past `expiresAt` → move | App relaunches, stops with `expired`, nothing is uploaded | | n/a | n/a |

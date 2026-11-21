@@ -48,6 +48,33 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
 
     private var manager: CLLocationManager?
     private var lastStatus: CLAuthorizationStatus?
+    private var launchReport: (launchAtMs: Int64, region: CLCircularRegion?)?
+
+    func expectLaunchEvent(launchAtMs: Int64) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        let region = (manager ?? CLLocationManager()).monitoredRegions
+            .first { $0.identifier == Self.terminateRegionId } as? CLCircularRegion
+        launchReport = (launchAtMs, region)
+    }
+
+    private func reportLaunchEvent(_ kind: String, regionId: String? = nil, location: CLLocation? = nil) {
+        guard let report = launchReport else { return }
+        launchReport = nil
+        var data: [String: Any] = ["kind": kind, "msSinceLaunch": nowMs() - report.launchAtMs]
+        if let regionId { data["regionId"] = regionId }
+        if let location {
+            data["fixAgeMs"] = nowMs() - Int64((location.timestamp.timeIntervalSince1970 * 1000).rounded())
+            data["accuracy"] = location.horizontalAccuracy
+        }
+        if let region = report.region {
+            data["terminateRadius"] = region.radius
+            if let location {
+                let center = CLLocation(latitude: region.center.latitude, longitude: region.center.longitude)
+                data["distanceFromTerminateCenter"] = location.distance(from: center)
+            }
+        }
+        Log.debug("lifecycle", "first location event after launch", data: data, level: "info")
+    }
 
     func start(_ config: SessionConfig) {
         dispatchPrecondition(condition: .onQueue(.main))
@@ -142,6 +169,7 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        reportLaunchEvent("locations", location: locations.last)
         let fixes = locations.compactMap(makeFix)
         if fixes.count < locations.count {
             for location in locations where makeFix(location) == nil {
@@ -159,14 +187,17 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         let e = error as NSError
+        reportLaunchEvent("error")
         Log.debug("location", "manager error", data: ["domain": e.domain, "code": e.code], level: "warn")
     }
 
     func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
+        reportLaunchEvent("regionEnter", regionId: region.identifier)
         Log.debug("region", "region entered", data: ["id": region.identifier], level: "info")
     }
 
     func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
+        reportLaunchEvent("regionExit", regionId: region.identifier)
         Log.debug("region", "region exited", data: ["id": region.identifier], level: "info")
     }
 
