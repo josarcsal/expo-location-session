@@ -39,6 +39,7 @@ class SessionStore(context: Context) {
             .remove(LAST_UPLOAD_AT)
             .remove(FIRST_PROMOTION_FAILURE_AT)
             .commit()
+        if (saved) loggedNoSession = false
         ElsLog.debug(
             "store",
             if (saved) "session persisted" else "session not persisted",
@@ -49,9 +50,14 @@ class SessionStore(context: Context) {
         return saved
     }
 
+    @Volatile private var loggedNoSession = false
+
     fun load(): StoredSession = read().also {
         when (it) {
-            StoredSession.None -> ElsLog.debug("store", "no persisted session")
+            StoredSession.None -> if (!loggedNoSession) {
+                loggedNoSession = true
+                ElsLog.debug("store", "no persisted session")
+            }
             StoredSession.Corrupt -> ElsLog.debug("store", "persisted session corrupt", level = "warn")
             is StoredSession.Session -> ElsLog.debug(
                 "store",

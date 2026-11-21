@@ -31,19 +31,26 @@ final class SessionStore {
         static let alwaysRequested = "alwaysRequested"
     }
 
+    private var loggedNoSession = false
+
     func save(_ config: SessionConfig, startedAtMs: Int64) throws {
         let data = try JSONEncoder().encode(config)
         try writeKeychain(data)
         defaults.set(NSNumber(value: startedAtMs), forKey: Key.startedAtMs)
         defaults.removeObject(forKey: Key.pendingFix)
         defaults.removeObject(forKey: Key.lastUploadAtMs)
+        loggedNoSession = false
         Log.debug("store", "session persisted", data: ["startedAtMs": startedAtMs, "expiresAtMs": config.expiresAtMs], sessionId: config.id, level: "info")
     }
 
     func load(protectedDataAvailable: Bool) -> StoredSession {
         let result = read(protectedDataAvailable: protectedDataAvailable)
         switch result {
-        case .none: Log.debug("store", "no persisted session", data: ["protectedData": protectedDataAvailable])
+        case .none:
+            if !loggedNoSession {
+                loggedNoSession = true
+                Log.debug("store", "no persisted session", data: ["protectedData": protectedDataAvailable])
+            }
         case .unavailable: Log.debug("store", "persisted session unavailable", data: ["protectedData": protectedDataAvailable], level: "warn")
         case .corrupt: Log.debug("store", "persisted session corrupt", data: ["protectedData": protectedDataAvailable], level: "warn")
         case let .session(c, startedAt): Log.debug("store", "persisted session loaded", data: ["startedAtMs": startedAt, "expiresAtMs": c.expiresAtMs], sessionId: c.id, level: "info")
