@@ -36,6 +36,7 @@ object DebugLogger {
     private const val PREFS = "expo_location_session_debug"
     private const val KEY_OPTIONS = "options"
     private const val KEY_SEQ = "seq"
+    private const val SEQ_PERSIST_EVERY = 50L
     private const val KEY_CURSOR = "cursor"
     private const val KEY_FILE_INDEX = "fileIndex"
     private const val KEY_INSTALL_ID = "installId"
@@ -174,6 +175,7 @@ object DebugLogger {
         init(ctx)
         onQueue {
             closeHandle()
+            if (active) prefs()?.edit()?.putLong(KEY_SEQ, seq)?.commit()
             directory()?.deleteRecursively()
             files[0] = FileState()
             files[1] = FileState()
@@ -379,7 +381,7 @@ object DebugLogger {
 
     private fun append(level: String, tag: String, msg: String, data: Map<String, Any?>?, sessionId: String?, t: Long) {
         seq += 1
-        prefs()?.edit()?.putLong(KEY_SEQ, seq)?.commit()
+        if (seq % SEQ_PERSIST_EVERY == 0L) prefs()?.edit()?.putLong(KEY_SEQ, seq)?.apply()
         val line = encodeLogLine(LogLine(seq, t, pid, level, tag, msg, sessionId, data))
         pending.addLast(Pending(seq, line))
         drainPending()
@@ -427,7 +429,7 @@ object DebugLogger {
         current = 1 - current
         directory()?.let { File(it, fileName(current)).delete() }
         files[current] = FileState()
-        prefs()?.edit()?.putInt(KEY_FILE_INDEX, current)?.commit()
+        prefs()?.edit()?.putInt(KEY_FILE_INDEX, current)?.putLong(KEY_SEQ, seq)?.commit()
     }
 
     private fun closeHandle() {
@@ -441,6 +443,15 @@ object DebugLogger {
         return try {
             if (!dir.isDirectory && !dir.mkdirs()) return null
             val raf = RandomAccessFile(File(dir, fileName(current)), "rw")
+            val tracked = files[current].size
+            if (raf.length() > tracked) {
+                try {
+                    raf.setLength(tracked)
+                } catch (e: Exception) {
+                    runCatching { raf.close() }
+                    return null
+                }
+            }
             files[current].size = raf.length()
             handle = raf
             raf
