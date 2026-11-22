@@ -7,6 +7,7 @@ func nowMs() -> Int64 {
 
 final class Uploader {
     var onStop: ((StopReason) -> Void)?
+    var processKeptAlive: (() -> Bool)?
 
     private let store: SessionStore
     private let events: EventBus
@@ -272,8 +273,9 @@ final class Uploader {
     }
 
     private func backgroundTaskExpired() {
-        Log.debug("upload", "background task expired; cancelling in-flight upload", data: ["inFlight": inFlight != nil], sessionId: config?.id, level: "warn")
-        inFlight?.cancel()
+        let keptAlive = processKeptAlive?() ?? false
+        Log.debug("upload", keptAlive ? "background task expired; background location keeps the upload running" : "background task expired; cancelling in-flight upload", data: ["inFlight": inFlight != nil], sessionId: config?.id, level: "warn")
+        if !keptAlive { inFlight?.cancel() }
         endBackgroundTask()
     }
 

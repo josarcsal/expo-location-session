@@ -114,6 +114,7 @@ final class SessionEngine {
         lastFix = pending.flatMap(sanitized)
         stopping = false
         uploader.onStop = { [weak self] in self?.stop($0) }
+        uploader.processKeptAlive = { [weak self] in self?.source.backgroundUpdatesActive ?? false }
         uploader.begin(c, pending: lastFix, lastSuccessMs: lastUploadAtMs)
         startSource(c)
         if source.accuracyAuthorization == .reducedAccuracy { reportReducedAccuracy(c) }

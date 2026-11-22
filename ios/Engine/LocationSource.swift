@@ -54,6 +54,7 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
     private var leftoversReleased = false
 
     var accuracyAuthorization: CLAccuracyAuthorization? { manager?.accuracyAuthorization }
+    var backgroundUpdatesActive: Bool { manager?.allowsBackgroundLocationUpdates ?? false }
     private var launchReport: (launchAtMs: Int64, region: CLCircularRegion?)?
 
     func expectLaunchEvent(launchAtMs: Int64) {
