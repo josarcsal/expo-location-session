@@ -33,7 +33,7 @@ v0.1 is done when every row passes on three physical devices: an iPhone (iOS 17+
 | Done | # | Check | Expected | iPhone | Pixel | Samsung / Xiaomi |
 |------|---|-------|----------|--------|-------|------------------|
 | [ ] | 10 | Always → `start` → kill from the app switcher → move ~300 m with the phone locked | The server receives uploads without the app being opened | | n/a | n/a |
-| [ ] | 11 | Same as 10, read the `first location event after launch` line | Note `kind` (`regionExit` or `locations`), `msSinceLaunch` and `distanceFromTerminateCenter`. A `regionExit` should come at roughly 200 m (iOS may report it later); a relaunch inside the region comes from a significant change | | n/a | n/a |
+| [ ] | 11 | Same as 10, read the `first location event after launch` line | Note `kind` (`regionExit` or `locations`), `msSinceLaunch` and `distanceFromTerminateCenter`. A `regionExit` should come at roughly `terminateRadius` from the centre (150 m for a fresh accurate fix; iOS may report it later); a relaunch inside the region comes from a significant change | | n/a | n/a |
 | [ ] | 12 | When In Use only → `start` → kill from the app switcher → move ~300 m | No uploads while the app is closed | | n/a | n/a |
 | [ ] | 13 | After 12, open the app before `expiresAt` | Session resumes and uploads continue; `getState().survivesProcessDeath` is `false` | | n/a | n/a |
 | [ ] | 14 | Always → `start` → kill → wait past `expiresAt` → move | App relaunches, stops with `expired`, nothing is uploaded | | n/a | n/a |
@@ -42,6 +42,7 @@ v0.1 is done when every row passes on three physical devices: an iPhone (iOS 17+
 | [ ] | 17 | While running, Settings → Location → While Using the App | Session keeps running; `survivesProcessDeath` becomes `false` | | n/a | n/a |
 | [ ] | 18 | While running, Settings → Location → Never | Session stops with `permissionRevoked` | | n/a | n/a |
 | [ ] | 19 | `stop()` after a kill/relaunch cycle | No `els.*` regions remain; no further relaunches or uploads | | n/a | n/a |
+| [ ] | 45 | Always → `start` with `distanceFilterMeters: 500` → drive at 50+ km/h → kill from the app switcher between two fixes; repeat once indoors where the last fix has 150 m+ accuracy | The `armed terminate region` line shows `r` above 150 (speed × fix age, or accuracy + 150), never above 1000; the next `first location event after launch` is a `regionExit` | | n/a | n/a |
 
 ### Android survival
 

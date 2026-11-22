@@ -37,7 +37,6 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
     static let regionPrefix = "els."
     static let destinationRegionId = "els.destination"
     static let terminateRegionId = "els.terminate"
-    static let terminateRadiusMeters: CLLocationDistance = 200
 
     static var hasBackgroundLocationMode: Bool {
         (Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String])?.contains("location") ?? false
@@ -138,17 +137,10 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
         guard let m = manager, m.authorizationStatus == .authorizedAlways,
               CLLocationManager.isMonitoringAvailable(for: CLCircularRegion.self) else { return nil }
         m.startMonitoringSignificantLocationChanges()
-        let center: CLLocationCoordinate2D
-        if let fix {
-            center = CLLocationCoordinate2D(latitude: fix.latitude, longitude: fix.longitude)
-        } else if let location = m.location {
-            center = location.coordinate
-        } else {
-            return nil
-        }
+        guard let anchor = fix ?? m.location.flatMap(makeFix) else { return nil }
         let region = CLCircularRegion(
-            center: center,
-            radius: min(Self.terminateRadiusMeters, m.maximumRegionMonitoringDistance),
+            center: CLLocationCoordinate2D(latitude: anchor.latitude, longitude: anchor.longitude),
+            radius: min(terminateRadius(anchor, nowMs: nowMs()), m.maximumRegionMonitoringDistance),
             identifier: Self.terminateRegionId
         )
         region.notifyOnEntry = false

@@ -414,7 +414,7 @@ Stopping removes location updates, regions, geofences, alarms and the Android no
 
 - One `CLLocationManager` runs standard updates (`allowsBackgroundLocationUpdates`, no automatic pause, background indicator shown) together with significant-change monitoring.
 - With Always and a destination, the destination is also monitored as a region, so arrival can relaunch the app.
-- When the app is about to terminate and Always is granted, it registers an exit-only region of 200 m around the last fix, so moving away relaunches the app sooner than a significant change would (~500 m).
+- When the app is about to terminate and Always is granted, it registers an exit-only region around the last fix (or the manager's last known location), so moving away relaunches the app sooner than a significant change would (~500 m). The radius is 150 m, plus the fix's accuracy when that accuracy is 150 m or worse, plus speed × seconds since the fix, capped at 1000 m (and at iOS's maximum region size). A poor or stale fix therefore still leaves the phone inside the region, where the exit can fire.
 - At launch the bootstrap resumes the persisted session without JS: it stops it as `expired` or `permissionRevoked`, or restarts updates and sends the pending location.
 - The session config (headers included) is stored in the Keychain with `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`; the pending location and `lastStop` are in `UserDefaults`. After a reboot nothing resumes before the first unlock; the engine waits and never overwrites the stored session. Because of `ThisDeviceOnly`, a session is not restored on a device restored from a backup or migrated to a new phone.
 - Uploads run in a `beginBackgroundTask` so a request can finish after the app is suspended.
