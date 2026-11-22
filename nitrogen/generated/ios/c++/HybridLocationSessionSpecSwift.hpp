@@ -12,9 +12,45 @@
 // Forward declaration of `HybridLocationSessionSpec_cxx` to properly resolve imports.
 namespace LocationSession { class HybridLocationSessionSpec_cxx; }
 
+// Forward declaration of `NativePermissionStatus` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativePermissionStatus; }
+// Forward declaration of `PermissionValue` to properly resolve imports.
+namespace margelo::nitro::locationsession { enum class PermissionValue; }
+// Forward declaration of `PermissionLevel` to properly resolve imports.
+namespace margelo::nitro::locationsession { enum class PermissionLevel; }
+// Forward declaration of `NativeLocation` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeLocation; }
+// Forward declaration of `Accuracy` to properly resolve imports.
+namespace margelo::nitro::locationsession { enum class Accuracy; }
+// Forward declaration of `NativeSessionConfig` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeSessionConfig; }
+// Forward declaration of `NativeDestination` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeDestination; }
+// Forward declaration of `NativeSessionState` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeSessionState; }
+// Forward declaration of `SessionStatus` to properly resolve imports.
+namespace margelo::nitro::locationsession { enum class SessionStatus; }
+// Forward declaration of `NativeDebugOptions` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeDebugOptions; }
+// Forward declaration of `SessionEvent` to properly resolve imports.
+namespace margelo::nitro::locationsession { enum class SessionEvent; }
 
-
-
+#include "NativePermissionStatus.hpp"
+#include <NitroModules/Promise.hpp>
+#include "PermissionValue.hpp"
+#include "PermissionLevel.hpp"
+#include "NativeLocation.hpp"
+#include <optional>
+#include "Accuracy.hpp"
+#include "NativeSessionConfig.hpp"
+#include <string>
+#include "NativeDestination.hpp"
+#include <unordered_map>
+#include "NativeSessionState.hpp"
+#include "SessionStatus.hpp"
+#include "NativeDebugOptions.hpp"
+#include "SessionEvent.hpp"
+#include <functional>
 
 #include "LocationSession-Swift-Cxx-Umbrella.hpp"
 
@@ -66,13 +102,107 @@ namespace margelo::nitro::locationsession {
 
   public:
     // Methods
-    inline double sum(double num1, double num2) override {
-      auto __result = _swiftPart.sum(std::forward<decltype(num1)>(num1), std::forward<decltype(num2)>(num2));
+    inline std::shared_ptr<Promise<NativePermissionStatus>> getPermissionStatus() override {
+      auto __result = _swiftPart.getPermissionStatus();
       if (__result.hasError()) [[unlikely]] {
         std::rethrow_exception(__result.error());
       }
       auto __value = std::move(__result.value());
       return __value;
+    }
+    inline std::shared_ptr<Promise<NativePermissionStatus>> requestPermission(PermissionLevel level) override {
+      auto __result = _swiftPart.requestPermission(static_cast<int>(level));
+      if (__result.hasError()) [[unlikely]] {
+        std::rethrow_exception(__result.error());
+      }
+      auto __value = std::move(__result.value());
+      return __value;
+    }
+    inline std::shared_ptr<Promise<NativeLocation>> getCurrentPosition(Accuracy accuracy, double timeoutMs, double maxAgeMs) override {
+      auto __result = _swiftPart.getCurrentPosition(static_cast<int>(accuracy), std::forward<decltype(timeoutMs)>(timeoutMs), std::forward<decltype(maxAgeMs)>(maxAgeMs));
+      if (__result.hasError()) [[unlikely]] {
+        std::rethrow_exception(__result.error());
+      }
+      auto __value = std::move(__result.value());
+      return __value;
+    }
+    inline std::shared_ptr<Promise<void>> start(const NativeSessionConfig& config) override {
+      auto __result = _swiftPart.start(std::forward<decltype(config)>(config));
+      if (__result.hasError()) [[unlikely]] {
+        std::rethrow_exception(__result.error());
+      }
+      auto __value = std::move(__result.value());
+      return __value;
+    }
+    inline std::shared_ptr<Promise<void>> stop() override {
+      auto __result = _swiftPart.stop();
+      if (__result.hasError()) [[unlikely]] {
+        std::rethrow_exception(__result.error());
+      }
+      auto __value = std::move(__result.value());
+      return __value;
+    }
+    inline std::shared_ptr<Promise<NativeSessionState>> getState() override {
+      auto __result = _swiftPart.getState();
+      if (__result.hasError()) [[unlikely]] {
+        std::rethrow_exception(__result.error());
+      }
+      auto __value = std::move(__result.value());
+      return __value;
+    }
+    inline std::shared_ptr<Promise<void>> configureDebug(const NativeDebugOptions& options) override {
+      auto __result = _swiftPart.configureDebug(std::forward<decltype(options)>(options));
+      if (__result.hasError()) [[unlikely]] {
+        std::rethrow_exception(__result.error());
+      }
+      auto __value = std::move(__result.value());
+      return __value;
+    }
+    inline std::shared_ptr<Promise<std::string>> getDebugLog(double limit) override {
+      auto __result = _swiftPart.getDebugLog(std::forward<decltype(limit)>(limit));
+      if (__result.hasError()) [[unlikely]] {
+        std::rethrow_exception(__result.error());
+      }
+      auto __value = std::move(__result.value());
+      return __value;
+    }
+    inline std::shared_ptr<Promise<void>> clearDebugLog() override {
+      auto __result = _swiftPart.clearDebugLog();
+      if (__result.hasError()) [[unlikely]] {
+        std::rethrow_exception(__result.error());
+      }
+      auto __value = std::move(__result.value());
+      return __value;
+    }
+    inline std::shared_ptr<Promise<double>> flushDebugLog() override {
+      auto __result = _swiftPart.flushDebugLog();
+      if (__result.hasError()) [[unlikely]] {
+        std::rethrow_exception(__result.error());
+      }
+      auto __value = std::move(__result.value());
+      return __value;
+    }
+    inline std::shared_ptr<Promise<std::string>> getDebugInstallId() override {
+      auto __result = _swiftPart.getDebugInstallId();
+      if (__result.hasError()) [[unlikely]] {
+        std::rethrow_exception(__result.error());
+      }
+      auto __value = std::move(__result.value());
+      return __value;
+    }
+    inline double addListener(SessionEvent event, const std::function<void(const std::string& /* payloadJson */)>& callback) override {
+      auto __result = _swiftPart.addListener(static_cast<int>(event), callback);
+      if (__result.hasError()) [[unlikely]] {
+        std::rethrow_exception(__result.error());
+      }
+      auto __value = std::move(__result.value());
+      return __value;
+    }
+    inline void removeListener(double id) override {
+      auto __result = _swiftPart.removeListener(std::forward<decltype(id)>(id));
+      if (__result.hasError()) [[unlikely]] {
+        std::rethrow_exception(__result.error());
+      }
     }
 
   private:

@@ -8,14 +8,52 @@
 #pragma once
 
 // Forward declarations of C++ defined types
+// Forward declaration of `Accuracy` to properly resolve imports.
+namespace margelo::nitro::locationsession { enum class Accuracy; }
 // Forward declaration of `HybridLocationSessionSpec` to properly resolve imports.
 namespace margelo::nitro::locationsession { class HybridLocationSessionSpec; }
+// Forward declaration of `NativeDebugOptions` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeDebugOptions; }
+// Forward declaration of `NativeDestination` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeDestination; }
+// Forward declaration of `NativeLocation` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeLocation; }
+// Forward declaration of `NativePermissionStatus` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativePermissionStatus; }
+// Forward declaration of `NativeSessionConfig` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeSessionConfig; }
+// Forward declaration of `NativeSessionState` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeSessionState; }
+// Forward declaration of `PermissionLevel` to properly resolve imports.
+namespace margelo::nitro::locationsession { enum class PermissionLevel; }
+// Forward declaration of `PermissionValue` to properly resolve imports.
+namespace margelo::nitro::locationsession { enum class PermissionValue; }
+// Forward declaration of `SessionEvent` to properly resolve imports.
+namespace margelo::nitro::locationsession { enum class SessionEvent; }
+// Forward declaration of `SessionStatus` to properly resolve imports.
+namespace margelo::nitro::locationsession { enum class SessionStatus; }
 
 // Include C++ defined types
+#include "Accuracy.hpp"
 #include "HybridLocationSessionSpec.hpp"
+#include "NativeDebugOptions.hpp"
+#include "NativeDestination.hpp"
+#include "NativeLocation.hpp"
+#include "NativePermissionStatus.hpp"
+#include "NativeSessionConfig.hpp"
+#include "NativeSessionState.hpp"
+#include "PermissionLevel.hpp"
+#include "PermissionValue.hpp"
+#include "SessionEvent.hpp"
+#include "SessionStatus.hpp"
+#include <NitroModules/Promise.hpp>
 #include <NitroModules/Result.hpp>
 #include <exception>
+#include <functional>
 #include <memory>
+#include <optional>
+#include <string>
+#include <unordered_map>
 
 // C++ helpers for Swift
 #include "LocationSession-Swift-Cxx-Bridge.hpp"

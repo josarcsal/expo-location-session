@@ -1,5 +1,82 @@
-import type { HybridObject } from 'react-native-nitro-modules'
+import type { HybridObject } from 'react-native-nitro-modules';
 
-export interface LocationSession extends HybridObject<{ ios: 'swift', android: 'kotlin' }> {
-  sum(num1: number, num2: number): number
+export type Accuracy = 'high' | 'balanced' | 'low';
+export type PermissionLevel = 'whenInUse' | 'always';
+export type PermissionValue = 'granted' | 'denied' | 'undetermined';
+export type SessionStatus = 'idle' | 'running';
+export type SessionEvent = 'location' | 'upload' | 'stop' | 'error' | 'log';
+
+export interface NativeDestination {
+  latitude: number;
+  longitude: number;
+  radiusMeters: number;
+}
+
+export interface NativeSessionConfig {
+  id: string;
+  expiresAt: number;
+  destination?: NativeDestination;
+  accuracy: Accuracy;
+  distanceFilterMeters: number;
+  uploadUrl: string;
+  uploadHeaders: Record<string, string>;
+  uploadExtrasJson: string;
+  uploadMinIntervalMs: number;
+  androidNotificationTitle: string;
+  androidNotificationText: string;
+  androidNotificationChannelName: string;
+}
+
+export interface NativeLocation {
+  latitude: number;
+  longitude: number;
+  accuracy: number;
+  altitude?: number;
+  speed?: number;
+  heading?: number;
+  timestamp: number;
+}
+
+export interface NativePermissionStatus {
+  foreground: PermissionValue;
+  background: PermissionValue;
+  precise: boolean;
+  notifications: PermissionValue;
+}
+
+export interface NativeSessionState {
+  status: SessionStatus;
+  sessionId?: string;
+  startedAt?: number;
+  expiresAt?: number;
+  lastLocation?: NativeLocation;
+  lastUploadAt?: number;
+  survivesProcessDeath?: boolean;
+  lastStopReason?: string;
+  lastStopAt?: number;
+  lastStopSessionId?: string;
+}
+
+export interface NativeDebugOptions {
+  enabled: boolean;
+  url?: string;
+  headers: Record<string, string>;
+  flushIntervalMs: number;
+  maxFileBytes: number;
+}
+
+export interface LocationSession extends HybridObject<{ ios: 'swift'; android: 'kotlin' }> {
+  getPermissionStatus(): Promise<NativePermissionStatus>;
+  requestPermission(level: PermissionLevel): Promise<NativePermissionStatus>;
+  getCurrentPosition(accuracy: Accuracy, timeoutMs: number, maxAgeMs: number): Promise<NativeLocation>;
+  start(config: NativeSessionConfig): Promise<void>;
+  stop(): Promise<void>;
+  getState(): Promise<NativeSessionState>;
+  configureDebug(options: NativeDebugOptions): Promise<void>;
+  getDebugLog(limit: number): Promise<string>;
+  clearDebugLog(): Promise<void>;
+  flushDebugLog(): Promise<number>;
+  getDebugInstallId(): Promise<string>;
+  addListener(event: SessionEvent, callback: (payloadJson: string) => void): number;
+  removeListener(id: number): void;
 }

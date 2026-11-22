@@ -1,6 +1,6 @@
 {
   "name": "expo-location-session",
-  "version": "0.1.0-alpha.0",
+  "version": "0.1.0",
   "description": "Background location sessions for React Native, uploaded natively",
   "main": "./lib/commonjs/index.js",
   "module": "./lib/module/index.js",
@@ -10,9 +10,13 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "clean": "git clean -dfX",
-    "release": "semantic-release",
     "build": "npm run typecheck && bob build",
-    "codegen": "nitrogen --logLevel=\"debug\" && npm run build && node post-script.js"
+    "build:plugin": "tsc -p plugin",
+    "codegen": "nitrogen --logLevel=\"debug\" && npm run build",
+    "prepare": "npm run build:plugin",
+    "lint": "eslint . && prettier --check \"**/*.{js,mjs,cjs,ts,tsx}\"",
+    "format": "eslint --fix . && prettier --write \"**/*.{js,mjs,cjs,ts,tsx}\"",
+    "prepack": "npm run build && npm run build:plugin"
   },
   "keywords": [
     "react-native",
@@ -20,7 +24,6 @@
   ],
   "files": [
     "src",
-    "react-native.config.js",
     "lib",
     "nitrogen",
     "cpp",
@@ -29,6 +32,7 @@
     "android/fix-prefab.gradle",
     "android/gradle.properties",
     "android/CMakeLists.txt",
+    "android/consumer-rules.pro",
     "android/src",
     "ios/**/*.h",
     "ios/**/*.m",
@@ -36,8 +40,13 @@
     "ios/**/*.cpp",
     "ios/**/*.swift",
     "app.plugin.js",
+    "plugin/build",
     "*.podspec",
-    "README.md"
+    "README.md",
+    "!android/src/test",
+    "!ios/Core/Tests",
+    "!ios/Core/Package.swift",
+    "!ios/Core/.build"
   ],
   "repository": "https://github.com/josarcsal/expo-location-session.git",
   "author": "Jose Arciniega",
@@ -49,58 +58,34 @@
     "registry": "https://registry.npmjs.org/"
   },
   "devDependencies": {
-    "@jamesacarr/eslint-formatter-github-actions": "^0.2.0",
-    "@semantic-release/changelog": "^6.0.3",
-    "@semantic-release/git": "^10.0.1",
-    "@types/jest": "^29.5.12",
-    "@types/react": "19.2.0",
+    "@eslint/compat": "2.1.1",
+    "@types/node": "^26.6.6",
+    "@types/react": "~19.3.0",
+    "@typescript-eslint/eslint-plugin": "8.72.1",
+    "@typescript-eslint/parser": "8.72.1",
+    "eslint": "10.14.0",
+    "eslint-plugin-import-x": "4.17.1",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "eslint-plugin-react-native": "5.0.0",
+    "expo": "~58.0.26",
     "nitrogen": "0.37.2",
-    "react": "19.2.3",
-    "react-native": "0.86.0",
+    "prettier": "3.9.10",
+    "react": "19.3.0",
+    "react-native": "0.88.1",
     "react-native-builder-bob": "^0.40.18",
     "react-native-nitro-modules": "0.37.2",
-    "conventional-changelog-conventionalcommits": "^10.2.1",
-    "semantic-release": "^25.0.7",
     "typescript": "^6.0.3"
   },
   "peerDependencies": {
+    "expo": "*",
     "react": "*",
     "react-native": "*",
     "react-native-nitro-modules": ">=0.37.0"
   },
-  "eslintConfig": {
-    "root": true,
-    "extends": [
-      "@react-native",
-      "prettier"
-    ],
-    "plugins": [
-      "prettier"
-    ],
-    "rules": {
-      "prettier/prettier": [
-        "warn",
-        {
-          "quoteProps": "consistent",
-          "singleQuote": true,
-          "tabWidth": 2,
-          "trailingComma": "es5",
-          "useTabs": false
-        }
-      ]
+  "peerDependenciesMeta": {
+    "expo": {
+      "optional": true
     }
-  },
-  "eslintIgnore": [
-    "node_modules/",
-    "lib/"
-  ],
-  "prettier": {
-    "quoteProps": "consistent",
-    "singleQuote": true,
-    "tabWidth": 2,
-    "trailingComma": "es5",
-    "useTabs": false,
-    "semi": false
   },
   "react-native-builder-bob": {
     "source": "src",
@@ -115,5 +100,6 @@
         }
       ]
     ]
-  }
+  },
+  "packageManager": "yarn@4.18.1+sha512.b2e1e7524f654f2749d32b4ebcb4622473cb5bcbc485df2007e12a154e50162a4d795526768bc5f5b8f81717bfd79deb2472813d86fb5ae2eb551fa9c872b08f"
 }

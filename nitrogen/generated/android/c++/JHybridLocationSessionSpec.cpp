@@ -7,9 +7,60 @@
 
 #include "JHybridLocationSessionSpec.hpp"
 
+// Forward declaration of `NativePermissionStatus` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativePermissionStatus; }
+// Forward declaration of `PermissionValue` to properly resolve imports.
+namespace margelo::nitro::locationsession { enum class PermissionValue; }
+// Forward declaration of `NativeLocation` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeLocation; }
+// Forward declaration of `NativeSessionState` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeSessionState; }
+// Forward declaration of `SessionStatus` to properly resolve imports.
+namespace margelo::nitro::locationsession { enum class SessionStatus; }
+// Forward declaration of `PermissionLevel` to properly resolve imports.
+namespace margelo::nitro::locationsession { enum class PermissionLevel; }
+// Forward declaration of `Accuracy` to properly resolve imports.
+namespace margelo::nitro::locationsession { enum class Accuracy; }
+// Forward declaration of `NativeSessionConfig` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeSessionConfig; }
+// Forward declaration of `NativeDestination` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeDestination; }
+// Forward declaration of `NativeDebugOptions` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeDebugOptions; }
+// Forward declaration of `SessionEvent` to properly resolve imports.
+namespace margelo::nitro::locationsession { enum class SessionEvent; }
 
-
-
+#include "NativePermissionStatus.hpp"
+#include <NitroModules/Promise.hpp>
+#include <NitroModules/JPromise.hpp>
+#include "JNativePermissionStatus.hpp"
+#include "PermissionValue.hpp"
+#include "JPermissionValue.hpp"
+#include "NativeLocation.hpp"
+#include "JNativeLocation.hpp"
+#include <optional>
+#include <NitroModules/JUnit.hpp>
+#include "NativeSessionState.hpp"
+#include "JNativeSessionState.hpp"
+#include "SessionStatus.hpp"
+#include "JSessionStatus.hpp"
+#include <string>
+#include "PermissionLevel.hpp"
+#include "JPermissionLevel.hpp"
+#include "Accuracy.hpp"
+#include "JAccuracy.hpp"
+#include "NativeSessionConfig.hpp"
+#include "JNativeSessionConfig.hpp"
+#include "NativeDestination.hpp"
+#include "JNativeDestination.hpp"
+#include <unordered_map>
+#include "NativeDebugOptions.hpp"
+#include "JNativeDebugOptions.hpp"
+#include "SessionEvent.hpp"
+#include "JSessionEvent.hpp"
+#include <functional>
+#include "JFunc_void_std__string.hpp"
+#include <NitroModules/JNICallable.hpp>
 
 namespace margelo::nitro::locationsession {
 
@@ -44,10 +95,186 @@ namespace margelo::nitro::locationsession {
   
 
   // Methods
-  double JHybridLocationSessionSpec::sum(double num1, double num2) {
-    static const auto method = _javaPart->javaClassStatic()->getMethod<double(double /* num1 */, double /* num2 */)>("sum");
-    auto __result = method(_javaPart, num1, num2);
+  std::shared_ptr<Promise<NativePermissionStatus>> JHybridLocationSessionSpec::getPermissionStatus() {
+    static const auto method = _javaPart->javaClassStatic()->getMethod<jni::local_ref<JPromise::javaobject>()>("getPermissionStatus");
+    auto __result = method(_javaPart);
+    return [&]() {
+      auto __promise = Promise<NativePermissionStatus>::create();
+      __result->cthis()->addOnResolvedListener([=](const jni::alias_ref<jni::JObject>& __boxedResult) {
+        auto __result = jni::static_ref_cast<JNativePermissionStatus>(__boxedResult);
+        __promise->resolve(__result->toCpp());
+      });
+      __result->cthis()->addOnRejectedListener([=](const jni::alias_ref<jni::JThrowable>& __throwable) {
+        jni::JniException __jniError(__throwable);
+        __promise->reject(std::make_exception_ptr(__jniError));
+      });
+      return __promise;
+    }();
+  }
+  std::shared_ptr<Promise<NativePermissionStatus>> JHybridLocationSessionSpec::requestPermission(PermissionLevel level) {
+    static const auto method = _javaPart->javaClassStatic()->getMethod<jni::local_ref<JPromise::javaobject>(jni::alias_ref<JPermissionLevel> /* level */)>("requestPermission");
+    auto __result = method(_javaPart, JPermissionLevel::fromCpp(level));
+    return [&]() {
+      auto __promise = Promise<NativePermissionStatus>::create();
+      __result->cthis()->addOnResolvedListener([=](const jni::alias_ref<jni::JObject>& __boxedResult) {
+        auto __result = jni::static_ref_cast<JNativePermissionStatus>(__boxedResult);
+        __promise->resolve(__result->toCpp());
+      });
+      __result->cthis()->addOnRejectedListener([=](const jni::alias_ref<jni::JThrowable>& __throwable) {
+        jni::JniException __jniError(__throwable);
+        __promise->reject(std::make_exception_ptr(__jniError));
+      });
+      return __promise;
+    }();
+  }
+  std::shared_ptr<Promise<NativeLocation>> JHybridLocationSessionSpec::getCurrentPosition(Accuracy accuracy, double timeoutMs, double maxAgeMs) {
+    static const auto method = _javaPart->javaClassStatic()->getMethod<jni::local_ref<JPromise::javaobject>(jni::alias_ref<JAccuracy> /* accuracy */, double /* timeoutMs */, double /* maxAgeMs */)>("getCurrentPosition");
+    auto __result = method(_javaPart, JAccuracy::fromCpp(accuracy), timeoutMs, maxAgeMs);
+    return [&]() {
+      auto __promise = Promise<NativeLocation>::create();
+      __result->cthis()->addOnResolvedListener([=](const jni::alias_ref<jni::JObject>& __boxedResult) {
+        auto __result = jni::static_ref_cast<JNativeLocation>(__boxedResult);
+        __promise->resolve(__result->toCpp());
+      });
+      __result->cthis()->addOnRejectedListener([=](const jni::alias_ref<jni::JThrowable>& __throwable) {
+        jni::JniException __jniError(__throwable);
+        __promise->reject(std::make_exception_ptr(__jniError));
+      });
+      return __promise;
+    }();
+  }
+  std::shared_ptr<Promise<void>> JHybridLocationSessionSpec::start(const NativeSessionConfig& config) {
+    static const auto method = _javaPart->javaClassStatic()->getMethod<jni::local_ref<JPromise::javaobject>(jni::alias_ref<JNativeSessionConfig> /* config */)>("start");
+    auto __result = method(_javaPart, JNativeSessionConfig::fromCpp(config));
+    return [&]() {
+      auto __promise = Promise<void>::create();
+      __result->cthis()->addOnResolvedListener([=](const jni::alias_ref<jni::JObject>& /* unit */) {
+        __promise->resolve();
+      });
+      __result->cthis()->addOnRejectedListener([=](const jni::alias_ref<jni::JThrowable>& __throwable) {
+        jni::JniException __jniError(__throwable);
+        __promise->reject(std::make_exception_ptr(__jniError));
+      });
+      return __promise;
+    }();
+  }
+  std::shared_ptr<Promise<void>> JHybridLocationSessionSpec::stop() {
+    static const auto method = _javaPart->javaClassStatic()->getMethod<jni::local_ref<JPromise::javaobject>()>("stop");
+    auto __result = method(_javaPart);
+    return [&]() {
+      auto __promise = Promise<void>::create();
+      __result->cthis()->addOnResolvedListener([=](const jni::alias_ref<jni::JObject>& /* unit */) {
+        __promise->resolve();
+      });
+      __result->cthis()->addOnRejectedListener([=](const jni::alias_ref<jni::JThrowable>& __throwable) {
+        jni::JniException __jniError(__throwable);
+        __promise->reject(std::make_exception_ptr(__jniError));
+      });
+      return __promise;
+    }();
+  }
+  std::shared_ptr<Promise<NativeSessionState>> JHybridLocationSessionSpec::getState() {
+    static const auto method = _javaPart->javaClassStatic()->getMethod<jni::local_ref<JPromise::javaobject>()>("getState");
+    auto __result = method(_javaPart);
+    return [&]() {
+      auto __promise = Promise<NativeSessionState>::create();
+      __result->cthis()->addOnResolvedListener([=](const jni::alias_ref<jni::JObject>& __boxedResult) {
+        auto __result = jni::static_ref_cast<JNativeSessionState>(__boxedResult);
+        __promise->resolve(__result->toCpp());
+      });
+      __result->cthis()->addOnRejectedListener([=](const jni::alias_ref<jni::JThrowable>& __throwable) {
+        jni::JniException __jniError(__throwable);
+        __promise->reject(std::make_exception_ptr(__jniError));
+      });
+      return __promise;
+    }();
+  }
+  std::shared_ptr<Promise<void>> JHybridLocationSessionSpec::configureDebug(const NativeDebugOptions& options) {
+    static const auto method = _javaPart->javaClassStatic()->getMethod<jni::local_ref<JPromise::javaobject>(jni::alias_ref<JNativeDebugOptions> /* options */)>("configureDebug");
+    auto __result = method(_javaPart, JNativeDebugOptions::fromCpp(options));
+    return [&]() {
+      auto __promise = Promise<void>::create();
+      __result->cthis()->addOnResolvedListener([=](const jni::alias_ref<jni::JObject>& /* unit */) {
+        __promise->resolve();
+      });
+      __result->cthis()->addOnRejectedListener([=](const jni::alias_ref<jni::JThrowable>& __throwable) {
+        jni::JniException __jniError(__throwable);
+        __promise->reject(std::make_exception_ptr(__jniError));
+      });
+      return __promise;
+    }();
+  }
+  std::shared_ptr<Promise<std::string>> JHybridLocationSessionSpec::getDebugLog(double limit) {
+    static const auto method = _javaPart->javaClassStatic()->getMethod<jni::local_ref<JPromise::javaobject>(double /* limit */)>("getDebugLog");
+    auto __result = method(_javaPart, limit);
+    return [&]() {
+      auto __promise = Promise<std::string>::create();
+      __result->cthis()->addOnResolvedListener([=](const jni::alias_ref<jni::JObject>& __boxedResult) {
+        auto __result = jni::static_ref_cast<jni::JString>(__boxedResult);
+        __promise->resolve(__result->toStdString());
+      });
+      __result->cthis()->addOnRejectedListener([=](const jni::alias_ref<jni::JThrowable>& __throwable) {
+        jni::JniException __jniError(__throwable);
+        __promise->reject(std::make_exception_ptr(__jniError));
+      });
+      return __promise;
+    }();
+  }
+  std::shared_ptr<Promise<void>> JHybridLocationSessionSpec::clearDebugLog() {
+    static const auto method = _javaPart->javaClassStatic()->getMethod<jni::local_ref<JPromise::javaobject>()>("clearDebugLog");
+    auto __result = method(_javaPart);
+    return [&]() {
+      auto __promise = Promise<void>::create();
+      __result->cthis()->addOnResolvedListener([=](const jni::alias_ref<jni::JObject>& /* unit */) {
+        __promise->resolve();
+      });
+      __result->cthis()->addOnRejectedListener([=](const jni::alias_ref<jni::JThrowable>& __throwable) {
+        jni::JniException __jniError(__throwable);
+        __promise->reject(std::make_exception_ptr(__jniError));
+      });
+      return __promise;
+    }();
+  }
+  std::shared_ptr<Promise<double>> JHybridLocationSessionSpec::flushDebugLog() {
+    static const auto method = _javaPart->javaClassStatic()->getMethod<jni::local_ref<JPromise::javaobject>()>("flushDebugLog");
+    auto __result = method(_javaPart);
+    return [&]() {
+      auto __promise = Promise<double>::create();
+      __result->cthis()->addOnResolvedListener([=](const jni::alias_ref<jni::JObject>& __boxedResult) {
+        auto __result = jni::static_ref_cast<jni::JDouble>(__boxedResult);
+        __promise->resolve(__result->value());
+      });
+      __result->cthis()->addOnRejectedListener([=](const jni::alias_ref<jni::JThrowable>& __throwable) {
+        jni::JniException __jniError(__throwable);
+        __promise->reject(std::make_exception_ptr(__jniError));
+      });
+      return __promise;
+    }();
+  }
+  std::shared_ptr<Promise<std::string>> JHybridLocationSessionSpec::getDebugInstallId() {
+    static const auto method = _javaPart->javaClassStatic()->getMethod<jni::local_ref<JPromise::javaobject>()>("getDebugInstallId");
+    auto __result = method(_javaPart);
+    return [&]() {
+      auto __promise = Promise<std::string>::create();
+      __result->cthis()->addOnResolvedListener([=](const jni::alias_ref<jni::JObject>& __boxedResult) {
+        auto __result = jni::static_ref_cast<jni::JString>(__boxedResult);
+        __promise->resolve(__result->toStdString());
+      });
+      __result->cthis()->addOnRejectedListener([=](const jni::alias_ref<jni::JThrowable>& __throwable) {
+        jni::JniException __jniError(__throwable);
+        __promise->reject(std::make_exception_ptr(__jniError));
+      });
+      return __promise;
+    }();
+  }
+  double JHybridLocationSessionSpec::addListener(SessionEvent event, const std::function<void(const std::string& /* payloadJson */)>& callback) {
+    static const auto method = _javaPart->javaClassStatic()->getMethod<double(jni::alias_ref<JSessionEvent> /* event */, jni::alias_ref<JFunc_void_std__string::javaobject> /* callback */)>("addListener_cxx");
+    auto __result = method(_javaPart, JSessionEvent::fromCpp(event), JFunc_void_std__string_cxx::fromCpp(callback));
     return __result;
+  }
+  void JHybridLocationSessionSpec::removeListener(double id) {
+    static const auto method = _javaPart->javaClassStatic()->getMethod<void(double /* id */)>("removeListener");
+    method(_javaPart, id);
   }
 
 } // namespace margelo::nitro::locationsession

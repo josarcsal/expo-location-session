@@ -14,6 +14,62 @@
 
 namespace margelo::nitro::locationsession::bridge::swift {
 
+  // pragma MARK: std::function<void(const NativePermissionStatus& /* result */)>
+  Func_void_NativePermissionStatus create_Func_void_NativePermissionStatus(void* NON_NULL swiftClosureWrapper) noexcept {
+    auto swiftClosure = LocationSession::Func_void_NativePermissionStatus::fromUnsafe(swiftClosureWrapper);
+    return [swiftClosure = std::move(swiftClosure)](const NativePermissionStatus& result) mutable -> void {
+      swiftClosure.call(result);
+    };
+  }
+  
+  // pragma MARK: std::function<void(const std::exception_ptr& /* error */)>
+  Func_void_std__exception_ptr create_Func_void_std__exception_ptr(void* NON_NULL swiftClosureWrapper) noexcept {
+    auto swiftClosure = LocationSession::Func_void_std__exception_ptr::fromUnsafe(swiftClosureWrapper);
+    return [swiftClosure = std::move(swiftClosure)](const std::exception_ptr& error) mutable -> void {
+      swiftClosure.call(error);
+    };
+  }
+  
+  // pragma MARK: std::function<void(const NativeLocation& /* result */)>
+  Func_void_NativeLocation create_Func_void_NativeLocation(void* NON_NULL swiftClosureWrapper) noexcept {
+    auto swiftClosure = LocationSession::Func_void_NativeLocation::fromUnsafe(swiftClosureWrapper);
+    return [swiftClosure = std::move(swiftClosure)](const NativeLocation& result) mutable -> void {
+      swiftClosure.call(result);
+    };
+  }
+  
+  // pragma MARK: std::function<void()>
+  Func_void create_Func_void(void* NON_NULL swiftClosureWrapper) noexcept {
+    auto swiftClosure = LocationSession::Func_void::fromUnsafe(swiftClosureWrapper);
+    return [swiftClosure = std::move(swiftClosure)]() mutable -> void {
+      swiftClosure.call();
+    };
+  }
+  
+  // pragma MARK: std::function<void(const NativeSessionState& /* result */)>
+  Func_void_NativeSessionState create_Func_void_NativeSessionState(void* NON_NULL swiftClosureWrapper) noexcept {
+    auto swiftClosure = LocationSession::Func_void_NativeSessionState::fromUnsafe(swiftClosureWrapper);
+    return [swiftClosure = std::move(swiftClosure)](const NativeSessionState& result) mutable -> void {
+      swiftClosure.call(result);
+    };
+  }
+  
+  // pragma MARK: std::function<void(const std::string& /* result */)>
+  Func_void_std__string create_Func_void_std__string(void* NON_NULL swiftClosureWrapper) noexcept {
+    auto swiftClosure = LocationSession::Func_void_std__string::fromUnsafe(swiftClosureWrapper);
+    return [swiftClosure = std::move(swiftClosure)](const std::string& result) mutable -> void {
+      swiftClosure.call(result);
+    };
+  }
+  
+  // pragma MARK: std::function<void(double /* result */)>
+  Func_void_double create_Func_void_double(void* NON_NULL swiftClosureWrapper) noexcept {
+    auto swiftClosure = LocationSession::Func_void_double::fromUnsafe(swiftClosureWrapper);
+    return [swiftClosure = std::move(swiftClosure)](double result) mutable -> void {
+      swiftClosure.call(result);
+    };
+  }
+  
   // pragma MARK: std::shared_ptr<HybridLocationSessionSpec>
   std::shared_ptr<HybridLocationSessionSpec> create_std__shared_ptr_HybridLocationSessionSpec_(void* NON_NULL swiftUnsafePointer) noexcept {
     LocationSession::HybridLocationSessionSpec_cxx swiftPart = LocationSession::HybridLocationSessionSpec_cxx::fromUnsafe(swiftUnsafePointer);

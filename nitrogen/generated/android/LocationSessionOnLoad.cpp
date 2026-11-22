@@ -16,6 +16,7 @@
 #include <NitroModules/HybridObjectRegistry.hpp>
 
 #include "JHybridLocationSessionSpec.hpp"
+#include "JFunc_void_std__string.hpp"
 #include <NitroModules/DefaultConstructableObject.hpp>
 
 namespace margelo::nitro::locationsession {
@@ -27,7 +28,7 @@ int initialize(JavaVM* vm) {
 }
 
 struct JHybridLocationSessionSpecImpl: public jni::JavaClass<JHybridLocationSessionSpecImpl, JHybridLocationSessionSpec::JavaPart> {
-  static constexpr auto kJavaDescriptor = "Lcom/locationsession/HybridLocationSession;";
+  static constexpr auto kJavaDescriptor = "Lcom/margelo/nitro/locationsession/HybridLocationSession;";
   static std::shared_ptr<JHybridLocationSessionSpec> create() {
     static const auto constructorFn = javaClassStatic()->getConstructor<JHybridLocationSessionSpecImpl::javaobject()>();
     jni::local_ref<JHybridLocationSessionSpec::JavaPart> javaPart = javaClassStatic()->newObject(constructorFn);
@@ -41,6 +42,7 @@ void registerAllNatives() {
 
   // Register native JNI methods
   margelo::nitro::locationsession::JHybridLocationSessionSpec::CxxPart::registerNatives();
+  margelo::nitro::locationsession::JFunc_void_std__string_cxx::registerNatives();
 
   // Register Nitro Hybrid Objects
   HybridObjectRegistry::registerHybridObjectConstructor(

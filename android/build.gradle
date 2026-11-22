@@ -44,7 +44,9 @@ android {
   defaultConfig {
     minSdkVersion getExtOrIntegerDefault("minSdkVersion")
     targetSdkVersion getExtOrIntegerDefault("targetSdkVersion")
+    consumerProguardFiles "consumer-rules.pro"
     buildConfigField "boolean", "IS_NEW_ARCHITECTURE_ENABLED", isNewArchitectureEnabled().toString()
+    buildConfigField "String", "LIB_VERSION", "\"${new groovy.json.JsonSlurper().parse(file("../package.json")).version}\""
 
     externalNativeBuild {
       cmake {
@@ -137,6 +139,11 @@ dependencies {
 
   // Add a dependency on NitroModules
   implementation project(":react-native-nitro-modules")
+  implementation "com.google.android.gms:play-services-location:21.0.1"
+  implementation "androidx.core:core:1.13.1"
+
+  testImplementation "junit:junit:4.13.2"
+  testImplementation "org.json:json:20240303"
 }
 
 if (isNewArchitectureEnabled()) {
