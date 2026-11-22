@@ -10,21 +10,23 @@ final class EventBus {
     private var listeners: [Double: (event: Event, callback: (String) -> Void)] = [:]
     private var nextId = 0.0
     private var stickyErrors: [String: String] = [:]
+    private var awaitingReplay: [Double: Set<String>] = [:]
 
     func add(_ event: Event, _ callback: @escaping (String) -> Void) -> Double {
         lock.lock()
         nextId += 1
         let id = nextId
         listeners[id] = (event, callback)
-        let replay = event == .error ? Array(stickyErrors.values) : []
+        if event == .error { awaitingReplay[id] = [] }
         lock.unlock()
-        if !replay.isEmpty {
+        if event == .error {
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.lock.lock()
-                let live = self.listeners[id] != nil
+                let deliveredLive = self.awaitingReplay.removeValue(forKey: id) ?? []
+                let replay = self.listeners[id] == nil ? [] : self.stickyErrors.filter { !deliveredLive.contains($0.key) }.map(\.value)
                 self.lock.unlock()
-                if live { replay.forEach(callback) }
+                replay.forEach(callback)
             }
         }
         return id
@@ -35,8 +37,10 @@ final class EventBus {
               let json = String(data: data, encoding: .utf8) else { return }
         lock.lock()
         stickyErrors[code] = json
+        for id in awaitingReplay.keys { awaitingReplay[id]?.insert(code) }
+        let targets = listeners.values.filter { $0.event == .error }.map(\.callback)
         lock.unlock()
-        emit(.error, json: json)
+        targets.forEach { $0(json) }
     }
 
     func clearStickyError(_ code: String) {
@@ -55,6 +59,7 @@ final class EventBus {
         lock.lock()
         defer { lock.unlock() }
         listeners[id] = nil
+        awaitingReplay[id] = nil
     }
 
     func hasListeners(_ event: Event) -> Bool {
