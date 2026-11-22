@@ -40,6 +40,7 @@ final class SessionEngine {
         DebugLogger.shared.attach(events)
         source.onFixes = { [weak self] in self?.handle($0) }
         source.onAuthorizationChange = { [weak self] in self?.authorizationChanged($0) }
+        source.onAccuracyChange = { [weak self] in self?.accuracyChanged($0) }
     }
 
     func start(_ c: SessionConfig) throws {
@@ -114,6 +115,7 @@ final class SessionEngine {
         uploader.onStop = { [weak self] in self?.stop($0) }
         uploader.begin(c, pending: lastFix, lastSuccessMs: lastUploadAtMs)
         startSource(c)
+        if source.accuracyAuthorization == .reducedAccuracy { reportReducedAccuracy(c) }
         observeTermination()
         scheduleExpiry(c)
     }
@@ -204,6 +206,20 @@ final class SessionEngine {
         default:
             break
         }
+    }
+
+    private func accuracyChanged(_ accuracy: CLAccuracyAuthorization) {
+        guard let c = config else { return }
+        if accuracy == .reducedAccuracy {
+            reportReducedAccuracy(c)
+        } else {
+            Log.info("permission", "precise location restored for session \(c.id)", sessionId: c.id)
+        }
+    }
+
+    private func reportReducedAccuracy(_ c: SessionConfig) {
+        Log.info("permission", "location accuracy reduced to approximate for session \(c.id)", sessionId: c.id)
+        events.emit(.error, ["code": "ACCURACY_REDUCED", "message": "Precise location is off; fixes are approximate and arrival cannot trigger"])
     }
 
     private func validationMessage(_ code: String) -> String {

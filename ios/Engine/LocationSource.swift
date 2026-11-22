@@ -44,9 +44,13 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
 
     var onFixes: (([Fix]) -> Void)?
     var onAuthorizationChange: ((CLAuthorizationStatus) -> Void)?
+    var onAccuracyChange: ((CLAccuracyAuthorization) -> Void)?
 
     private var manager: CLLocationManager?
     private var lastStatus: CLAuthorizationStatus?
+    private var lastAccuracy: CLAccuracyAuthorization?
+
+    var accuracyAuthorization: CLAccuracyAuthorization? { manager?.accuracyAuthorization }
     private var launchReport: (launchAtMs: Int64, region: CLCircularRegion?)?
 
     func expectLaunchEvent(launchAtMs: Int64) {
@@ -81,6 +85,7 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
         let m = manager ?? CLLocationManager()
         manager = m
         lastStatus = m.authorizationStatus
+        lastAccuracy = m.accuracyAuthorization
         m.delegate = self
         let backgroundMode = Self.hasBackgroundLocationMode
         if backgroundMode {
@@ -129,6 +134,7 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
         m.delegate = nil
         manager = nil
         lastStatus = nil
+        lastAccuracy = nil
         Log.debug("location", "manager stopped", level: "info")
     }
 
@@ -214,6 +220,11 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        let accuracy = manager.accuracyAuthorization
+        if let last = lastAccuracy, accuracy != last {
+            lastAccuracy = accuracy
+            onAccuracyChange?(accuracy)
+        }
         let status = manager.authorizationStatus
         guard status != lastStatus else { return }
         lastStatus = status

@@ -44,6 +44,7 @@ v0.1 is done when every row passes on three physical devices: an iPhone (iOS 17+
 | [ ] | 19 | `stop()` after a kill/relaunch cycle | No `els.*` regions remain; no further relaunches or uploads | | n/a | n/a |
 | [ ] | 45 | Always → `start` with `distanceFilterMeters: 500` → drive at 50+ km/h → kill from the app switcher between two fixes; repeat once indoors where the last fix has 150 m+ accuracy | The `armed terminate region` line shows `r` above 150 (speed × fix age, or accuracy + 150), never above 1000; the next `first location event after launch` is a `regionExit` | | n/a | n/a |
 | [ ] | 46 | Always → `start` → install over it a build whose `Info.plist` has no `location` in `UIBackgroundModes` → move ~1 km without opening the app → open it | No crash on the relaunch; the debug log has `UIBackgroundModes has no location; background updates not enabled`; on open an `error` event with `CONFIG_MISSING_BACKGROUND_MODE`, and the session keeps updating in the foreground | | n/a | n/a |
+| [ ] | 47 | While running, Settings → app → Location → Precise Location off; then on; then off before `start` and `start` again | One `error` event with `ACCURACY_REDUCED` per switch to off and one at `start`, none when it is turned back on; the session keeps running and uploads coarse fixes | | n/a | n/a |
 
 ### Android survival
 
