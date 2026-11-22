@@ -18,7 +18,7 @@ final class Uploader {
         let queue = OperationQueue()
         queue.name = "expo-location-session.upload"
         queue.maxConcurrentOperationCount = 1
-        return URLSession(configuration: configuration, delegate: nil, delegateQueue: queue)
+        return URLSession(configuration: configuration, delegate: RefuseRedirects(), delegateQueue: queue)
     }()
 
     private var config: SessionConfig?
@@ -275,5 +275,17 @@ final class Uploader {
         guard backgroundTask != .invalid else { return }
         UIApplication.shared.endBackgroundTask(backgroundTask)
         backgroundTask = .invalid
+    }
+}
+
+final class RefuseRedirects: NSObject, URLSessionTaskDelegate {
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
     }
 }

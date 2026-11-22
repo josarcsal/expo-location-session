@@ -230,6 +230,7 @@ class Uploader(context: Context, private val store: SessionStore, private val ev
             connection = conn
             val watched = conn
             deadline = watchdog.schedule({ runCatching { watched.disconnect() } }, TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
+            conn.instanceFollowRedirects = false
             conn.requestMethod = "POST"
             conn.connectTimeout = TIMEOUT_MS
             conn.readTimeout = TIMEOUT_MS

@@ -368,6 +368,7 @@ Only the latest position matters. There is one pending slot: a newer location re
 | `401`, `403` | Stop with `unauthorized`. There is no token refresh in v0.1; use a short-lived, session-scoped token. |
 | `410` | Stop with `rejected` (the server ended the session). |
 | Other `4xx` | The location is dropped, an `error` event with `UPLOAD_DROPPED` is emitted, the session keeps running. |
+| `3xx` | Redirects are never followed. Treated like a `5xx`: the location stays pending and is retried with backoff. Point `upload.url` at the final address. |
 | `5xx`, timeout, no network | The location stays pending. Retries back off 5 s, 10 s, 20 s, 40 s, then every 60 s while the process is alive, and a new location triggers a new attempt. |
 
 Throttle: after a success, locations that arrive within `minIntervalMs` stay pending and are sent when the interval has passed (by a timer while the process is alive, or with the next location).

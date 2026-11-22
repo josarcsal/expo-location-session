@@ -21,7 +21,7 @@ const handler = (req, res) => {
   req.on('data', (chunk) => (body += chunk));
   req.on('end', () => {
     console.log(`${new Date().toISOString()} ${req.method} ${url.pathname}${url.search} -> ${status} ${body}`);
-    res.writeHead(status);
+    res.writeHead(status, status >= 300 && status < 400 ? { Location: '/redirected' } : undefined);
     res.end();
   });
 };

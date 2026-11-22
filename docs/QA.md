@@ -26,6 +26,7 @@ v0.1 is done when every row passes on three physical devices: an iPhone (iOS 17+
 | [ ] | 7 | URL with `?status=410` | `stop` with `rejected` | | | |
 | [ ] | 8 | URL with `?status=422` | `error` with `UPLOAD_DROPPED`; the session keeps running | | | |
 | [ ] | 9 | 30-min session while moving | Record battery used (%) | | | |
+| [ ] | 44 | URL with `?status=302` (and once with `?status=307`) | The echo server answers with `Location: /redirected`; no request to `/redirected` appears in its log. `upload` events with `ok: false` and the 3xx status, retries back off, no `error` and no stop; the location stays pending | | | |
 
 ### iOS survival
 

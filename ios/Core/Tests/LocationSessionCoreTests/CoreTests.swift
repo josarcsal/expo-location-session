@@ -112,6 +112,12 @@ private let here = Destination(latitude: 40.4168, longitude: -3.7038, radiusMete
         #expect(classify(status: 100) == .retry)
     }
 
+    @Test func redirectsRetry() {
+        for status in [301, 302, 303, 307, 308] {
+            #expect(classify(status: status) == .retry)
+        }
+    }
+
     @Test func backoffCapsAtSixtySeconds() {
         #expect((0...5).map(backoffMs) == [5000, 10000, 20000, 40000, 60000, 60000])
     }

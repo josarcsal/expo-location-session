@@ -61,6 +61,7 @@ internal object DebugShipper {
             conn = URL(batch.url).openConnection() as HttpURLConnection
             val watched = conn
             deadline = DebugLogger.queue.schedule({ runCatching { watched.disconnect() } }, timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+            conn.instanceFollowRedirects = false
             conn.requestMethod = "POST"
             conn.connectTimeout = timeoutMs
             conn.readTimeout = timeoutMs
