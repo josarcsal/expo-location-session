@@ -9,13 +9,46 @@ final class EventBus {
     private let lock = NSLock()
     private var listeners: [Double: (event: Event, callback: (String) -> Void)] = [:]
     private var nextId = 0.0
+    private var stickyErrors: [String: String] = [:]
 
     func add(_ event: Event, _ callback: @escaping (String) -> Void) -> Double {
         lock.lock()
-        defer { lock.unlock() }
         nextId += 1
-        listeners[nextId] = (event, callback)
-        return nextId
+        let id = nextId
+        listeners[id] = (event, callback)
+        let replay = event == .error ? Array(stickyErrors.values) : []
+        lock.unlock()
+        if !replay.isEmpty {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.lock.lock()
+                let live = self.listeners[id] != nil
+                self.lock.unlock()
+                if live { replay.forEach(callback) }
+            }
+        }
+        return id
+    }
+
+    func emitStickyError(code: String, message: String) {
+        guard let data = try? JSONSerialization.data(withJSONObject: ["code": code, "message": message]),
+              let json = String(data: data, encoding: .utf8) else { return }
+        lock.lock()
+        stickyErrors[code] = json
+        lock.unlock()
+        emit(.error, json: json)
+    }
+
+    func clearStickyError(_ code: String) {
+        lock.lock()
+        stickyErrors[code] = nil
+        lock.unlock()
+    }
+
+    func clearStickyErrors() {
+        lock.lock()
+        stickyErrors.removeAll()
+        lock.unlock()
     }
 
     func remove(_ id: Double) {

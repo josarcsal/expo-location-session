@@ -79,6 +79,7 @@ final class SessionEngine {
         expiryTimer?.invalidate()
         expiryTimer = nil
         source.stop()
+        events.clearStickyErrors()
         uploader.reset()
         store.wipe()
         store.lastStop = LastStop(reason: reason, atMs: nowMs(), sessionId: c.id)
@@ -122,7 +123,7 @@ final class SessionEngine {
 
     private func startSource(_ c: SessionConfig) {
         guard !source.start(c) else { return }
-        events.emit(.error, ["code": "CONFIG_MISSING_BACKGROUND_MODE", "message": "UIBackgroundModes does not contain location; the session only updates while the app is in the foreground"])
+        events.emitStickyError(code: "CONFIG_MISSING_BACKGROUND_MODE", message: "UIBackgroundModes does not contain location; the session only updates while the app is in the foreground")
     }
 
     private func scheduleExpiry(_ c: SessionConfig) {
@@ -213,13 +214,14 @@ final class SessionEngine {
         if accuracy == .reducedAccuracy {
             reportReducedAccuracy(c)
         } else {
+            events.clearStickyError("ACCURACY_REDUCED")
             Log.info("permission", "precise location restored for session \(c.id)", sessionId: c.id)
         }
     }
 
     private func reportReducedAccuracy(_ c: SessionConfig) {
         Log.info("permission", "location accuracy reduced to approximate for session \(c.id)", sessionId: c.id)
-        events.emit(.error, ["code": "ACCURACY_REDUCED", "message": "Precise location is off; fixes are approximate and arrival cannot trigger"])
+        events.emitStickyError(code: "ACCURACY_REDUCED", message: "Precise location is off; fixes are approximate and arrival cannot trigger")
     }
 
     private func validationMessage(_ code: String) -> String {
