@@ -8,7 +8,8 @@ public let duplicateFixWindowMs: Int64 = 5_000
 
 public func isDuplicateFix(_ f: Fix, of previous: Fix?) -> Bool {
     guard let p = previous else { return false }
-    return f.latitude == p.latitude && f.longitude == p.longitude && abs(f.timestampMs - p.timestampMs) <= duplicateFixWindowMs
+    return f.latitude == p.latitude && f.longitude == p.longitude && f.accuracy >= p.accuracy
+        && abs(f.timestampMs - p.timestampMs) <= duplicateFixWindowMs
 }
 
 public func distanceMeters(latitude lat1: Double, longitude lon1: Double, latitude lat2: Double, longitude lon2: Double) -> Double {

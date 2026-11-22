@@ -74,6 +74,8 @@ private let here = Destination(latitude: 40.4168, longitude: -3.7038, radiusMete
         #expect(isDuplicateFix(fix(lat: 1, lng: 2, ts: 6_000), of: fix(lat: 1, lng: 2, ts: 1_000)))
         #expect(!isDuplicateFix(fix(lat: 1, lng: 2, ts: 6_001), of: fix(lat: 1, lng: 2, ts: 1_000)))
         #expect(!isDuplicateFix(fix(lat: 1, lng: 2.00001, ts: 1_024), of: fix(lat: 1, lng: 2, ts: 1_000)))
+        #expect(!isDuplicateFix(fix(lat: 1, lng: 2, acc: 15, ts: 1_024), of: fix(lat: 1, lng: 2, acc: 150, ts: 1_000)))
+        #expect(isDuplicateFix(fix(lat: 1, lng: 2, acc: 150, ts: 1_024), of: fix(lat: 1, lng: 2, acc: 15, ts: 1_000)))
     }
 
     @Test func arrivalNeedsGoodAccuracy() {

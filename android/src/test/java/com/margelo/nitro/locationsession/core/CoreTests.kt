@@ -107,6 +107,8 @@ class StopPolicyTests {
         assertTrue(isDuplicateFix(fix(lat = 1.0, lng = 2.0, ts = 6_000), fix(lat = 1.0, lng = 2.0, ts = 1_000)))
         assertFalse(isDuplicateFix(fix(lat = 1.0, lng = 2.0, ts = 6_001), fix(lat = 1.0, lng = 2.0, ts = 1_000)))
         assertFalse(isDuplicateFix(fix(lat = 1.0, lng = 2.00001, ts = 1_024), fix(lat = 1.0, lng = 2.0, ts = 1_000)))
+        assertFalse(isDuplicateFix(fix(lat = 1.0, lng = 2.0, acc = 15.0, ts = 1_024), fix(lat = 1.0, lng = 2.0, acc = 150.0, ts = 1_000)))
+        assertTrue(isDuplicateFix(fix(lat = 1.0, lng = 2.0, acc = 150.0, ts = 1_024), fix(lat = 1.0, lng = 2.0, acc = 15.0, ts = 1_000)))
     }
 
     @Test fun arrivalNeedsGoodAccuracy() {

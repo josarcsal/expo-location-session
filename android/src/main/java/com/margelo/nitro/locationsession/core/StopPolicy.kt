@@ -14,7 +14,7 @@ const val DUPLICATE_FIX_WINDOW_MS = 5_000L
 
 fun isDuplicateFix(f: Fix, previous: Fix?): Boolean {
     val p = previous ?: return false
-    return f.latitude == p.latitude && f.longitude == p.longitude &&
+    return f.latitude == p.latitude && f.longitude == p.longitude && f.accuracy >= p.accuracy &&
         kotlin.math.abs(f.timestampMs - p.timestampMs) <= DUPLICATE_FIX_WINDOW_MS
 }
 
