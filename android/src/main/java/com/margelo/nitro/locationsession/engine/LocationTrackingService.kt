@@ -38,12 +38,13 @@ class LocationTrackingService : Service() {
             mapOf("intent" to (intent != null), "flags" to flags, "startId" to startId, "promoted" to promoted),
             level = "info"
         )
+        val activeBefore = SessionEngine.isActive
         if (intent == null) {
             ElsLog.info("service", "service restarted by the system")
             SessionEngine.resumeIfNeeded(this)
         }
         val c = SessionEngine.activeConfig
-        if (c != null) SessionEngine.refreshUpdates(this)
+        if (c != null && activeBefore) SessionEngine.refreshUpdates(this)
         if (!promoted) {
             promoted = promote(notification(PLACEHOLDER_TITLE, null))
             isForeground = promoted

@@ -49,6 +49,7 @@ object SessionEngine {
     private var lastFix: Fix? = null
     private var stopping = false
     private var expiryRunnable: Runnable? = null
+    private var updatesRequestedForServiceStart = false
 
     val activeConfig: SessionConfig? get() = config
     val isActive: Boolean get() = config != null
@@ -242,6 +243,10 @@ object SessionEngine {
     }
 
     fun refreshUpdates(ctx: Context) {
+        if (updatesRequestedForServiceStart) {
+            updatesRequestedForServiceStart = false
+            return
+        }
         config?.let { requestUpdates(ctx, it) }
     }
 
@@ -254,12 +259,14 @@ object SessionEngine {
         uploader.begin(c, lastFix, lastUploadAt)
         startService(ctx)
         requestUpdates(ctx, c)
+        updatesRequestedForServiceStart = LaunchGate.startPending
         scheduleExpiry(ctx, c)
     }
 
     private fun teardown(ctx: Context, c: SessionConfig, reason: StopReason?) {
         expiryRunnable?.let { main.removeCallbacks(it) }
         expiryRunnable = null
+        updatesRequestedForServiceStart = false
         cancelAlarm(ctx)
         LaunchGate.clear(ctx)
         removeUpdates(ctx)
