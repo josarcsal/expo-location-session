@@ -113,9 +113,14 @@ final class SessionEngine {
         stopping = false
         uploader.onStop = { [weak self] in self?.stop($0) }
         uploader.begin(c, pending: lastFix, lastSuccessMs: lastUploadAtMs)
-        source.start(c)
+        startSource(c)
         observeTermination()
         scheduleExpiry(c)
+    }
+
+    private func startSource(_ c: SessionConfig) {
+        guard !source.start(c) else { return }
+        events.emit(.error, ["code": "CONFIG_MISSING_BACKGROUND_MODE", "message": "UIBackgroundModes does not contain location; the session only updates while the app is in the foreground"])
     }
 
     private func scheduleExpiry(_ c: SessionConfig) {
@@ -194,7 +199,7 @@ final class SessionEngine {
             source.removeRegions()
             Log.info("permission", "authorization downgraded to whenInUse; session \(c.id) keeps running without relaunch", sessionId: c.id)
         case .authorizedAlways:
-            source.start(c)
+            startSource(c)
             Log.info("permission", "authorization upgraded to always; session \(c.id) can relaunch", sessionId: c.id)
         default:
             break

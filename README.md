@@ -66,7 +66,7 @@ iOS `Info.plist`:
 </array>
 ```
 
-`start` rejects with `INVALID_CONFIG` on iOS when `UIBackgroundModes` does not contain `location`.
+`start` rejects with `INVALID_CONFIG` on iOS when `UIBackgroundModes` does not contain `location`. If a session was persisted by a build that had the mode and resumes in a build that does not (an app update), the library does not enable background updates, which would crash the app, and emits an `error` event with `CONFIG_MISSING_BACKGROUND_MODE`; the session keeps running but only updates while the app is in the foreground.
 
 Android: the library manifest already declares fine and coarse location, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_LOCATION`, `INTERNET`, `ACCESS_NETWORK_STATE`, `POST_NOTIFICATIONS`, `WAKE_LOCK` and `SCHEDULE_EXACT_ALARM`, plus its service and receiver. To survive process death, add background location to your app manifest:
 
@@ -241,6 +241,7 @@ addListener('log', (line: DebugLogLine) => {});
 Error event codes:
 
 - `UPLOAD_DROPPED`: the server answered a 4xx other than 401, 403 or 410 (or, on Android, the body could not be encoded). That location is dropped and the session keeps running.
+- `CONFIG_MISSING_BACKGROUND_MODE` (iOS): a session resumed, or was upgraded to Always, in a build whose `UIBackgroundModes` has no `location`. Background updates are not enabled; the session keeps running and only updates in the foreground.
 - `FGS_PROMOTION_FAILED` (Android): Android refused to restart the foreground service for 10 minutes. The session then stops with reason `stopped`. See [Android](#android).
 
 ## Debug logging

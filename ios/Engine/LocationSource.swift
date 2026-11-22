@@ -75,13 +75,19 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
         Log.debug("lifecycle", "first location event after launch", data: data, level: "info")
     }
 
-    func start(_ config: SessionConfig) {
+    @discardableResult
+    func start(_ config: SessionConfig) -> Bool {
         dispatchPrecondition(condition: .onQueue(.main))
         let m = manager ?? CLLocationManager()
         manager = m
         lastStatus = m.authorizationStatus
         m.delegate = self
-        m.allowsBackgroundLocationUpdates = true
+        let backgroundMode = Self.hasBackgroundLocationMode
+        if backgroundMode {
+            m.allowsBackgroundLocationUpdates = true
+        } else {
+            Log.debug("location", "UIBackgroundModes has no location; background updates not enabled", sessionId: config.id, level: "warn")
+        }
         m.pausesLocationUpdatesAutomatically = false
         m.showsBackgroundLocationIndicator = true
         m.activityType = .other
@@ -110,6 +116,7 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
             m.startMonitoring(for: region)
             Log.debug("region", "destination region armed", data: ["latitude": d.latitude, "longitude": d.longitude, "radius": radius], sessionId: config.id, level: "info")
         }
+        return backgroundMode
     }
 
     func stop() {
