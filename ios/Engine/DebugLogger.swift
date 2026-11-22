@@ -398,10 +398,30 @@ final class DebugLogger {
         if !fm.fileExists(atPath: url.path), !fm.createFile(atPath: url.path, contents: nil, attributes: protection) {
             return nil
         }
-        guard let h = try? FileHandle(forWritingTo: url), let end = try? h.seekToEnd() else { return nil }
-        files[current].size = Int64(end)
+        guard let h = try? FileHandle(forUpdating: url), let end = try? h.seekToEnd(),
+              let size = dropTornTail(h, end: end) else { return nil }
+        files[current].size = Int64(size)
         handle = h
         return h
+    }
+
+    private func dropTornTail(_ h: FileHandle, end: UInt64) -> UInt64? {
+        guard end > 0 else { return end }
+        let start = end > 65_536 ? end - 65_536 : 0
+        guard (try? h.seek(toOffset: start)) != nil, let tail = try? h.readToEnd() else {
+            try? h.close()
+            return nil
+        }
+        if tail.last == 0x0A {
+            _ = try? h.seekToEnd()
+            return end
+        }
+        let cut = tail.lastIndex(of: 0x0A).map { start + UInt64($0 - tail.startIndex) + 1 } ?? start
+        guard (try? h.truncate(atOffset: cut)) != nil else {
+            try? h.close()
+            return nil
+        }
+        return cut
     }
 
     private func scan(_ url: URL) -> FileState {
