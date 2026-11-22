@@ -241,6 +241,10 @@ object SessionEngine {
         }
     }
 
+    fun refreshUpdates(ctx: Context) {
+        config?.let { requestUpdates(ctx, it) }
+    }
+
     private fun activate(ctx: Context, c: SessionConfig, startedAt: Long, pending: Fix?, lastUploadAt: Long?) {
         config = c
         startedAtMs = startedAt

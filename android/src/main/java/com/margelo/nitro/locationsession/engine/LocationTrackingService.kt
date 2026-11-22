@@ -43,6 +43,7 @@ class LocationTrackingService : Service() {
             SessionEngine.resumeIfNeeded(this)
         }
         val c = SessionEngine.activeConfig
+        if (c != null) SessionEngine.refreshUpdates(this)
         if (!promoted) {
             promoted = promote(notification(PLACEHOLDER_TITLE, null))
             isForeground = promoted

@@ -414,7 +414,7 @@ Stopping removes location updates, regions, geofences, alarms and the Android no
 ### Android
 
 - `start` launches a foreground service of type `location` (`stopWithTask="false"`, `START_STICKY`) with a low-importance notification built from `android.notification`.
-- Location updates are requested from `FusedLocationProviderClient` with a `PendingIntent` to a manifest receiver (the launch gate). Play services keeps the request registered outside the process, so a delivery recreates the process.
+- Location updates are requested from `FusedLocationProviderClient` with a `PendingIntent` to a manifest receiver (the launch gate). Play services keeps the request registered outside the process, so a delivery recreates the process. The request is issued again, with the same `PendingIntent` and parameters, every time the service receives a start command, so a registration Play services dropped is restored.
 - On each delivery the launch gate loads the session (expired or invalid: removes updates and wipes), hands the location to the engine, and starts the foreground service again if it is not running.
 - If Android refuses to start the service from the background, the gate falls back to:
   1. an exact alarm that fires immediately, only if the user granted "Alarms & reminders" (`SCHEDULE_EXACT_ALARM`, off by default on Android 14+). Apps can send users to that setting (`Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM`); the library does not.
