@@ -317,7 +317,7 @@ Each batch is a `POST` to `url` with `Content-Type: application/json`, your head
     "model": "iPhone15,2",
     "os": "iOS 17.5.0",
     "appVersion": "1.4.0 (212)",
-    "libVersion": "0.1.0"
+    "libVersion": "0.1.1"
   },
   "lines": []
 }
