@@ -53,10 +53,15 @@ const BACKUP_EXCLUDES: [domain: string, path: string][] = [
   ['file', 'expo-location-session/'],
 ];
 
+const hasAttribute = (tag: string, name: string, value: string) =>
+  new RegExp(`\\s${name}\\s*=\\s*(["'])${value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\1`).test(tag);
+
 const hasExclude = (body: string, [domain, file]: [string, string]) =>
   (body.match(/<exclude\b[^>]*>/g) ?? []).some(
-    (tag) => tag.includes(`domain="${domain}"`) && tag.includes(`path="${file}"`),
+    (tag) => hasAttribute(tag, 'domain', domain) && hasAttribute(tag, 'path', file),
   );
+
+const maskComments = (xml: string) => xml.replace(/<!--[\s\S]*?-->/g, (comment) => comment.replace(/[^\n]/g, ' '));
 
 const excludeLines = (body: string, indent: string) =>
   BACKUP_EXCLUDES.filter((rule) => !hasExclude(body, rule))
@@ -64,10 +69,11 @@ const excludeLines = (body: string, indent: string) =>
     .join('');
 
 const insertInto = (xml: string, tag: string, content: (body: string, indent: string) => string) => {
-  const open = new RegExp(`<${tag}\\b[^>]*?(/?)>`).exec(xml);
+  const masked = maskComments(xml);
+  const open = new RegExp(`<${tag}\\b[^>]*?(/?)>`).exec(masked);
   if (!open) return undefined;
-  const lineStart = xml.lastIndexOf('\n', open.index) + 1;
-  const indent = /^[ \t]*/.exec(xml.slice(lineStart))?.[0] ?? '';
+  const lineStart = masked.lastIndexOf('\n', open.index) + 1;
+  const indent = /^[ \t]*/.exec(masked.slice(lineStart))?.[0] ?? '';
   const start = open.index + open[0].length;
   if (open[1]) {
     const added = content('', `${indent}  `);
@@ -75,19 +81,20 @@ const insertInto = (xml: string, tag: string, content: (body: string, indent: st
     const openTag = open[0].replace(/\s*\/>$/, '>');
     return `${xml.slice(0, open.index)}${openTag}\n${added}${indent}</${tag}>${xml.slice(start)}`;
   }
-  const end = xml.indexOf(`</${tag}>`, start);
+  const end = masked.indexOf(`</${tag}>`, start);
   if (end < 0) return undefined;
-  const added = content(xml.slice(start, end), `${indent}  `);
+  const added = content(masked.slice(start, end), `${indent}  `);
   if (!added) return xml;
-  const closeLineStart = xml.lastIndexOf('\n', end) + 1;
-  if (xml.slice(closeLineStart, end).trim() === '')
+  const closeLineStart = masked.lastIndexOf('\n', end) + 1;
+  if (masked.slice(closeLineStart, end).trim() === '')
     return `${xml.slice(0, closeLineStart)}${added}${xml.slice(closeLineStart)}`;
   return `${xml.slice(0, end)}\n${added}${xml.slice(end)}`;
 };
 
 const withExcludes = (xml: string) => {
-  if (/<full-backup-content\b/.test(xml)) return insertInto(xml, 'full-backup-content', excludeLines);
-  if (!/<data-extraction-rules\b/.test(xml)) return undefined;
+  const masked = maskComments(xml);
+  if (/<full-backup-content\b/.test(masked)) return insertInto(xml, 'full-backup-content', excludeLines);
+  if (!/<data-extraction-rules\b/.test(masked)) return undefined;
   for (const section of ['cloud-backup', 'device-transfer']) {
     const next =
       insertInto(xml, section, excludeLines) ??
