@@ -381,7 +381,7 @@ Final uploads bypass the throttle:
 
 The session stops itself when:
 
-- `expired`: `now >= expiresAt`. Checked on every location, on resume and by a timer while the process is alive. Android also sets an inexact `AlarmManager.setAndAllowWhileIdle` alarm at `expiresAt` (it can fire a few minutes late). Locations taken at or after `expiresAt` are never uploaded.
+- `expired`: `now >= expiresAt`. Checked on every location, on resume and by a timer while the process is alive. Android also sets an alarm at `expiresAt`: an exact `setExactAndAllowWhileIdle` alarm when the app can schedule exact alarms (below Android 12, or "Alarms & reminders" granted), which fires on time even in Doze; otherwise an inexact `setAndAllowWhileIdle` alarm, which can fire minutes late. Locations taken at or after `expiresAt` are never uploaded.
 - `arrived`: a location is within `radiusMeters` of `destination` and its accuracy is at most `max(radiusMeters, 100)` meters.
 - `unauthorized` / `rejected`: see the upload contract.
 - `permissionRevoked`: location permission was removed. iOS detects it immediately (setting it to Never). Android kills the app on revocation, so it is detected at the next wake or app open.

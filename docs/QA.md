@@ -54,8 +54,10 @@ v0.1 is done when every row passes on three physical devices: an iPhone (iOS 17+
 | [ ] | 25 | Denied starts keep happening for 10 minutes (e.g. both routes unavailable) | `error` with `FGS_PROMOTION_FAILED`, then the session stops with `stopped` | n/a | | |
 | [ ] | 26 | Without background location → `start` → background → kill the process → move | No relaunch, no notification, no uploads while closed | n/a | | |
 | [ ] | 27 | After 26, open the app before `expiresAt` (from the launcher; the app does not need to call the library on mount) | Session resumes and uploads continue; `getState().survivesProcessDeath` is `false` | n/a | | |
-| [ ] | 28 | Background location granted → `start` → kill the process → wait past `expiresAt` | The expiry alarm (inexact, may be minutes late) wakes the app and the session stops with `expired`; nothing is uploaded after `expiresAt`; on the next open `getState().lastStop.reason` is `expired` | n/a | | |
+| [ ] | 28 | Background location granted → `start` → kill the process → wait past `expiresAt` | The expiry alarm (exact with Alarms & reminders on, otherwise inexact and possibly minutes late) wakes the app and the session stops with `expired`; nothing is uploaded after `expiresAt`; on the next open `getState().lastStop.reason` is `expired` | n/a | | |
 | [ ] | 29 | `stop()` after a kill/relaunch cycle | No relaunches, no uploads, no notification, no recovery geofence left | n/a | | |
+| [ ] | 40 | Alarms & reminders on → `start` with `expiresAt` 15 min ahead, no destination → leave the phone still with the screen off (Doze: `adb shell dumpsys deviceidle force-idle` to force it) | `exact expiry alarm set` is logged; the session stops with `expired` within a minute of `expiresAt`, and the notification goes away | n/a | | |
+| [ ] | 41 | Alarms & reminders off (Android 14+), same as 40 | `inexact expiry alarm set` is logged; the session stops with `expired`, possibly minutes late | n/a | | |
 
 ### Build configurations
 

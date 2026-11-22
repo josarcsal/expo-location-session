@@ -328,7 +328,17 @@ object SessionEngine {
 
     private fun scheduleAlarm(ctx: Context, c: SessionConfig) {
         val alarms = ctx.getSystemService(AlarmManager::class.java) ?: return
+        if (LaunchGate.canScheduleExactAlarms(ctx)) {
+            try {
+                alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, c.expiresAtMs, alarmIntent(ctx))
+                ElsLog.info("stop", "exact expiry alarm set", mapOf("exact" to true, "expiresAtMs" to c.expiresAtMs), c.id)
+                return
+            } catch (e: SecurityException) {
+                ElsLog.info("stop", "exact expiry alarm denied: ${e.javaClass.simpleName}", sessionId = c.id, level = "warn")
+            }
+        }
         alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, c.expiresAtMs, alarmIntent(ctx))
+        ElsLog.info("stop", "inexact expiry alarm set", mapOf("exact" to false, "expiresAtMs" to c.expiresAtMs), c.id)
     }
 
     private fun cancelAlarm(ctx: Context) {

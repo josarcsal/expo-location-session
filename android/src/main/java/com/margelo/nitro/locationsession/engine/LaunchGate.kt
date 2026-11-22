@@ -244,7 +244,7 @@ class LaunchGate : BroadcastReceiver() {
             SessionEngine.stop(ctx, StopReason.STOPPED)
         }
 
-        private fun canScheduleExactAlarms(ctx: Context): Boolean {
+        fun canScheduleExactAlarms(ctx: Context): Boolean {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
             return ctx.getSystemService(AlarmManager::class.java)?.canScheduleExactAlarms() == true
         }
