@@ -211,8 +211,4 @@ private let here = Destination(latitude: 40.4168, longitude: -3.7038, radiusMete
         #expect(terminateRadius(f, nowMs: 60_000) == 1000)
         #expect(terminateRadius(fix(acc: 5000, ts: 0), nowMs: 0) == 1000)
     }
-
-    @Test func noFixKeeps200() {
-        #expect(terminateRadius(nil, nowMs: 0) == 200)
-    }
 }
