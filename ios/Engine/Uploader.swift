@@ -267,8 +267,14 @@ final class Uploader {
     private func beginBackgroundTask() {
         endBackgroundTask()
         backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "expo-location-session.upload") { [weak self] in
-            self?.endBackgroundTask()
+            self?.backgroundTaskExpired()
         }
+    }
+
+    private func backgroundTaskExpired() {
+        Log.debug("upload", "background task expired; cancelling in-flight upload", data: ["inFlight": inFlight != nil], sessionId: config?.id, level: "warn")
+        inFlight?.cancel()
+        endBackgroundTask()
     }
 
     private func endBackgroundTask() {
