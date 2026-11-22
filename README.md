@@ -47,6 +47,8 @@ Add the config plugin to `app.json` and run `npx expo prebuild`:
 
 The plugin always adds `location` to iOS `UIBackgroundModes`, keeping any modes already there.
 
+On Android the plugin also points `android:fullBackupContent` and `android:dataExtractionRules` at the library's rules, which keep the session and debug log out of Auto Backup and device transfer (see [Backup](#backup)). If either attribute is already set, for example by `expo-secure-store`, it leaves it alone and prints a warning.
+
 The icon is copied to `res/drawable/expo_location_session_notification_icon.png` and looked up by name at runtime. If your app uses strict resource shrinking (`tools:shrinkMode="strict"`), keep it, for example with `tools:keep="@drawable/expo_location_session_notification_icon"` in a `res/raw/keep.xml`.
 
 ### Bare React Native
@@ -73,6 +75,13 @@ Android: the library manifest already declares fine and coarse location, `FOREGR
 ```
 
 For a custom notification icon, add a drawable named `expo_location_session_notification_icon`.
+
+To keep the session out of Auto Backup, add the library's rules to `<application>` (see [Backup](#backup)):
+
+```xml
+android:fullBackupContent="@xml/expo_location_session_backup_rules"
+android:dataExtractionRules="@xml/expo_location_session_data_extraction_rules"
+```
 
 ### iOS linking note
 
@@ -422,6 +431,16 @@ Stopping removes location updates, regions, geofences, alarms and the Android no
   A second refusal waits for the next delivery. Until the service is back, locations are still handled and uploaded, without a notification. If no restart succeeds for 10 minutes after the first refusal, the session emits `FGS_PROMOTION_FAILED` and stops with `stopped`.
 - After an app update (`MY_PACKAGE_REPLACED`) the gate resumes a persisted session the same way as a delivery: updates, expiry alarm and foreground service come back without the app being opened (an expired session stops with `expired`; without background location it stays paused until the app is opened).
 - The session is stored in app-private `SharedPreferences`, headers included, unencrypted.
+
+### Backup
+
+The session (headers included) is in the `SharedPreferences` file `expo_location_session`, the debug options in `expo_location_session_debug`, and the debug log in `filesDir/expo-location-session/`. The library ships two rules files that exclude all three: `@xml/expo_location_session_backup_rules` (`android:fullBackupContent`, Android 11 and lower) and `@xml/expo_location_session_data_extraction_rules` (`android:dataExtractionRules`, Android 12+, cloud backup and device transfer). A library manifest cannot set these `<application>` attributes without clashing with the app's, so the Expo plugin sets them, or a bare app adds them. If your app already has its own rules files, add these excludes to them instead (inside `<cloud-backup>` and `<device-transfer>` for the data extraction rules):
+
+```xml
+<exclude domain="sharedpref" path="expo_location_session.xml" />
+<exclude domain="sharedpref" path="expo_location_session_debug.xml" />
+<exclude domain="file" path="expo-location-session/" />
+```
 
 ## Known limits
 

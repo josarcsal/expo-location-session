@@ -4,6 +4,7 @@ import {
   withAndroidManifest,
   withDangerousMod,
   withInfoPlist,
+  WarningAggregator,
   type ConfigPlugin,
 } from 'expo/config-plugins';
 import fs from 'node:fs';
@@ -40,6 +41,29 @@ const withBackgroundPermission: ConfigPlugin = (config) =>
     return cfg;
   });
 
+const BACKUP_RULES: [attribute: string, value: string][] = [
+  ['android:fullBackupContent', '@xml/expo_location_session_backup_rules'],
+  ['android:dataExtractionRules', '@xml/expo_location_session_data_extraction_rules'],
+];
+
+const withBackupRules: ConfigPlugin = (config) =>
+  withAndroidManifest(config, (cfg) => {
+    const attributes: Record<string, string | undefined> = AndroidConfig.Manifest.getMainApplicationOrThrow(
+      cfg.modResults,
+    ).$;
+    if (attributes['android:allowBackup'] === 'false') return cfg;
+    for (const [attribute, value] of BACKUP_RULES) {
+      const current = attributes[attribute];
+      if (current === undefined) attributes[attribute] = value;
+      else if (current !== value)
+        WarningAggregator.addWarningAndroid(
+          pkg.name,
+          `${attribute} is already set to ${current}. Add the expo-location-session excludes to that file (see the README, "Backup").`,
+        );
+    }
+    return cfg;
+  });
+
 const withNotificationIcon: ConfigPlugin<string> = (config, icon) =>
   withDangerousMod(config, [
     'android',
@@ -58,6 +82,7 @@ const withLocationSession: ConfigPlugin<LocationSessionPluginProps | void> = (co
   const options = props ?? {};
   config = withIos(config, options);
   if (options.enableBackgroundLocationPermission ?? true) config = withBackgroundPermission(config);
+  config = withBackupRules(config);
   if (options.androidNotificationIcon) config = withNotificationIcon(config, options.androidNotificationIcon);
   return config;
 };

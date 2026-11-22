@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+  <exclude domain="sharedpref" path="expo_location_session.xml" />
+  <exclude domain="sharedpref" path="expo_location_session_debug.xml" />
+  <exclude domain="file" path="expo-location-session/" />
+</full-backup-content>
