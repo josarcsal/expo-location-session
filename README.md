@@ -47,7 +47,7 @@ Add the config plugin to `app.json` and run `npx expo prebuild`:
 
 The plugin always adds `location` to iOS `UIBackgroundModes`, keeping any modes already there.
 
-On Android the plugin also points `android:fullBackupContent` and `android:dataExtractionRules` at the library's rules, which keep the session and debug log out of Auto Backup and device transfer (see [Backup](#backup)). If either attribute is already set, for example by `expo-secure-store`, it leaves it alone and prints a warning.
+On Android the plugin also keeps the session and debug log out of Auto Backup and device transfer (see [Backup](#backup)). When neither `android:fullBackupContent` nor `android:dataExtractionRules` is set, it points them at the library's rules. When the app already references its own rules files, it adds the library's excludes to those files, or prints a warning when it cannot.
 
 The icon is copied to `res/drawable/expo_location_session_notification_icon.png` and looked up by name at runtime. If your app uses strict resource shrinking (`tools:shrinkMode="strict"`), keep it, for example with `tools:keep="@drawable/expo_location_session_notification_icon"` in a `res/raw/keep.xml`.
 
@@ -438,7 +438,11 @@ Stopping removes location updates, regions, geofences, alarms and the Android no
 
 ### Backup
 
-The session (headers included) is in the `SharedPreferences` file `expo_location_session`, the debug options in `expo_location_session_debug`, and the debug log in `filesDir/expo-location-session/`. The library ships two rules files that exclude all three: `@xml/expo_location_session_backup_rules` (`android:fullBackupContent`, Android 11 and lower) and `@xml/expo_location_session_data_extraction_rules` (`android:dataExtractionRules`, Android 12+, cloud backup and device transfer). A library manifest cannot set these `<application>` attributes without clashing with the app's, so the Expo plugin sets them, or a bare app adds them. If your app already has its own rules files, add these excludes to them instead (inside `<cloud-backup>` and `<device-transfer>` for the data extraction rules):
+The session (headers included) is in the `SharedPreferences` file `expo_location_session`, the debug options in `expo_location_session_debug`, and the debug log in `filesDir/expo-location-session/`. The library ships two rules files that exclude all three: `@xml/expo_location_session_backup_rules` (`android:fullBackupContent`, Android 11 and lower) and `@xml/expo_location_session_data_extraction_rules` (`android:dataExtractionRules`, Android 12+, cloud backup and device transfer). A library manifest cannot set these `<application>` attributes without clashing with the app's, so the Expo plugin sets them, or a bare app adds them.
+
+When an attribute already points at another `@xml/…` file, the Expo plugin leaves the attribute alone and adds the excludes below to that file in `android/app/src/main/res/xml/`, skipping any already there. In a `<full-backup-content>` file it adds them at the top level; in a `<data-extraction-rules>` file it adds them to `<cloud-backup>` and `<device-transfer>`, creating a missing section (a section with only excludes still backs up everything else). This runs as a finalized mod, after the other plugins' manifest and dangerous mods, so rules files that another plugin writes in its own dangerous mod are found. If the file does not exist in the app's `res/xml` at that point, the plugin prints a warning and you add the excludes yourself. That is the case for `expo-secure-store`, whose rules files ship inside its own Android library: turn its `configureAndroidBackup` option off and let this plugin set its rules, or point both attributes at rules files of your own (written by a plugin of yours) that hold both libraries' excludes. Plugin order: list `expo-location-session` before plugins that set these attributes only when they are unset, or that write their rules files in a finalized mod, so their mods run before this one (Expo runs the mods of later plugins first).
+
+In a bare app with its own rules files, add these excludes to them yourself (inside `<cloud-backup>` and `<device-transfer>` for the data extraction rules):
 
 ```xml
 <exclude domain="sharedpref" path="expo_location_session.xml" />
