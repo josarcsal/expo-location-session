@@ -175,7 +175,7 @@ object DebugLogger {
         init(ctx)
         onQueue {
             closeHandle()
-            if (active) prefs()?.edit()?.putLong(KEY_SEQ, seq)?.commit()
+            persistLatestSeq()
             directory()?.deleteRecursively()
             files[0] = FileState()
             files[1] = FileState()
@@ -306,6 +306,16 @@ object DebugLogger {
         }
     }
 
+    private fun persistLatestSeq() {
+        val p = prefs() ?: return
+        if (!active) {
+            val dir = directory()
+            val onDisk = (0..1).mapNotNull { index -> dir?.let { scan(File(it, fileName(index))).lastSeq } }.maxOrNull() ?: 0L
+            seq = maxOf(seq, p.getLong(KEY_SEQ, 0L), onDisk)
+        }
+        p.edit().putLong(KEY_SEQ, seq).commit()
+    }
+
     private fun dropEarly() {
         early.clear()
         droppedEarly = 0
@@ -326,6 +336,7 @@ object DebugLogger {
     }
 
     private fun deactivate() {
+        if (active) prefs()?.edit()?.putLong(KEY_SEQ, seq)?.commit()
         active = false
         timer?.cancel(false)
         timer = null
