@@ -541,9 +541,14 @@ final class DebugLogger {
 
     func installId() -> String? {
         queue.sync {
-            if defaults.string(forKey: Key.installId) == nil, protectedData == false { return nil }
+            if defaults.string(forKey: Key.installId) == nil, protectedData == false, !firstUnlockPassed() { return nil }
             return storedInstallId()
         }
+    }
+
+    private func firstUnlockPassed() -> Bool {
+        let probe = FileManager.default.temporaryDirectory.appendingPathComponent("expo-location-session-probe")
+        return (try? Data().write(to: probe, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])) != nil
     }
 
     private func storedInstallId() -> String {
