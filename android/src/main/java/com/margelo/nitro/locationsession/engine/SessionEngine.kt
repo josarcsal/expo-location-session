@@ -208,6 +208,13 @@ object SessionEngine {
         uploader.whenSettled(settled)
     }
 
+    fun rearmExpiryAlarm(ctx: Context) {
+        val context = init(ctx)
+        val c = config ?: return
+        ElsLog.info("stop", "exact alarm permission changed; re-arming the expiry alarm", mapOf("canScheduleExactAlarms" to LaunchGate.canScheduleExactAlarms(context)), c.id)
+        scheduleAlarm(context, c)
+    }
+
     fun resumeIfNeeded(ctx: Context) {
         val context = init(ctx)
         if (config != null) return
