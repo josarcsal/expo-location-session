@@ -138,6 +138,15 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
         Log.debug("location", "manager stopped", level: "info")
     }
 
+    func releaseLeftovers() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard manager == nil else { return }
+        let m = CLLocationManager()
+        m.stopMonitoringSignificantLocationChanges()
+        removeRegions(m)
+        Log.debug("location", "no session; significant-change monitoring stopped and leftover regions removed")
+    }
+
     func removeRegions() {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let m = manager else { return }

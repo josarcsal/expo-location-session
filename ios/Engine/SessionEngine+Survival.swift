@@ -35,6 +35,7 @@ extension SessionEngine {
         switch store.load(protectedDataAvailable: protectedData) {
         case .none where protectedData:
             stopWaitingForProtectedData()
+            source.releaseLeftovers()
         case .none, .unavailable:
             Log.info("store", "persisted session not readable yet protectedData=\(protectedData); waiting")
             waitForProtectedData()
