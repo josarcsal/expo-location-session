@@ -58,6 +58,8 @@ v0.1 is done when every row passes on three physical devices: an iPhone (iOS 17+
 | [ ] | 29 | `stop()` after a kill/relaunch cycle | No relaunches, no uploads, no notification, no recovery geofence left | n/a | | |
 | [ ] | 40 | Alarms & reminders on → `start` with `expiresAt` 15 min ahead, no destination → leave the phone still with the screen off (Doze: `adb shell dumpsys deviceidle force-idle` to force it) | `exact expiry alarm set` is logged; the session stops with `expired` within a minute of `expiresAt`, and the notification goes away | n/a | | |
 | [ ] | 41 | Alarms & reminders off (Android 14+), same as 40 | `inexact expiry alarm set` is logged; the session stops with `expired`, possibly minutes late | n/a | | |
+| [ ] | 42 | Background location granted → `start` → background the app → install an update over it (`adb install -r` of a new build, or a Play internal-testing update) → move | Without opening the app, the gate logs `gate delivery packageReplaced`, `service promoted via packageReplaced`, the notification returns and uploads continue | n/a | | |
+| [ ] | 43 | Same as 42 with Alarms & reminders off and a short session; install the update after `expiresAt`, before the inexact expiry alarm has fired | `gate delivery packageReplaced`, then the session stops with `expired` without the app being opened; nothing uploaded after `expiresAt` | n/a | | |
 
 ### Build configurations
 

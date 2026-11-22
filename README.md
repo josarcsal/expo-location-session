@@ -419,6 +419,7 @@ Stopping removes location updates, regions, geofences, alarms and the Android no
   1. an exact alarm that fires immediately, only if the user granted "Alarms & reminders" (`SCHEDULE_EXACT_ALARM`, off by default on Android 14+). Apps can send users to that setting (`Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM`); the library does not.
   2. otherwise a recovery geofence around the last fix (radius: accuracy + 200 m, enter or exit, expires after 2 minutes).
   A second refusal waits for the next delivery. Until the service is back, locations are still handled and uploaded, without a notification. If no restart succeeds for 10 minutes after the first refusal, the session emits `FGS_PROMOTION_FAILED` and stops with `stopped`.
+- After an app update (`MY_PACKAGE_REPLACED`) the gate resumes a persisted session the same way as a delivery: updates, expiry alarm and foreground service come back without the app being opened (an expired session stops with `expired`; without background location it stays paused until the app is opened).
 - The session is stored in app-private `SharedPreferences`, headers included, unencrypted.
 
 ## Known limits
