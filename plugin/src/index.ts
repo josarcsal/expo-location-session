@@ -57,44 +57,6 @@ const withAndroidBackgroundSync: ConfigPlugin = (config) =>
     return cfg;
   });
 
-const RECEIVE_BOOT_COMPLETED = 'android.permission.RECEIVE_BOOT_COMPLETED';
-const STARTUP_PROVIDER = 'androidx.startup.InitializationProvider';
-const WORK_MANAGER_INITIALIZER = 'androidx.work.WorkManagerInitializer';
-
-type ManifestItem = { $: Record<string, string | undefined>; 'meta-data'?: ManifestItem[] };
-
-const withoutWorkManager: ConfigPlugin = (config) =>
-  withAndroidManifest(config, (cfg) => {
-    const manifest = AndroidConfig.Manifest.ensureToolsAvailable(cfg.modResults);
-    const root = manifest.manifest as unknown as { 'uses-permission'?: ManifestItem[] };
-    const permissions = (root['uses-permission'] ??= []);
-    if (!permissions.some((item) => item.$['android:name'] === RECEIVE_BOOT_COMPLETED))
-      permissions.push({ $: { 'android:name': RECEIVE_BOOT_COMPLETED, 'tools:node': 'remove' } });
-    const application = AndroidConfig.Manifest.getMainApplicationOrThrow(manifest) as unknown as {
-      provider?: ManifestItem[];
-    };
-    const providers = (application.provider ??= []);
-    let provider = providers.find((item) => item.$['android:name'] === STARTUP_PROVIDER);
-    if (!provider) {
-      provider = {
-        $: {
-          'android:name': STARTUP_PROVIDER,
-          'android:authorities': '${applicationId}.androidx-startup',
-          'android:exported': 'false',
-          'tools:node': 'merge',
-        },
-      };
-      providers.push(provider);
-    }
-    const entries = (provider['meta-data'] ??= []);
-    if (!entries.some((item) => item.$['android:name'] === WORK_MANAGER_INITIALIZER))
-      entries.push({
-        $: { 'android:name': WORK_MANAGER_INITIALIZER, 'android:value': 'androidx.startup', 'tools:node': 'remove' },
-      });
-    cfg.modResults = manifest;
-    return cfg;
-  });
-
 const withBackgroundPermission: ConfigPlugin = (config) =>
   withAndroidManifest(config, (cfg) => {
     AndroidConfig.Permissions.ensurePermissions(cfg.modResults, ['android.permission.ACCESS_BACKGROUND_LOCATION']);
@@ -227,7 +189,7 @@ const withLocationSession: ConfigPlugin<LocationSessionPluginProps | void> = (co
   config = withIos(config, options);
   if (options.enableBackgroundLocationPermission ?? true) config = withBackgroundPermission(config);
   config = withBackupRules(config);
-  config = options.backgroundSync ? withAndroidBackgroundSync(config) : withoutWorkManager(config);
+  if (options.backgroundSync) config = withAndroidBackgroundSync(config);
   if (options.androidNotificationIcon) config = withNotificationIcon(config, options.androidNotificationIcon);
   return config;
 };
