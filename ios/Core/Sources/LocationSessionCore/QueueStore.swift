@@ -212,6 +212,18 @@ public final class QueueStore {
         locked { updateIds(ids, "UPDATE fixes SET state = 0 WHERE id IN") }
     }
 
+    public func existing(ids: [Int64]) -> Set<Int64> {
+        locked {
+            var found: Set<Int64> = []
+            for start in stride(from: 0, to: ids.count, by: 500) {
+                let chunk = ids[start..<min(start + 500, ids.count)]
+                let marks = Array(repeating: "?", count: chunk.count).joined(separator: ",")
+                found.formUnion(query("SELECT id FROM fixes WHERE id IN (\(marks))", chunk.map { Bind.int($0) }) { sqlite3_column_int64($0, 0) })
+            }
+            return found
+        }
+    }
+
     public func deleteSession(_ sessionId: String) -> Int {
         locked {
             var rows = 0

@@ -157,6 +157,13 @@ class QueueStore(context: Context, file: File) {
     fun release(ids: List<Long>): Boolean = updateIds(ids, "UPDATE fixes SET state = 0 WHERE id IN")
 
     @Synchronized
+    fun existing(ids: List<Long>): Set<Long> = attempt(ids.toSet()) {
+        ids.chunked(500).flatMap { chunk ->
+            query("SELECT id FROM fixes WHERE id IN (${chunk.joinToString(",") { "?" }})", *chunk.toTypedArray()) { it.getLong(0) }
+        }.toSet()
+    }
+
+    @Synchronized
     fun deleteSession(sessionId: String): Int {
         var rows = 0
         val failure = transaction {

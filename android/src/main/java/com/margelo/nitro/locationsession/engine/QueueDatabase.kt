@@ -80,6 +80,7 @@ class QueueDatabase(context: Context, private val file: File, private val clock:
 
     private fun purge(s: QueueStore) {
         val purged = s.purge(nowMs())
+        if (purged.rowsDeleted > 0) prune(s)
         purged.targetsRemoved.forEach(credentials::remove)
         if (purged.rowsDeleted > 0 || purged.targetsRemoved.isNotEmpty()) {
             ElsLog.debug("queue", "purged", mapOf("rows" to purged.rowsDeleted, "targets" to purged.targetsRemoved.size))
@@ -158,7 +159,10 @@ class QueueDatabase(context: Context, private val file: File, private val clock:
     fun deleteSession(sessionId: String): Int {
         unsavedTargets.remove(sessionId)
         val buffered = buffer.removeAll { it.sessionId == sessionId }
-        return buffered + (store()?.deleteSession(sessionId) ?: 0)
+        val s = store() ?: return buffered
+        val deleted = s.deleteSession(sessionId)
+        prune(s)
+        return buffered + deleted
     }
 
     @Synchronized
@@ -175,6 +179,11 @@ class QueueDatabase(context: Context, private val file: File, private val clock:
         val dropped = buffer.append(p)
         ElsLog.debug("queue", "buffered", mapOf("buffered" to buffer.count, "dropped" to dropped), p.sessionId, level = if (dropped) "warn" else "debug")
         return EnqueueResult.Buffered(dropped)
+    }
+
+    private fun prune(s: QueueStore) {
+        if (unsettled.isEmpty) return
+        unsettled.retain(s.existing(unsettled.ids))
     }
 
     private fun settle(s: QueueStore) {

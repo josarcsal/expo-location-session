@@ -171,4 +171,13 @@ import Testing
         #expect(s.status(excluding: Set(sent + inFlight)) == QueueStatus(pending: 1, oldestAt: 20, sessions: 1))
         #expect(s.status(excluding: [999]) == s.status())
     }
+
+    @Test func existingReportsOnlyStoredIds() throws {
+        let (s, _) = try open(); try s.saveTarget(target("s1"))
+        _ = try put(s, "s1", "a"); _ = try put(s, "s1", "b")
+        let ids = s.claim(sessionId: "s1", limit: 10).map(\.id)
+        s.delete(ids: [ids[0]])
+        #expect(s.existing(ids: ids + [999]) == [ids[1]])
+        #expect(s.existing(ids: []).isEmpty)
+    }
 }

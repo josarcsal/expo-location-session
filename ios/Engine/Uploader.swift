@@ -89,7 +89,8 @@ final class Uploader {
             ownsBatteryMonitoring = true
         }
         evaluateConnectivity()
-        if c.sync.mode == .latest, let fix = pending.flatMap(sanitize), fallback.next(sessionId: c.id) == nil, db.store()?.latestPending(sessionId: c.id) == nil {
+        if c.sync.mode == .latest, let fix = pending.flatMap(sanitize), fallback.next(sessionId: c.id) == nil,
+           FallbackSlot.resumes(pendingFixTs: fix.timestampMs, over: db.store()?.latestPending(sessionId: c.id)?.fixTs) {
             enqueue(fix, c)
         }
         if dirty { startPass(budgetMs: nil, waiters: []) }
@@ -116,7 +117,6 @@ final class Uploader {
         refreshHold = false
         runningCredentials = nil
         queueUnavailableReported = false
-        bufferTrimReported = false
         credentialsFallbackLogged = false
         endedAttempt = 0
         endedRetryAtMs = 0
@@ -145,7 +145,7 @@ final class Uploader {
 
     func evaluateConnectivity() {
         dispatchPrecondition(condition: .onQueue(.main))
-        if config != nil || (db.status()?.pending ?? 0) > 0 {
+        if config != nil || db.buffered > 0 || (db.status()?.pending ?? 0) > 0 {
             connectivity.start { [weak self] in self?.connectivityRegained() }
         } else {
             connectivity.stop()
@@ -153,7 +153,7 @@ final class Uploader {
     }
 
     private func connectivityRegained() {
-        guard config != nil || (db.status()?.pending ?? 0) > 0 else {
+        guard config != nil || db.buffered > 0 || (db.status()?.pending ?? 0) > 0 else {
             evaluateConnectivity()
             return
         }
@@ -269,7 +269,7 @@ final class Uploader {
             deferred = []
         }
         let total = drained
-        if end == .retry, config == nil {
+        if end == .retry || (end == .done && db.buffered > 0), config == nil {
             let delay = backoffMs(attempt: attempt)
             attempt += 1
             Log.debug("sync", "drain retry scheduled", data: ["backoffMs": delay])
@@ -401,8 +401,13 @@ final class Uploader {
             fallback.stored()
             return trimmed
         case .failed:
+            let first = fallback.next(sessionId: c.id) == nil
             let generation = fallback.put(sessionId: c.id, uuid: uuid, fix: fix)
             Log.debug("queue", "kept in memory", data: ["fixTimestamp": fix.timestampMs, "generation": generation], sessionId: c.id)
+            if first, let row = db.store()?.latestPending(sessionId: c.id) {
+                db.delete([row.id])
+                Log.debug("queue", "superseded row deleted", data: ["fixTimestamp": row.fixTs], sessionId: c.id)
+            }
             return 0
         case .buffered(let dropped):
             if dropped, !bufferTrimReported {
@@ -423,8 +428,9 @@ final class Uploader {
     }
 
     private func queued(_ sessionId: String, _ mode: QueueMode) -> QueuedRow? {
-        guard let row = db.store()?.latestPending(sessionId: sessionId) else { return nil }
-        return mode == .latest && fallback.supersedes(sessionId: sessionId, fixTs: row.fixTs) ? nil : row
+        let row = db.store()?.latestPending(sessionId: sessionId)
+        guard mode == .latest else { return row }
+        return fallback.pick(sessionId: sessionId, queuedFixTs: row?.fixTs) == .queue ? row : nil
     }
 
     private func syncPendingFix(_ t: Target) {

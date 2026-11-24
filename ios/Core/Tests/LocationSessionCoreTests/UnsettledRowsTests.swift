@@ -48,4 +48,14 @@ import Testing
         #expect(u.delete([]) { _ in Issue.record("called"); return false })
         #expect(u.retry(delete: { _ in Issue.record("called"); return false }, release: { _ in Issue.record("called"); return false }) == 0)
     }
+
+    @Test func retainForgetsRowsThatNoLongerExist() {
+        var u = UnsettledRows()
+        u.delete([1, 2]) { _ in false }
+        u.release([3, 4]) { _ in false }
+        #expect(u.ids == [1, 2, 3, 4])
+        u.retain([2, 4])
+        #expect(u.deletes == [2])
+        #expect(u.releases == [4])
+    }
 }

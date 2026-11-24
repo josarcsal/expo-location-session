@@ -26,6 +26,13 @@ public struct UnsettledRows {
         return ok
     }
 
+    public mutating func retain(_ existing: Set<Int64>) {
+        deletes.formIntersection(existing)
+        releases.formIntersection(existing)
+    }
+
+    public var ids: [Int64] { deletes.union(releases).sorted() }
+
     public mutating func retry(delete: ([Int64]) -> Bool, release: ([Int64]) -> Bool) -> Int {
         var settled = 0
         if !deletes.isEmpty, delete(deletes.sorted()) {

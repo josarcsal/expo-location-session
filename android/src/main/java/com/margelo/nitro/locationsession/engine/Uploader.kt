@@ -10,6 +10,7 @@ import com.margelo.nitro.locationsession.core.Battery
 import com.margelo.nitro.locationsession.core.FallbackSlot
 import com.margelo.nitro.locationsession.core.Fix
 import com.margelo.nitro.locationsession.core.FixRecord
+import com.margelo.nitro.locationsession.core.LatestPick
 import com.margelo.nitro.locationsession.core.QueueMode
 import com.margelo.nitro.locationsession.core.QueueTarget
 import com.margelo.nitro.locationsession.core.QueuedRow
@@ -105,7 +106,9 @@ class Uploader(
         this.lastSuccessMs = lastSuccessMs
         evaluateConnectivity()
         val fix = pending?.let(::sanitize)
-        if (c.sync.mode == QueueMode.LATEST && fix != null && fallback.next(c.id) == null && queue.store()?.latestPending(c.id) == null) {
+        if (c.sync.mode == QueueMode.LATEST && fix != null && fallback.next(c.id) == null &&
+            FallbackSlot.resumes(fix.timestampMs, queue.store()?.latestPending(c.id)?.fixTs)
+        ) {
             enqueue(fix, c)
         }
         if (dirty) startPass(null, emptyList())
@@ -133,7 +136,6 @@ class Uploader(
         refreshHold = false
         runningCredentials = null
         queueUnavailableReported = false
-        bufferTrimReported = false
         credentialsFallbackLogged = false
         endedAttempt = 0
         endedRetryAtMs = 0L
@@ -157,7 +159,7 @@ class Uploader(
 
     fun evaluateConnectivity() {
         assertMain()
-        if (config != null || (queue.status()?.pending ?: 0) > 0) {
+        if (config != null || queue.buffered > 0 || (queue.status()?.pending ?: 0) > 0) {
             connectivity.start { connectivityRegained() }
         } else {
             connectivity.stop()
@@ -165,7 +167,7 @@ class Uploader(
     }
 
     private fun connectivityRegained() {
-        if (config == null && (queue.status()?.pending ?: 0) == 0) {
+        if (config == null && queue.buffered == 0 && (queue.status()?.pending ?: 0) == 0) {
             evaluateConnectivity()
             return
         }
@@ -273,7 +275,7 @@ class Uploader(
             deferred.clear()
         }
         val total = drained
-        if (end == PassEnd.RETRY && config == null) {
+        if ((end == PassEnd.RETRY || (end == PassEnd.DONE && queue.buffered > 0)) && config == null) {
             val delay = backoffMs(attempt)
             attempt += 1
             ElsLog.debug("sync", "drain retry scheduled", mapOf("backoffMs" to delay))
@@ -453,8 +455,14 @@ class Uploader(
                 result.trimmed
             }
             EnqueueResult.Failed -> {
+                val first = fallback.next(c.id) == null
                 val generation = fallback.put(c.id, uuid, fix)
                 ElsLog.debug("queue", "kept in memory", mapOf("fixTimestamp" to fix.timestampMs, "generation" to generation), c.id)
+                val row = if (first) queue.store()?.latestPending(c.id) else null
+                if (row != null) {
+                    queue.delete(listOf(row.id))
+                    ElsLog.debug("queue", "superseded row deleted", mapOf("fixTimestamp" to row.fixTs), c.id)
+                }
                 0
             }
             is EnqueueResult.Buffered -> {
@@ -478,8 +486,9 @@ class Uploader(
     private fun hasPending(c: SessionConfig): Boolean = fallback.next(c.id) != null || queued(c.id, c.sync.mode) != null
 
     private fun queued(sessionId: String, mode: QueueMode): QueuedRow? {
-        val row = queue.store()?.latestPending(sessionId) ?: return null
-        return if (mode == QueueMode.LATEST && fallback.supersedes(sessionId, row.fixTs)) null else row
+        val row = queue.store()?.latestPending(sessionId)
+        if (mode != QueueMode.LATEST) return row
+        return if (fallback.pick(sessionId, row?.fixTs) == LatestPick.QUEUE) row else null
     }
 
     private fun syncPendingFix(t: Target) {

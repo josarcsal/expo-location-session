@@ -4,6 +4,7 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import androidx.test.core.app.ApplicationProvider
 import com.margelo.nitro.locationsession.core.QueueMode
+import com.margelo.nitro.locationsession.core.QueueStatus
 import com.margelo.nitro.locationsession.core.QueueTarget
 import java.io.File
 import java.util.UUID
@@ -177,6 +178,23 @@ class QueueDatabaseTest {
         withRaw(file) { it.execSQL("DROP TRIGGER boom") }
         db.prepareSend()
         assertEquals(listOf("b"), db.store()?.claim("s2", 10)?.map { it.uuid })
+        db.store()?.close()
+    }
+
+    @Test
+    fun deleteSessionForgetsItsUnsettledRows() {
+        val (db, file) = newDb()
+        db.saveTarget(target("s1"))
+        db.enqueue(insert("s1", "a"))
+        db.enqueue(insert("s1", "b"))
+        val sent = db.store()!!.claim("s1", 1).map { it.id }
+        withRaw(file) { it.execSQL("CREATE TRIGGER boom BEFORE DELETE ON fixes BEGIN SELECT RAISE(ABORT, 'full'); END") }
+        db.delete(sent)
+        assertEquals(1, db.status()?.pending)
+        withRaw(file) { it.execSQL("DROP TRIGGER boom") }
+        assertEquals(2, db.deleteSession("s1"))
+        db.enqueue(insert("s1", "c"))
+        assertEquals(QueueStatus(1, db.store()?.status()?.oldestAt, 1), db.status())
         db.store()?.close()
     }
 }

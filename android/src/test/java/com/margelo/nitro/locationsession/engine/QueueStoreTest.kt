@@ -284,4 +284,16 @@ class QueueStoreTest {
         assertEquals(QueueStatus(1, 20, 1), s.status((sent + inFlight).toSet()))
         assertEquals(s.status(), s.status(setOf(999L)))
     }
+
+    @Test
+    fun existingReportsOnlyStoredIds() {
+        val s = open()
+        s.saveTarget(target("s1"))
+        put(s, "s1", "a")
+        put(s, "s1", "b")
+        val ids = s.claim("s1", 10).map { it.id }
+        s.delete(listOf(ids[0]))
+        assertEquals(setOf(ids[1]), s.existing(ids + 999L))
+        assertTrue(s.existing(emptyList()).isEmpty())
+    }
 }

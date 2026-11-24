@@ -7,6 +7,10 @@ public struct FallbackFix: Equatable {
     public let generation: Int
 }
 
+public enum LatestPick: Equatable {
+    case memory, queue, none
+}
+
 public struct FallbackSlot {
     public private(set) var pending: FallbackFix?
     private var generation = 0
@@ -25,6 +29,16 @@ public struct FallbackSlot {
 
     public func next(sessionId: String) -> FallbackFix? {
         pending?.sessionId == sessionId ? pending : nil
+    }
+
+    public func pick(sessionId: String, queuedFixTs: Int64?) -> LatestPick {
+        if next(sessionId: sessionId) != nil { return .memory }
+        guard let queuedFixTs, !supersedes(sessionId: sessionId, fixTs: queuedFixTs) else { return .none }
+        return .queue
+    }
+
+    public static func resumes(pendingFixTs: Int64, over queuedFixTs: Int64?) -> Bool {
+        queuedFixTs.map { pendingFixTs > $0 } ?? true
     }
 
     public mutating func markSent(generation sent: Int) {

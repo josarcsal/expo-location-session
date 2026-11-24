@@ -26,6 +26,13 @@ class UnsettledRows {
         return ok
     }
 
+    fun retain(existing: Set<Long>) {
+        pendingDeletes.retainAll(existing)
+        pendingReleases.retainAll(existing)
+    }
+
+    val ids: List<Long> get() = (pendingDeletes + pendingReleases).sorted()
+
     fun retry(delete: (List<Long>) -> Boolean, release: (List<Long>) -> Boolean): Int {
         var settled = 0
         if (pendingDeletes.isNotEmpty() && delete(pendingDeletes.sorted())) {

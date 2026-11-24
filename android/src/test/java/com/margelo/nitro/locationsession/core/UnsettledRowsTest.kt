@@ -58,4 +58,15 @@ class UnsettledRowsTest {
         assertTrue(u.delete(emptyList()) { fail("called"); false })
         assertEquals(0, u.retry({ fail("called"); false }, { fail("called"); false }))
     }
+
+    @Test
+    fun retainForgetsRowsThatNoLongerExist() {
+        val u = UnsettledRows()
+        u.delete(listOf(1L, 2L)) { false }
+        u.release(listOf(3L, 4L)) { false }
+        assertEquals(listOf(1L, 2L, 3L, 4L), u.ids)
+        u.retain(setOf(2L, 4L))
+        assertEquals(setOf(2L), u.deletes)
+        assertEquals(setOf(4L), u.releases)
+    }
 }

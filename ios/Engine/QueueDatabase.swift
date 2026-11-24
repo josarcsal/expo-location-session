@@ -68,6 +68,7 @@ final class QueueDatabase {
 
     private func purge(_ s: QueueStore) {
         let purged = s.purge(nowMs: nowMs())
+        if purged.rowsDeleted > 0 { prune(s) }
         purged.targetsRemoved.forEach { credentials.remove(sessionId: $0) }
         if purged.rowsDeleted > 0 || !purged.targetsRemoved.isEmpty {
             Log.debug("queue", "purged", data: ["rows": purged.rowsDeleted, "targets": purged.targetsRemoved.count])
@@ -155,7 +156,10 @@ final class QueueDatabase {
         dispatchPrecondition(condition: .onQueue(.main))
         unsavedTargets[sessionId] = nil
         let buffered = buffer.removeAll { $0.sessionId == sessionId }
-        return buffered + (store()?.deleteSession(sessionId) ?? 0)
+        guard let s = store() else { return buffered }
+        let deleted = s.deleteSession(sessionId)
+        prune(s)
+        return buffered + deleted
     }
 
     func clear() -> [String]? {
@@ -172,6 +176,11 @@ final class QueueDatabase {
         let dropped = buffer.append(p)
         Log.debug("queue", "buffered", data: ["buffered": buffer.count, "dropped": dropped], sessionId: p.sessionId, level: dropped ? "warn" : "debug")
         return .buffered(dropped: dropped)
+    }
+
+    private func prune(_ s: QueueStore) {
+        guard !unsettled.isEmpty else { return }
+        unsettled.retain(s.existing(ids: unsettled.ids))
     }
 
     private func settle(_ s: QueueStore) {

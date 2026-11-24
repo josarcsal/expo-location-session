@@ -56,4 +56,25 @@ import Testing
         s.keep(sessionId: nil)
         #expect(s.pending == nil)
     }
+
+    @Test func pickPrefersMemoryThenQueueUnlessSuperseded() {
+        var s = FallbackSlot()
+        #expect(s.pick(sessionId: "s1", queuedFixTs: nil) == .none)
+        #expect(s.pick(sessionId: "s1", queuedFixTs: 5) == .queue)
+        let g = s.put(sessionId: "s1", uuid: "a", fix: fix(10))
+        #expect(s.pick(sessionId: "s1", queuedFixTs: 5) == .memory)
+        #expect(s.pick(sessionId: "s2", queuedFixTs: 5) == .queue)
+        s.markSent(generation: g)
+        #expect(s.pick(sessionId: "s1", queuedFixTs: 5) == .none)
+        #expect(s.pick(sessionId: "s1", queuedFixTs: 11) == .queue)
+        s.stored()
+        #expect(s.pick(sessionId: "s1", queuedFixTs: 5) == .queue)
+    }
+
+    @Test func resumedPendingFixIsQueuedOnlyWhenNewerThanTheQueuedRow() {
+        #expect(FallbackSlot.resumes(pendingFixTs: 10, over: nil))
+        #expect(FallbackSlot.resumes(pendingFixTs: 10, over: 5))
+        #expect(!FallbackSlot.resumes(pendingFixTs: 10, over: 10))
+        #expect(!FallbackSlot.resumes(pendingFixTs: 10, over: 12))
+    }
 }

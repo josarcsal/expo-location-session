@@ -66,4 +66,27 @@ class FallbackSlotTest {
         s.keep(null)
         assertNull(s.pending)
     }
+
+    @Test
+    fun pickPrefersMemoryThenQueueUnlessSuperseded() {
+        val s = FallbackSlot()
+        assertEquals(LatestPick.NONE, s.pick("s1", null))
+        assertEquals(LatestPick.QUEUE, s.pick("s1", 5))
+        val g = s.put("s1", "a", fix(10))
+        assertEquals(LatestPick.MEMORY, s.pick("s1", 5))
+        assertEquals(LatestPick.QUEUE, s.pick("s2", 5))
+        s.markSent(g)
+        assertEquals(LatestPick.NONE, s.pick("s1", 5))
+        assertEquals(LatestPick.QUEUE, s.pick("s1", 11))
+        s.stored()
+        assertEquals(LatestPick.QUEUE, s.pick("s1", 5))
+    }
+
+    @Test
+    fun resumedPendingFixIsQueuedOnlyWhenNewerThanTheQueuedRow() {
+        assertTrue(FallbackSlot.resumes(10, null))
+        assertTrue(FallbackSlot.resumes(10, 5))
+        assertFalse(FallbackSlot.resumes(10, 10))
+        assertFalse(FallbackSlot.resumes(10, 12))
+    }
 }
