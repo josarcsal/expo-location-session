@@ -50,6 +50,10 @@ class QueueStore(context: Context, file: File) {
             )
         }
 
+        override fun onConfigure(db: SQLiteDatabase) {
+            db.rawQuery("PRAGMA busy_timeout=5000", null).close()
+        }
+
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {}
     }
 
@@ -262,7 +266,11 @@ class QueueStore(context: Context, file: File) {
     private fun scalar(sql: String, vararg args: Any): Long? = query(sql, *args) { it.getLong(0) }.firstOrNull()
 
     private fun transaction(body: () -> Unit): Exception? {
-        db.beginTransactionNonExclusive()
+        try {
+            db.beginTransactionNonExclusive()
+        } catch (e: Exception) {
+            return e
+        }
         var failure: Exception? = null
         try {
             body()

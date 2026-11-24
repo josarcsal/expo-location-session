@@ -159,7 +159,7 @@ class QueueStoreTest {
         try {
             QueueStore(context, file)
             fail("expected open to throw")
-        } catch (_: Exception) {
+        } catch (_: QueueStoreException) {
         }
     }
 
@@ -190,5 +190,19 @@ class QueueStoreTest {
         }
         put(s, "s1", "c", mode = QueueMode.LATEST)
         assertEquals(listOf(1), s.claim("s1", 10).map { it.attempts })
+    }
+
+    @Test
+    fun closedStoreFailsGracefully() {
+        val s = open()
+        s.saveTarget(target("s1"))
+        put(s, "s1", "a")
+        s.close()
+        assertTrue(s.claim("s1", 10).isEmpty())
+        try {
+            put(s, "s1", "b")
+            fail("expected insert to throw")
+        } catch (_: QueueStoreException) {
+        }
     }
 }
