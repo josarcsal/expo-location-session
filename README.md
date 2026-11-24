@@ -261,7 +261,7 @@ const { sent } = await syncQueue();
 await clearQueue();
 ```
 
-- `getQueueStatus()` counts every row that is not delivered yet, including rows that are in flight right now. In `latest` mode it is at most one row per session. It rejects with `INTERNAL` when the queue storage is not available.
+- `getQueueStatus()` counts every row that is not delivered yet, including rows that are in flight right now. Rows the server already accepted but that could not be deleted yet (see [Storage failure](#storage-failure)) are not counted, and neither are locations kept in memory. In `latest` mode it is at most one row per session. It rejects with `INTERNAL` when the queue storage is not available.
 - `syncQueue()` delivers the rows of ended sessions now and resolves with `{ sent }`, the number of rows delivered by that pass. It is not "the queue is empty": it stops at the first failure (a retry is then scheduled with backoff), and it can resolve early, possibly with `0`, when a running session is blocked on its own backlog or is sending it. Read `getQueueStatus()` for what remains. Call it, for example, when the app opens.
 - `clearQueue()` cancels any delivery in progress and deletes every queued row, the running session's included, together with the stored credentials of ended sessions. The running session keeps running.
 
@@ -296,14 +296,14 @@ addListener('log', (line: DebugLogLine) => {});
 Error event codes:
 
 - `UPLOAD_DROPPED`: the server answered a 4xx other than 401, 403 or 410 (or, on Android, the body could not be encoded). That location, or that whole batch, is dropped and the session keeps running. It is also emitted for ended sessions (see the status table) and when a queued row is unreadable.
-- `QUEUE_TRIMMED` (queue mode `all`): the queue reached `maxRecords` and the oldest pending rows were dropped to make room. The message says how many. The session keeps running.
+- `QUEUE_TRIMMED` (queue mode `all`): the queue reached `maxRecords` and the oldest pending rows were dropped to make room. The message says how many. It is also emitted, once per outage, when the database cannot be written and the 500-location memory buffer starts dropping its oldest locations. The session keeps running.
 - `AUTH_REFRESH_FAILED`: a token refresh did not succeed (see [Token refresh](#token-refresh)). Whether the session stops depends on the failure.
-- `QUEUE_UNAVAILABLE`: the queue database (`queue.sqlite`) cannot be opened while a session runs, so its locations are not uploaded, in every queue mode. Emitted once per outage; the session keeps running and the library tries to open the database again on the next location, at most every 5 seconds. On iOS the latest 500 locations are kept in memory and queued once it opens; a file that is not a valid database is deleted and recreated once per process before this is reported, and nothing is reported before the first unlock after a reboot. On Android the locations are dropped, and a corrupt file is recreated by Android's SQLite. It is sticky on both platforms (see below); on Android it also carries `sessionId`.
+- `QUEUE_UNAVAILABLE`: the queue database (`queue.sqlite`) cannot be opened, or a location cannot be written to it (for example a full disk), while a session runs. Emitted once per outage; the session keeps running. In `latest` mode the newest location is still uploaded from memory; in `all` mode up to 500 locations are kept in memory and written in order once the database accepts writes again (see [Storage failure](#storage-failure)). The library tries to open the database again on the next location, at most every 5 seconds. On iOS a file that is not a valid database is deleted and recreated once per process before this is reported, and nothing is reported before the first unlock after a reboot. On Android a corrupt file is recreated by Android's SQLite. It is sticky on both platforms (see below); on Android it also carries `sessionId`.
 - `CONFIG_MISSING_BACKGROUND_MODE` (iOS): a session resumed, or was upgraded to Always, in a build whose `UIBackgroundModes` has no `location`. Background updates are not enabled; the session keeps running and only updates in the foreground. Sticky, see below.
 - `ACCURACY_REDUCED` (iOS): precise location is off for this app, either when the session starts or resumes, or because the user turned it off while it runs. Emitted once per change and sticky (see below); the session keeps running. Fixes are then approximate (often 1–5 km), so arrival cannot trigger (it needs an accuracy within `max(radiusMeters, 100)` m) and region monitoring does not relaunch the app; the session runs to `expiresAt`. Check `getPermissionStatus().precise` before `start` to warn the user earlier. iOS only: on Android, switching an app to approximate location revokes `ACCESS_FINE_LOCATION`, which kills the process, so there is no running session to notify; `precise` reports it.
 - `FGS_PROMOTION_FAILED` (Android): Android refused to restart the foreground service for 10 minutes. The session then stops with reason `stopped`. See [Android](#android).
 
-`CONFIG_MISSING_BACKGROUND_MODE`, `ACCURACY_REDUCED` and `QUEUE_UNAVAILABLE` are sticky on iOS, and `QUEUE_UNAVAILABLE` on Android, because they are often raised during a resume at launch, before JS has added a listener. On iOS sticky errors carry no `sessionId`. The latest event of each is kept while its condition holds and the session runs, and is emitted again to each `error` listener when it is added, unless that listener already received it. It is dropped when the condition clears (precise location turned back on, the queue database opens) or the session stops.
+`CONFIG_MISSING_BACKGROUND_MODE`, `ACCURACY_REDUCED` and `QUEUE_UNAVAILABLE` are sticky on iOS, and `QUEUE_UNAVAILABLE` on Android, because they are often raised during a resume at launch, before JS has added a listener. On iOS sticky errors carry no `sessionId`. The latest event of each is kept while its condition holds and the session runs, and is emitted again to each `error` listener when it is added, unless that listener already received it. It is dropped when the condition clears (precise location turned back on, the queue database accepts writes again) or the session stops.
 
 ## Debug logging
 
@@ -615,6 +615,15 @@ Rows of an ended session are delivered while the process is alive, when connecti
 - iOS: a `BGProcessingTask` with the identifier `<bundle id>.els.queue-sync`. iOS decides when it runs: that can be hours later, or never for an app the user rarely opens. It does not run on the Simulator, so test it on a device. It is scheduled only while no session runs, and again when a session ends.
 - The job reports success when no ended-session rows remain, and is rescheduled otherwise.
 
+### Storage failure
+
+When a location cannot be written to the queue (the database cannot be opened, the disk is full, or any other write error), the library reports `QUEUE_UNAVAILABLE` once and keeps the session running:
+
+- `latest` (default): the newest location is kept in memory and uploaded exactly as in 0.1: the same body, throttle, backoff, final-upload budget and status handling. A newer location replaces it; a `2xx` or a drop clears it; a retry keeps it. Once writes succeed again, new locations go back to the queue, and a location still in memory is never overtaken by an older queued one. When the session stops, the location in memory is discarded, as the pending location is in 0.1. It does not survive process death.
+- `all`: locations are never sent around the queue. Up to 500 are kept in memory, oldest dropped first (`QUEUE_TRIMMED` once per outage), and written in order on the next location and before each send attempt. Rows already in the queue keep being sent meanwhile, as far as the database allows. Locations still in memory when the process dies are lost.
+- When the server accepts a request but its rows cannot be deleted, they are remembered in memory as sent: they are not sent again by this process, are left out of `getQueueStatus()`, and the delete is retried on the next queue operation. If the process dies before that, they are sent again at the next launch (delivery is at-least-once; deduplicate on the `id` template field, or on `sessionId` with the location `timestamp`). Rows that cannot be made pending again after a failed request are retried the same way.
+- `QUEUE_UNAVAILABLE` is cleared once a write succeeds and nothing is left in memory.
+
 ## Stop policy
 
 The session stops itself when:
@@ -682,7 +691,7 @@ With none of the new options, the upload contract is the one of 0.1. Other chang
 - Android: the library depends on `androidx.work:work-runtime`, even with `backgroundSync` off. Its manifest is merged into your app: WorkManager's startup initializer (through `androidx.startup`) and its permissions, such as `RECEIVE_BOOT_COMPLETED`, appear in your merged manifest.
 - A connectivity monitor runs in every queue mode, the default included, while a session runs or rows are pending. When the network returns it resets the backoff and uploads at once.
 - Delivery is at-least-once: a request whose response is lost (timeout, process killed) is sent again, so the server may receive the same location twice. Deduplicate on `sessionId` with the location `timestamp`, or on the `id` template field.
-- A new error code, `QUEUE_UNAVAILABLE`, reports that the queue database cannot be opened (see [Events](#events)).
+- A new error code, `QUEUE_UNAVAILABLE`, reports that the queue database cannot be opened or written (see [Events](#events)). In the default mode the newest location is still uploaded from memory meanwhile (see [Storage failure](#storage-failure)).
 
 ## Known limits
 
