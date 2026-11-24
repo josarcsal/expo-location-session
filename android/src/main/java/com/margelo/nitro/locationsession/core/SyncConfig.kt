@@ -1,6 +1,7 @@
 package com.margelo.nitro.locationsession.core
 
 import java.net.URI
+import kotlin.math.abs
 import org.json.JSONException
 import org.json.JSONObject
 
@@ -67,6 +68,33 @@ data class SyncConfig(
             )
         }
     }
+}
+
+class InvalidConfigException(val reason: String) : IllegalArgumentException(reason)
+
+fun makeSyncConfig(
+    mode: QueueMode,
+    maxRecords: Double,
+    maxAgeMs: Double,
+    batchMaxSize: Double?,
+    batchRootProperty: String?,
+    templateJson: String?,
+    refreshUrl: String?,
+    refreshHeaders: Map<String, String>?,
+    refreshBodyJson: String?
+): SyncConfig {
+    fun integer(value: Double, field: String): Long {
+        if (!value.isFinite() || value != Math.rint(value) || abs(value) >= 9.0e15) {
+            throw InvalidConfigException("$field must be an integer")
+        }
+        return value.toLong()
+    }
+    fun int(value: Long) = value.coerceIn(Int.MIN_VALUE.toLong(), Int.MAX_VALUE.toLong()).toInt()
+    val records = integer(maxRecords, "queue.maxRecords")
+    val age = integer(maxAgeMs, "queue.maxAgeMs")
+    val batch = batchMaxSize?.let { BatchConfig(int(integer(it, "batch.maxSize")), batchRootProperty ?: "locations") }
+    val refresh = refreshUrl?.let { RefreshConfig(it, refreshHeaders ?: emptyMap(), refreshBodyJson) }
+    return SyncConfig(mode, int(records), age, batch, templateJson, refresh)
 }
 
 fun validateSync(s: SyncConfig, extrasJson: String): String? {

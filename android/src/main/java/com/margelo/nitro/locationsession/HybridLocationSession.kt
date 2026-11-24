@@ -7,15 +7,15 @@ import androidx.annotation.Keep
 import com.facebook.proguard.annotations.DoNotStrip
 import com.margelo.nitro.NitroModules
 import com.margelo.nitro.core.Promise
-import com.margelo.nitro.locationsession.core.BatchConfig
 import com.margelo.nitro.locationsession.core.DebugOptions
 import com.margelo.nitro.locationsession.core.Destination
 import com.margelo.nitro.locationsession.core.Fix
+import com.margelo.nitro.locationsession.core.InvalidConfigException
 import com.margelo.nitro.locationsession.core.QueueMode
-import com.margelo.nitro.locationsession.core.RefreshConfig
 import com.margelo.nitro.locationsession.core.SessionConfig
 import com.margelo.nitro.locationsession.core.StopReason
 import com.margelo.nitro.locationsession.core.SyncConfig
+import com.margelo.nitro.locationsession.core.makeSyncConfig
 import com.margelo.nitro.locationsession.engine.CurrentPosition
 import com.margelo.nitro.locationsession.engine.DebugLogger
 import com.margelo.nitro.locationsession.engine.EngineState
@@ -173,31 +173,23 @@ private fun Accuracy.wire(): String = when (this) {
 private fun milliseconds(value: Double): Long? =
     if (value.isFinite() && abs(value) < 9.0e15) value.roundToLong() else null
 
-private fun integer(value: Double, field: String): Long {
-    if (!value.isFinite() || value != Math.rint(value) || abs(value) >= 9.0e15) {
-        throw LocationSessionException("INVALID_CONFIG", "$field must be an integer")
-    }
-    return value.toLong()
-}
-
-private fun syncConfig(c: NativeSessionConfig): SyncConfig {
-    val maxRecords = integer(c.uploadQueueMaxRecords, "queue.maxRecords")
-    val maxAgeMs = integer(c.uploadQueueMaxAgeMs, "queue.maxAgeMs")
-    val batch = c.uploadBatchMaxSize?.let {
-        BatchConfig(integer(it, "batch.maxSize").coerceIn(Int.MIN_VALUE.toLong(), Int.MAX_VALUE.toLong()).toInt(), c.uploadBatchRootProperty ?: "locations")
-    }
-    val refresh = c.uploadRefreshUrl?.let { RefreshConfig(it, c.uploadRefreshHeaders ?: emptyMap(), c.uploadRefreshBodyJson) }
-    return SyncConfig(
+private fun syncConfig(c: NativeSessionConfig): SyncConfig = try {
+    makeSyncConfig(
         mode = when (c.uploadQueueMode) {
             NativeQueueMode.LATEST -> QueueMode.LATEST
             NativeQueueMode.ALL -> QueueMode.ALL
         },
-        maxRecords = maxRecords.coerceIn(Int.MIN_VALUE.toLong(), Int.MAX_VALUE.toLong()).toInt(),
-        maxAgeMs = maxAgeMs,
-        batch = batch,
+        maxRecords = c.uploadQueueMaxRecords,
+        maxAgeMs = c.uploadQueueMaxAgeMs,
+        batchMaxSize = c.uploadBatchMaxSize,
+        batchRootProperty = c.uploadBatchRootProperty,
         templateJson = c.uploadBodyTemplateJson,
-        refresh = refresh
+        refreshUrl = c.uploadRefreshUrl,
+        refreshHeaders = c.uploadRefreshHeaders,
+        refreshBodyJson = c.uploadRefreshBodyJson
     )
+} catch (e: InvalidConfigException) {
+    throw LocationSessionException("INVALID_CONFIG", e.reason)
 }
 
 private fun sessionConfig(c: NativeSessionConfig): SessionConfig {

@@ -69,4 +69,31 @@ import Testing
         c.sync = SyncConfig(mode: .all, maxRecords: 5, maxAgeMs: 60_000, batch: BatchConfig(maxSize: 20, rootProperty: "pts"), templateJson: #"{"a":"{{id}}"}"#, refresh: RefreshConfig(url: "https://x.dev/r", headers: ["X": "y"], bodyJson: nil))
         #expect(try JSONDecoder().decode(SessionConfig.self, from: JSONEncoder().encode(c)) == c)
     }
+
+    @Test func makeSyncConfigMapsNativeFields() throws {
+        let defaults = try makeSyncConfig(mode: .latest, maxRecords: 10_000, maxAgeMs: 86_400_000, batchMaxSize: nil, batchRootProperty: nil,
+                                          templateJson: nil, refreshUrl: nil, refreshHeaders: nil, refreshBodyJson: nil)
+        #expect(defaults == .default)
+        let c = try makeSyncConfig(mode: .all, maxRecords: 5, maxAgeMs: 60_000, batchMaxSize: 20, batchRootProperty: nil,
+                                   templateJson: "{}", refreshUrl: "https://x.dev/r", refreshHeaders: nil, refreshBodyJson: #"{"k":"v"}"#)
+        #expect(c == SyncConfig(mode: .all, maxRecords: 5, maxAgeMs: 60_000, batch: BatchConfig(maxSize: 20, rootProperty: "locations"),
+                                templateJson: "{}", refresh: RefreshConfig(url: "https://x.dev/r", headers: [:], bodyJson: #"{"k":"v"}"#)))
+        let rooted = try makeSyncConfig(mode: .all, maxRecords: 5, maxAgeMs: 60_000, batchMaxSize: 3, batchRootProperty: "pts",
+                                        templateJson: nil, refreshUrl: "https://x.dev/r", refreshHeaders: ["X": "y"], refreshBodyJson: nil)
+        #expect(rooted.batch == BatchConfig(maxSize: 3, rootProperty: "pts") && rooted.refresh?.headers == ["X": "y"])
+    }
+
+    @Test(arguments: [
+        (1.5, 60_000, nil, "queue.maxRecords must be an integer"),
+        (.nan, 60_000, nil, "queue.maxRecords must be an integer"),
+        (10, .infinity, nil, "queue.maxAgeMs must be an integer"),
+        (10, 9.0e15, nil, "queue.maxAgeMs must be an integer"),
+        (10, 60_000, 2.5, "batch.maxSize must be an integer"),
+    ] as [(Double, Double, Double?, String)])
+    func makeSyncConfigRejectsNonIntegers(maxRecords: Double, maxAgeMs: Double, batchMaxSize: Double?, reason: String) {
+        #expect(throws: InvalidConfig(reason: reason)) {
+            try makeSyncConfig(mode: .all, maxRecords: maxRecords, maxAgeMs: maxAgeMs, batchMaxSize: batchMaxSize, batchRootProperty: nil,
+                               templateJson: nil, refreshUrl: nil, refreshHeaders: nil, refreshBodyJson: nil)
+        }
+    }
 }

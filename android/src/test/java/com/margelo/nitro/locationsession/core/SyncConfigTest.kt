@@ -4,6 +4,7 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 private fun baseCfg(sync: SyncConfig = SyncConfig()) = SessionConfig(
@@ -85,7 +86,8 @@ class SyncConfigTest {
 
     @Test
     fun fromJsonWithoutSyncUsesDefaults() {
-        val v01 = JSONObject(baseCfg().toJson()).apply { remove("sync") }.toString()
+        val v01 = """{"id":"s1","expiresAtMs":10000,"accuracy":"high","distanceFilterMeters":10,"uploadUrl":"https://x.dev/l","uploadHeaders":{},""" +
+            """"uploadExtrasJson":"{}","uploadMinIntervalMs":15000,"notificationTitle":"t","notificationText":"x","notificationChannelName":"c"}"""
         val c = SessionConfig.fromJson(v01)
         assertEquals("s1", c.id)
         assertEquals(SyncConfig(), c.sync)
@@ -99,5 +101,36 @@ class SyncConfigTest {
         )
         val c = baseCfg(sync)
         assertEquals(c, SessionConfig.fromJson(c.toJson()))
+    }
+
+    @Test
+    fun makeSyncConfigMapsNativeFields() {
+        assertEquals(SyncConfig(), makeSyncConfig(QueueMode.LATEST, 10_000.0, 86_400_000.0, null, null, null, null, null, null))
+        assertEquals(
+            SyncConfig(QueueMode.ALL, 5, 60_000, BatchConfig(20, "locations"), "{}", RefreshConfig("https://x.dev/r", emptyMap(), """{"k":"v"}""")),
+            makeSyncConfig(QueueMode.ALL, 5.0, 60_000.0, 20.0, null, "{}", "https://x.dev/r", null, """{"k":"v"}""")
+        )
+        val rooted = makeSyncConfig(QueueMode.ALL, 5.0, 60_000.0, 3.0, "pts", null, "https://x.dev/r", mapOf("X" to "y"), null)
+        assertEquals(BatchConfig(3, "pts"), rooted.batch)
+        assertEquals(mapOf("X" to "y"), rooted.refresh?.headers)
+    }
+
+    @Test
+    fun makeSyncConfigRejectsNonIntegers() {
+        val cases = listOf(
+            Triple(1.5, 60_000.0, null) to "queue.maxRecords must be an integer",
+            Triple(Double.NaN, 60_000.0, null) to "queue.maxRecords must be an integer",
+            Triple(10.0, Double.POSITIVE_INFINITY, null) to "queue.maxAgeMs must be an integer",
+            Triple(10.0, 9.0e15, null) to "queue.maxAgeMs must be an integer",
+            Triple(10.0, 60_000.0, 2.5) to "batch.maxSize must be an integer"
+        )
+        for ((input, reason) in cases) {
+            try {
+                makeSyncConfig(QueueMode.ALL, input.first, input.second, input.third, null, null, null, null, null)
+                fail("expected $reason")
+            } catch (e: InvalidConfigException) {
+                assertEquals(reason, e.reason)
+            }
+        }
     }
 }

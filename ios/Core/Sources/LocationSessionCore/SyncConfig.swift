@@ -46,6 +46,29 @@ public struct SyncConfig: Codable, Equatable {
     public static let `default` = SyncConfig()
 }
 
+public struct InvalidConfig: Error, Equatable {
+    public let reason: String
+}
+
+public func makeSyncConfig(
+    mode: QueueMode, maxRecords: Double, maxAgeMs: Double, batchMaxSize: Double?, batchRootProperty: String?,
+    templateJson: String?, refreshUrl: String?, refreshHeaders: [String: String]?, refreshBodyJson: String?
+) throws -> SyncConfig {
+    func integer(_ value: Double, _ field: String) throws -> Int64 {
+        guard value.isFinite, value.rounded() == value, abs(value) < 9.0e15 else {
+            throw InvalidConfig(reason: "\(field) must be an integer")
+        }
+        return Int64(value)
+    }
+    let records = try integer(maxRecords, "queue.maxRecords")
+    let age = try integer(maxAgeMs, "queue.maxAgeMs")
+    let batch = try batchMaxSize.map {
+        BatchConfig(maxSize: Int(try integer($0, "batch.maxSize")), rootProperty: batchRootProperty ?? "locations")
+    }
+    let refresh = refreshUrl.map { RefreshConfig(url: $0, headers: refreshHeaders ?? [:], bodyJson: refreshBodyJson) }
+    return SyncConfig(mode: mode, maxRecords: Int(records), maxAgeMs: age, batch: batch, templateJson: templateJson, refresh: refresh)
+}
+
 public func validateSync(_ s: SyncConfig, extrasJson: String) -> String? {
     if let b = s.batch {
         if s.mode != .all { return "batch requires queue.mode 'all'" }

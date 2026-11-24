@@ -175,35 +175,27 @@ private func milliseconds(_ value: Double) -> Int64? {
     return Int64(value.rounded())
 }
 
-private func integer(_ value: Double, _ field: String) throws -> Int64 {
-    guard value.isFinite, value.rounded() == value, abs(value) < 9.0e15 else {
-        throw LocationSessionError(code: "INVALID_CONFIG", message: "\(field) must be an integer")
-    }
-    return Int64(value)
-}
-
 private func syncConfig(_ c: NativeSessionConfig) throws -> SyncConfig {
-    let maxRecords = try integer(c.uploadQueueMaxRecords, "queue.maxRecords")
-    let maxAgeMs = try integer(c.uploadQueueMaxAgeMs, "queue.maxAgeMs")
-    let batch = try c.uploadBatchMaxSize.map {
-        BatchConfig(maxSize: Int(try integer($0, "batch.maxSize")), rootProperty: c.uploadBatchRootProperty ?? "locations")
-    }
-    let refresh = c.uploadRefreshUrl.map {
-        RefreshConfig(url: $0, headers: c.uploadRefreshHeaders ?? [:], bodyJson: c.uploadRefreshBodyJson)
-    }
     let mode: QueueMode
     switch c.uploadQueueMode {
     case .latest: mode = .latest
     case .all: mode = .all
     }
-    return SyncConfig(
-        mode: mode,
-        maxRecords: Int(maxRecords),
-        maxAgeMs: maxAgeMs,
-        batch: batch,
-        templateJson: c.uploadBodyTemplateJson,
-        refresh: refresh
-    )
+    do {
+        return try makeSyncConfig(
+            mode: mode,
+            maxRecords: c.uploadQueueMaxRecords,
+            maxAgeMs: c.uploadQueueMaxAgeMs,
+            batchMaxSize: c.uploadBatchMaxSize,
+            batchRootProperty: c.uploadBatchRootProperty,
+            templateJson: c.uploadBodyTemplateJson,
+            refreshUrl: c.uploadRefreshUrl,
+            refreshHeaders: c.uploadRefreshHeaders,
+            refreshBodyJson: c.uploadRefreshBodyJson
+        )
+    } catch let error as InvalidConfig {
+        throw LocationSessionError(code: "INVALID_CONFIG", message: error.reason)
+    }
 }
 
 private func sessionConfig(_ c: NativeSessionConfig) throws -> SessionConfig {
