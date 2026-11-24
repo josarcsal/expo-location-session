@@ -9,19 +9,57 @@ final class EventBus {
     private let lock = NSLock()
     private var listeners: [Double: (event: Event, callback: (String) -> Void)] = [:]
     private var nextId = 0.0
+    private var stickyErrors: [String: String] = [:]
+    private var awaitingReplay: [Double: Set<String>] = [:]
 
     func add(_ event: Event, _ callback: @escaping (String) -> Void) -> Double {
         lock.lock()
-        defer { lock.unlock() }
         nextId += 1
-        listeners[nextId] = (event, callback)
-        return nextId
+        let id = nextId
+        listeners[id] = (event, callback)
+        if event == .error { awaitingReplay[id] = [] }
+        lock.unlock()
+        if event == .error {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.lock.lock()
+                let deliveredLive = self.awaitingReplay.removeValue(forKey: id) ?? []
+                let replay = self.listeners[id] == nil ? [] : self.stickyErrors.filter { !deliveredLive.contains($0.key) }.map(\.value)
+                self.lock.unlock()
+                replay.forEach(callback)
+            }
+        }
+        return id
+    }
+
+    func emitStickyError(code: String, message: String) {
+        guard let data = try? JSONSerialization.data(withJSONObject: ["code": code, "message": message]),
+              let json = String(data: data, encoding: .utf8) else { return }
+        lock.lock()
+        stickyErrors[code] = json
+        for id in awaitingReplay.keys { awaitingReplay[id]?.insert(code) }
+        let targets = listeners.values.filter { $0.event == .error }.map(\.callback)
+        lock.unlock()
+        targets.forEach { $0(json) }
+    }
+
+    func clearStickyError(_ code: String) {
+        lock.lock()
+        stickyErrors[code] = nil
+        lock.unlock()
+    }
+
+    func clearStickyErrors() {
+        lock.lock()
+        stickyErrors.removeAll()
+        lock.unlock()
     }
 
     func remove(_ id: Double) {
         lock.lock()
         defer { lock.unlock() }
         listeners[id] = nil
+        awaitingReplay[id] = nil
     }
 
     func hasListeners(_ event: Event) -> Bool {

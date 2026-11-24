@@ -152,6 +152,12 @@ class UploadPolicyTests {
         assertEquals(UploadOutcome.Retry, classify(100))
     }
 
+    @Test fun redirectsRetry() {
+        for (status in listOf(301, 302, 303, 307, 308)) {
+            assertEquals(UploadOutcome.Retry, classify(status))
+        }
+    }
+
     @Test fun backoffCapsAtSixtySeconds() {
         assertEquals(listOf(5000L, 10000L, 20000L, 40000L, 60000L, 60000L), (0..5).map { backoffMs(it) })
     }

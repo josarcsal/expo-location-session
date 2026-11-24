@@ -27,7 +27,9 @@ class LaunchGate : BroadcastReceiver() {
         LOCATION("expo.locationsession.LOCATION", "location", true),
         RECOVERY_GEOFENCE("expo.locationsession.RECOVERY_GEOFENCE", "recoveryGeofence", true),
         EXACT_ALARM("expo.locationsession.EXACT_ALARM", "exactAlarm", false),
-        EXPIRY("expo.locationsession.EXPIRY", "expiryAlarm", false);
+        EXPIRY("expo.locationsession.EXPIRY", "expiryAlarm", false),
+        PACKAGE_REPLACED(Intent.ACTION_MY_PACKAGE_REPLACED, "packageReplaced", false),
+        EXACT_ALARM_PERMISSION(AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED, "exactAlarmPermission", false);
 
         companion object {
             fun fromAction(action: String?): Kind? = values().firstOrNull { it.action == action }
@@ -99,6 +101,10 @@ class LaunchGate : BroadcastReceiver() {
                         SessionEngine.onFixes(ctx, fixes, finish)
                     }
                     Kind.EXPIRY -> SessionEngine.onExpiryAlarm(ctx, finish)
+                    Kind.EXACT_ALARM_PERMISSION -> {
+                        SessionEngine.rearmExpiryAlarm(ctx)
+                        finish()
+                    }
                     else -> finish()
                 }
             } finally {
@@ -244,7 +250,7 @@ class LaunchGate : BroadcastReceiver() {
             SessionEngine.stop(ctx, StopReason.STOPPED)
         }
 
-        private fun canScheduleExactAlarms(ctx: Context): Boolean {
+        fun canScheduleExactAlarms(ctx: Context): Boolean {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
             return ctx.getSystemService(AlarmManager::class.java)?.canScheduleExactAlarms() == true
         }

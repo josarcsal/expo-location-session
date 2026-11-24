@@ -47,6 +47,8 @@ Add the config plugin to `app.json` and run `npx expo prebuild`:
 
 The plugin always adds `location` to iOS `UIBackgroundModes`, keeping any modes already there.
 
+On Android the plugin also keeps the session and debug log out of Auto Backup and device transfer (see [Backup](#backup)). When neither `android:fullBackupContent` nor `android:dataExtractionRules` is set, it points them at the library's rules. When the app already references its own rules files, it adds the library's excludes to those files, or prints a warning when it cannot.
+
 The icon is copied to `res/drawable/expo_location_session_notification_icon.png` and looked up by name at runtime. If your app uses strict resource shrinking (`tools:shrinkMode="strict"`), keep it, for example with `tools:keep="@drawable/expo_location_session_notification_icon"` in a `res/raw/keep.xml`.
 
 ### Bare React Native
@@ -64,7 +66,7 @@ iOS `Info.plist`:
 </array>
 ```
 
-`start` rejects with `INVALID_CONFIG` on iOS when `UIBackgroundModes` does not contain `location`.
+`start` rejects with `INVALID_CONFIG` on iOS when `UIBackgroundModes` does not contain `location`. If a session was persisted by a build that had the mode and resumes in a build that does not (an app update), the library does not enable background updates, which would crash the app, and emits an `error` event with `CONFIG_MISSING_BACKGROUND_MODE`; the session keeps running but only updates while the app is in the foreground.
 
 Android: the library manifest already declares fine and coarse location, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_LOCATION`, `INTERNET`, `ACCESS_NETWORK_STATE`, `POST_NOTIFICATIONS`, `WAKE_LOCK` and `SCHEDULE_EXACT_ALARM`, plus its service and receiver. To survive process death, add background location to your app manifest:
 
@@ -73,6 +75,13 @@ Android: the library manifest already declares fine and coarse location, `FOREGR
 ```
 
 For a custom notification icon, add a drawable named `expo_location_session_notification_icon`.
+
+To keep the session out of Auto Backup, add the library's rules to `<application>` (see [Backup](#backup)):
+
+```xml
+android:fullBackupContent="@xml/expo_location_session_backup_rules"
+android:dataExtractionRules="@xml/expo_location_session_data_extraction_rules"
+```
 
 ### iOS linking note
 
@@ -232,7 +241,11 @@ addListener('log', (line: DebugLogLine) => {});
 Error event codes:
 
 - `UPLOAD_DROPPED`: the server answered a 4xx other than 401, 403 or 410 (or, on Android, the body could not be encoded). That location is dropped and the session keeps running.
+- `CONFIG_MISSING_BACKGROUND_MODE` (iOS): a session resumed, or was upgraded to Always, in a build whose `UIBackgroundModes` has no `location`. Background updates are not enabled; the session keeps running and only updates in the foreground. Sticky, see below.
+- `ACCURACY_REDUCED` (iOS): precise location is off for this app, either when the session starts or resumes, or because the user turned it off while it runs. Emitted once per change and sticky (see below); the session keeps running. Fixes are then approximate (often 1–5 km), so arrival cannot trigger (it needs an accuracy within `max(radiusMeters, 100)` m) and region monitoring does not relaunch the app; the session runs to `expiresAt`. Check `getPermissionStatus().precise` before `start` to warn the user earlier. iOS only: on Android, switching an app to approximate location revokes `ACCESS_FINE_LOCATION`, which kills the process, so there is no running session to notify; `precise` reports it.
 - `FGS_PROMOTION_FAILED` (Android): Android refused to restart the foreground service for 10 minutes. The session then stops with reason `stopped`. See [Android](#android).
+
+`CONFIG_MISSING_BACKGROUND_MODE` and `ACCURACY_REDUCED` are sticky on iOS, because they are often raised during a resume at launch, before JS has added a listener. The latest event of each is kept while its condition holds and the session runs, and is emitted again to each `error` listener when it is added. It is dropped when the condition clears (precise location turned back on) or the session stops.
 
 ## Debug logging
 
@@ -308,7 +321,7 @@ Each batch is a `POST` to `url` with `Content-Type: application/json`, your head
     "model": "iPhone15,2",
     "os": "iOS 17.5.0",
     "appVersion": "1.4.0 (212)",
-    "libVersion": "0.1.0"
+    "libVersion": "0.1.1"
   },
   "lines": []
 }
@@ -368,6 +381,7 @@ Only the latest position matters. There is one pending slot: a newer location re
 | `401`, `403` | Stop with `unauthorized`. There is no token refresh in v0.1; use a short-lived, session-scoped token. |
 | `410` | Stop with `rejected` (the server ended the session). |
 | Other `4xx` | The location is dropped, an `error` event with `UPLOAD_DROPPED` is emitted, the session keeps running. |
+| `3xx` | Redirects are never followed. Treated like a `5xx`: the location stays pending and is retried with backoff. Point `upload.url` at the final address. |
 | `5xx`, timeout, no network | The location stays pending. Retries back off 5 s, 10 s, 20 s, 40 s, then every 60 s while the process is alive, and a new location triggers a new attempt. |
 
 Throttle: after a success, locations that arrive within `minIntervalMs` stay pending and are sent when the interval has passed (by a timer while the process is alive, or with the next location).
@@ -381,7 +395,7 @@ Final uploads bypass the throttle:
 
 The session stops itself when:
 
-- `expired`: `now >= expiresAt`. Checked on every location, on resume and by a timer while the process is alive. Android also sets an inexact `AlarmManager.setAndAllowWhileIdle` alarm at `expiresAt` (it can fire a few minutes late). Locations taken at or after `expiresAt` are never uploaded.
+- `expired`: `now >= expiresAt`. Checked on every location, on resume and by a timer while the process is alive. Android also sets an alarm at `expiresAt`: an exact `setExactAndAllowWhileIdle` alarm when the app can schedule exact alarms (below Android 12, or "Alarms & reminders" granted), which fires on time even in Doze; otherwise an inexact `setAndAllowWhileIdle` alarm, which can fire minutes late. The alarm is re-armed when that permission changes: granting it (Android 12+ sends `SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED`, received even when the process is not running) re-arms it as exact while a session is active; revoking it kills the app's process and deletes its exact alarms, and the next process start (a location delivery, a service restart or opening the app) resumes the session and re-arms it as inexact. Locations taken at or after `expiresAt` are never uploaded.
 - `arrived`: a location is within `radiusMeters` of `destination` and its accuracy is at most `max(radiusMeters, 100)` meters.
 - `unauthorized` / `rejected`: see the upload contract.
 - `permissionRevoked`: location permission was removed. iOS detects it immediately (setting it to Never). Android kills the app on revocation, so it is detected at the next wake or app open.
@@ -404,22 +418,37 @@ Stopping removes location updates, regions, geofences, alarms and the Android no
 
 - One `CLLocationManager` runs standard updates (`allowsBackgroundLocationUpdates`, no automatic pause, background indicator shown) together with significant-change monitoring.
 - With Always and a destination, the destination is also monitored as a region, so arrival can relaunch the app.
-- When the app is about to terminate and Always is granted, it registers an exit-only region of 200 m around the last fix, so moving away relaunches the app sooner than a significant change would (~500 m).
-- At launch the bootstrap resumes the persisted session without JS: it stops it as `expired` or `permissionRevoked`, or restarts updates and sends the pending location.
+- When the app is about to terminate and Always is granted, it registers an exit-only region around the last fix (or the manager's last known location), so moving away relaunches the app sooner than a significant change would (~500 m). The radius is 150 m, plus the fix's accuracy when that accuracy is 150 m or worse, plus speed × seconds since the fix, capped at 1000 m (and at iOS's maximum region size). A poor or stale fix therefore still leaves the phone inside the region, where the exit can fire.
+- At launch the bootstrap resumes the persisted session without JS: it stops it as `expired` or `permissionRevoked`, or restarts updates and sends the pending location. When no session is stored, it releases leftover registrations once per process (not on each JS reload), so a registration orphaned by a crash cannot keep relaunching the app: it removes `els.*` regions and stops significant-change monitoring. The library only stops significant-change monitoring it started: it records a marker in `UserDefaults` each time it starts it, and stops it (at that cleanup or when a session stops) only while the marker is set, then clears it. iOS shares significant-change monitoring across an app's location managers, so an app that also uses it can still find it stopped after a session of this library ends, and should start it again afterwards.
 - The session config (headers included) is stored in the Keychain with `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`; the pending location and `lastStop` are in `UserDefaults`. After a reboot nothing resumes before the first unlock; the engine waits and never overwrites the stored session. Because of `ThisDeviceOnly`, a session is not restored on a device restored from a backup or migrated to a new phone.
-- Uploads run in a `beginBackgroundTask` so a request can finish after the app is suspended.
+- Uploads run in a `beginBackgroundTask` so a request can finish after the app is suspended. If that background time runs out first while a running session's background location updates keep the process alive, the background task just ends and the request carries on. Otherwise the request is cancelled and retried with backoff; the location stays pending.
 - v0.1 does not use iOS 17's `CLBackgroundActivitySession`: the library supports iOS 15.1+, and `allowsBackgroundLocationUpdates` with the `location` background mode already keeps updates running on every supported version.
 
 ### Android
 
 - `start` launches a foreground service of type `location` (`stopWithTask="false"`, `START_STICKY`) with a low-importance notification built from `android.notification`.
-- Location updates are requested from `FusedLocationProviderClient` with a `PendingIntent` to a manifest receiver (the launch gate). Play services keeps the request registered outside the process, so a delivery recreates the process.
+- Location updates are requested from `FusedLocationProviderClient` with a `PendingIntent` to a manifest receiver (the launch gate). Play services keeps the request registered outside the process, so a delivery recreates the process. The request is issued again, with the same `PendingIntent` and parameters, every time the service receives a start command, so a registration Play services dropped is restored; it is not repeated for the start that comes right after the session (re)activated, which has just requested it.
 - On each delivery the launch gate loads the session (expired or invalid: removes updates and wipes), hands the location to the engine, and starts the foreground service again if it is not running.
 - If Android refuses to start the service from the background, the gate falls back to:
   1. an exact alarm that fires immediately, only if the user granted "Alarms & reminders" (`SCHEDULE_EXACT_ALARM`, off by default on Android 14+). Apps can send users to that setting (`Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM`); the library does not.
   2. otherwise a recovery geofence around the last fix (radius: accuracy + 200 m, enter or exit, expires after 2 minutes).
   A second refusal waits for the next delivery. Until the service is back, locations are still handled and uploaded, without a notification. If no restart succeeds for 10 minutes after the first refusal, the session emits `FGS_PROMOTION_FAILED` and stops with `stopped`.
+- After an app update (`MY_PACKAGE_REPLACED`) the gate resumes a persisted session the same way as a delivery: updates, expiry alarm and foreground service come back without the app being opened (an expired session stops with `expired`; without background location it stays paused until the app is opened).
 - The session is stored in app-private `SharedPreferences`, headers included, unencrypted.
+
+### Backup
+
+The session (headers included) is in the `SharedPreferences` file `expo_location_session`, the debug options in `expo_location_session_debug`, and the debug log in `filesDir/expo-location-session/`. The library ships two rules files that exclude all three: `@xml/expo_location_session_backup_rules` (`android:fullBackupContent`, Android 11 and lower) and `@xml/expo_location_session_data_extraction_rules` (`android:dataExtractionRules`, Android 12+, cloud backup and device transfer). A library manifest cannot set these `<application>` attributes without clashing with the app's, so the Expo plugin sets them, or a bare app adds them.
+
+When an attribute already points at another `@xml/…` file, the Expo plugin leaves the attribute alone and adds the excludes below to that file in `android/app/src/main/res/xml/`, skipping any already there. In a `<full-backup-content>` file it adds them at the top level; in a `<data-extraction-rules>` file it adds them to `<cloud-backup>` and `<device-transfer>`, creating a missing section (a section with only excludes still backs up everything else). This runs as a finalized mod, after the other plugins' manifest and dangerous mods, so rules files that another plugin writes in its own dangerous mod are found. If the file does not exist in the app's `res/xml` at that point, the plugin prints a warning and you add the excludes yourself. That is the case for `expo-secure-store`, whose rules files ship inside its own Android library: turn its `configureAndroidBackup` option off and let this plugin set its rules, or point both attributes at rules files of your own (written by a plugin of yours) that hold both libraries' excludes. Plugin order: list `expo-location-session` before plugins that set these attributes only when they are unset, or that write their rules files in a finalized mod, so their mods run before this one (Expo runs the mods of later plugins first).
+
+In a bare app with its own rules files, add these excludes to them yourself (inside `<cloud-backup>` and `<device-transfer>` for the data extraction rules):
+
+```xml
+<exclude domain="sharedpref" path="expo_location_session.xml" />
+<exclude domain="sharedpref" path="expo_location_session_debug.xml" />
+<exclude domain="file" path="expo-location-session/" />
+```
 
 ## Known limits
 

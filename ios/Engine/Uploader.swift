@@ -7,6 +7,7 @@ func nowMs() -> Int64 {
 
 final class Uploader {
     var onStop: ((StopReason) -> Void)?
+    var processKeptAlive: (() -> Bool)?
 
     private let store: SessionStore
     private let events: EventBus
@@ -18,7 +19,7 @@ final class Uploader {
         let queue = OperationQueue()
         queue.name = "expo-location-session.upload"
         queue.maxConcurrentOperationCount = 1
-        return URLSession(configuration: configuration, delegate: nil, delegateQueue: queue)
+        return URLSession(configuration: configuration, delegate: RefuseRedirects(), delegateQueue: queue)
     }()
 
     private var config: SessionConfig?
@@ -267,13 +268,32 @@ final class Uploader {
     private func beginBackgroundTask() {
         endBackgroundTask()
         backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "expo-location-session.upload") { [weak self] in
-            self?.endBackgroundTask()
+            self?.backgroundTaskExpired()
         }
+    }
+
+    private func backgroundTaskExpired() {
+        let keptAlive = processKeptAlive?() ?? false
+        Log.debug("upload", keptAlive ? "background task expired; background location keeps the upload running" : "background task expired; cancelling in-flight upload", data: ["inFlight": inFlight != nil], sessionId: config?.id, level: "warn")
+        if !keptAlive { inFlight?.cancel() }
+        endBackgroundTask()
     }
 
     private func endBackgroundTask() {
         guard backgroundTask != .invalid else { return }
         UIApplication.shared.endBackgroundTask(backgroundTask)
         backgroundTask = .invalid
+    }
+}
+
+final class RefuseRedirects: NSObject, URLSessionTaskDelegate {
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
     }
 }

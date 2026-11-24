@@ -37,7 +37,8 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
     static let regionPrefix = "els."
     static let destinationRegionId = "els.destination"
     static let terminateRegionId = "els.terminate"
-    static let terminateRadiusMeters: CLLocationDistance = 200
+    private static let significantChangesOwnedKey = "els.slcOwned"
+    private static let defaults = UserDefaults(suiteName: "expo-location-session") ?? .standard
 
     static var hasBackgroundLocationMode: Bool {
         (Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String])?.contains("location") ?? false
@@ -45,9 +46,15 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
 
     var onFixes: (([Fix]) -> Void)?
     var onAuthorizationChange: ((CLAuthorizationStatus) -> Void)?
+    var onAccuracyChange: ((CLAccuracyAuthorization) -> Void)?
 
     private var manager: CLLocationManager?
     private var lastStatus: CLAuthorizationStatus?
+    private var lastAccuracy: CLAccuracyAuthorization?
+    private var leftoversReleased = false
+
+    var accuracyAuthorization: CLAccuracyAuthorization? { manager?.accuracyAuthorization }
+    var backgroundUpdatesActive: Bool { manager?.allowsBackgroundLocationUpdates ?? false }
     private var launchReport: (launchAtMs: Int64, region: CLCircularRegion?)?
 
     func expectLaunchEvent(launchAtMs: Int64) {
@@ -76,20 +83,27 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
         Log.debug("lifecycle", "first location event after launch", data: data, level: "info")
     }
 
-    func start(_ config: SessionConfig) {
+    @discardableResult
+    func start(_ config: SessionConfig) -> Bool {
         dispatchPrecondition(condition: .onQueue(.main))
         let m = manager ?? CLLocationManager()
         manager = m
         lastStatus = m.authorizationStatus
+        lastAccuracy = m.accuracyAuthorization
         m.delegate = self
-        m.allowsBackgroundLocationUpdates = true
+        let backgroundMode = Self.hasBackgroundLocationMode
+        if backgroundMode {
+            m.allowsBackgroundLocationUpdates = true
+        } else {
+            Log.debug("location", "UIBackgroundModes has no location; background updates not enabled", sessionId: config.id, level: "warn")
+        }
         m.pausesLocationUpdatesAutomatically = false
         m.showsBackgroundLocationIndicator = true
         m.activityType = .other
         m.desiredAccuracy = desiredAccuracy(config.accuracy)
         m.distanceFilter = config.distanceFilterMeters > 0 ? config.distanceFilterMeters : kCLDistanceFilterNone
         m.startUpdatingLocation()
-        m.startMonitoringSignificantLocationChanges()
+        startSignificantChanges(m)
         Log.debug("location", "manager started", data: [
             "mode": "standard+significantChange",
             "desiredAccuracy": m.desiredAccuracy,
@@ -111,19 +125,31 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
             m.startMonitoring(for: region)
             Log.debug("region", "destination region armed", data: ["latitude": d.latitude, "longitude": d.longitude, "radius": radius], sessionId: config.id, level: "info")
         }
+        return backgroundMode
     }
 
     func stop() {
         dispatchPrecondition(condition: .onQueue(.main))
         let m = manager ?? CLLocationManager()
         m.stopUpdatingLocation()
-        m.stopMonitoringSignificantLocationChanges()
+        stopOwnedSignificantChanges(m)
         removeRegions(m)
         m.allowsBackgroundLocationUpdates = false
         m.delegate = nil
         manager = nil
         lastStatus = nil
+        lastAccuracy = nil
         Log.debug("location", "manager stopped", level: "info")
+    }
+
+    func releaseLeftovers() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard !leftoversReleased, manager == nil else { return }
+        leftoversReleased = true
+        let m = CLLocationManager()
+        let stopped = stopOwnedSignificantChanges(m)
+        removeRegions(m)
+        Log.debug("location", "no session; leftover registrations released", data: ["significantChangesStopped": stopped])
     }
 
     func removeRegions() {
@@ -137,18 +163,11 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let m = manager, m.authorizationStatus == .authorizedAlways,
               CLLocationManager.isMonitoringAvailable(for: CLCircularRegion.self) else { return nil }
-        m.startMonitoringSignificantLocationChanges()
-        let center: CLLocationCoordinate2D
-        if let fix {
-            center = CLLocationCoordinate2D(latitude: fix.latitude, longitude: fix.longitude)
-        } else if let location = m.location {
-            center = location.coordinate
-        } else {
-            return nil
-        }
+        startSignificantChanges(m)
+        guard let anchor = fix ?? m.location.flatMap(makeFix) else { return nil }
         let region = CLCircularRegion(
-            center: center,
-            radius: min(Self.terminateRadiusMeters, m.maximumRegionMonitoringDistance),
+            center: CLLocationCoordinate2D(latitude: anchor.latitude, longitude: anchor.longitude),
+            radius: min(terminateRadius(anchor, nowMs: nowMs()), m.maximumRegionMonitoringDistance),
             identifier: Self.terminateRegionId
         )
         region.notifyOnEntry = false
@@ -159,6 +178,19 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
 
     var monitoredRegionIds: [String] {
         (manager ?? CLLocationManager()).monitoredRegions.map(\.identifier).filter { $0.hasPrefix(Self.regionPrefix) }.sorted()
+    }
+
+    private func startSignificantChanges(_ m: CLLocationManager) {
+        Self.defaults.set(true, forKey: Self.significantChangesOwnedKey)
+        m.startMonitoringSignificantLocationChanges()
+    }
+
+    @discardableResult
+    private func stopOwnedSignificantChanges(_ m: CLLocationManager) -> Bool {
+        guard Self.defaults.bool(forKey: Self.significantChangesOwnedKey) else { return false }
+        m.stopMonitoringSignificantLocationChanges()
+        Self.defaults.removeObject(forKey: Self.significantChangesOwnedKey)
+        return true
     }
 
     private func removeRegions(_ m: CLLocationManager) {
@@ -215,6 +247,11 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        let accuracy = manager.accuracyAuthorization
+        if let last = lastAccuracy, accuracy != last {
+            lastAccuracy = accuracy
+            onAccuracyChange?(accuracy)
+        }
         let status = manager.authorizationStatus
         guard status != lastStatus else { return }
         lastStatus = status

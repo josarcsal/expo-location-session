@@ -11,7 +11,7 @@ final class DebugShipper {
         let queue = OperationQueue()
         queue.name = "expo-location-session.debug-ship"
         queue.maxConcurrentOperationCount = 1
-        return URLSession(configuration: configuration, delegate: nil, delegateQueue: queue)
+        return URLSession(configuration: configuration, delegate: RefuseRedirects(), delegateQueue: queue)
     }()
 
     private var inFlight = false

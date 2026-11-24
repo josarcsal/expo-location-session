@@ -26,13 +26,14 @@ v0.1 is done when every row passes on three physical devices: an iPhone (iOS 17+
 | [ ] | 7 | URL with `?status=410` | `stop` with `rejected` | | | |
 | [ ] | 8 | URL with `?status=422` | `error` with `UPLOAD_DROPPED`; the session keeps running | | | |
 | [ ] | 9 | 30-min session while moving | Record battery used (%) | | | |
+| [ ] | 44 | URL with `?status=302` (and once with `?status=307`) | The echo server answers with `Location: /redirected`; no request to `/redirected` appears in its log. `upload` events with `ok: false` and the 3xx status, retries back off, no `error` and no stop; the location stays pending | | | |
 
 ### iOS survival
 
 | Done | # | Check | Expected | iPhone | Pixel | Samsung / Xiaomi |
 |------|---|-------|----------|--------|-------|------------------|
 | [ ] | 10 | Always → `start` → kill from the app switcher → move ~300 m with the phone locked | The server receives uploads without the app being opened | | n/a | n/a |
-| [ ] | 11 | Same as 10, read the `first location event after launch` line | Note `kind` (`regionExit` or `locations`), `msSinceLaunch` and `distanceFromTerminateCenter`. A `regionExit` should come at roughly 200 m (iOS may report it later); a relaunch inside the region comes from a significant change | | n/a | n/a |
+| [ ] | 11 | Same as 10, read the `first location event after launch` line | Note `kind` (`regionExit` or `locations`), `msSinceLaunch` and `distanceFromTerminateCenter`. A `regionExit` should come at roughly `terminateRadius` from the centre (150 m for a fresh accurate fix; iOS may report it later); a relaunch inside the region comes from a significant change | | n/a | n/a |
 | [ ] | 12 | When In Use only → `start` → kill from the app switcher → move ~300 m | No uploads while the app is closed | | n/a | n/a |
 | [ ] | 13 | After 12, open the app before `expiresAt` | Session resumes and uploads continue; `getState().survivesProcessDeath` is `false` | | n/a | n/a |
 | [ ] | 14 | Always → `start` → kill → wait past `expiresAt` → move | App relaunches, stops with `expired`, nothing is uploaded | | n/a | n/a |
@@ -41,6 +42,9 @@ v0.1 is done when every row passes on three physical devices: an iPhone (iOS 17+
 | [ ] | 17 | While running, Settings → Location → While Using the App | Session keeps running; `survivesProcessDeath` becomes `false` | | n/a | n/a |
 | [ ] | 18 | While running, Settings → Location → Never | Session stops with `permissionRevoked` | | n/a | n/a |
 | [ ] | 19 | `stop()` after a kill/relaunch cycle | No `els.*` regions remain; no further relaunches or uploads | | n/a | n/a |
+| [ ] | 45 | Always → `start` with `distanceFilterMeters: 500` → drive at 50+ km/h → kill from the app switcher between two fixes; repeat once indoors where the last fix has 150 m+ accuracy | The `armed terminate region` line shows `r` above 150 (speed × fix age, or accuracy + 150), never above 1000; the next `first location event after launch` is a `regionExit` | | n/a | n/a |
+| [ ] | 46 | Always → `start` → install over it a build whose `Info.plist` has no `location` in `UIBackgroundModes` → move ~1 km without opening the app → open it | No crash on the relaunch; the debug log has `UIBackgroundModes has no location; background updates not enabled`; on open an `error` event with `CONFIG_MISSING_BACKGROUND_MODE`, and the session keeps updating in the foreground | | n/a | n/a |
+| [ ] | 47 | While running, Settings → app → Location → Precise Location off; then on; then off before `start` and `start` again | One `error` event with `ACCURACY_REDUCED` per switch to off and one at `start`, none when it is turned back on; the session keeps running and uploads coarse fixes | | n/a | n/a |
 
 ### Android survival
 
@@ -54,8 +58,12 @@ v0.1 is done when every row passes on three physical devices: an iPhone (iOS 17+
 | [ ] | 25 | Denied starts keep happening for 10 minutes (e.g. both routes unavailable) | `error` with `FGS_PROMOTION_FAILED`, then the session stops with `stopped` | n/a | | |
 | [ ] | 26 | Without background location → `start` → background → kill the process → move | No relaunch, no notification, no uploads while closed | n/a | | |
 | [ ] | 27 | After 26, open the app before `expiresAt` (from the launcher; the app does not need to call the library on mount) | Session resumes and uploads continue; `getState().survivesProcessDeath` is `false` | n/a | | |
-| [ ] | 28 | Background location granted → `start` → kill the process → wait past `expiresAt` | The expiry alarm (inexact, may be minutes late) wakes the app and the session stops with `expired`; nothing is uploaded after `expiresAt`; on the next open `getState().lastStop.reason` is `expired` | n/a | | |
+| [ ] | 28 | Background location granted → `start` → kill the process → wait past `expiresAt` | The expiry alarm (exact with Alarms & reminders on, otherwise inexact and possibly minutes late) wakes the app and the session stops with `expired`; nothing is uploaded after `expiresAt`; on the next open `getState().lastStop.reason` is `expired` | n/a | | |
 | [ ] | 29 | `stop()` after a kill/relaunch cycle | No relaunches, no uploads, no notification, no recovery geofence left | n/a | | |
+| [ ] | 40 | Alarms & reminders on → `start` with `expiresAt` 15 min ahead, no destination → leave the phone still with the screen off (Doze: `adb shell dumpsys deviceidle force-idle` to force it) | `exact expiry alarm set` is logged; the session stops with `expired` within a minute of `expiresAt`, and the notification goes away | n/a | | |
+| [ ] | 41 | Alarms & reminders off (Android 14+), same as 40 | `inexact expiry alarm set` is logged; the session stops with `expired`, possibly minutes late | n/a | | |
+| [ ] | 42 | Background location granted → `start` → background the app → install an update over it (`adb install -r` of a new build, or a Play internal-testing update) → move | Without opening the app, the gate logs `gate delivery packageReplaced`, `service promoted via packageReplaced`, the notification returns and uploads continue | n/a | | |
+| [ ] | 43 | Same as 42 with Alarms & reminders off and a short session; install the update after `expiresAt`, before the inexact expiry alarm has fired | `gate delivery packageReplaced`, then the session stops with `expired` without the app being opened; nothing uploaded after `expiresAt` | n/a | | |
 
 ### Build configurations
 

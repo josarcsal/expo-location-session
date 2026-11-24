@@ -40,6 +40,7 @@ final class SessionEngine {
         DebugLogger.shared.attach(events)
         source.onFixes = { [weak self] in self?.handle($0) }
         source.onAuthorizationChange = { [weak self] in self?.authorizationChanged($0) }
+        source.onAccuracyChange = { [weak self] in self?.accuracyChanged($0) }
     }
 
     func start(_ c: SessionConfig) throws {
@@ -78,6 +79,7 @@ final class SessionEngine {
         expiryTimer?.invalidate()
         expiryTimer = nil
         source.stop()
+        events.clearStickyErrors()
         uploader.reset()
         store.wipe()
         store.lastStop = LastStop(reason: reason, atMs: nowMs(), sessionId: c.id)
@@ -112,10 +114,17 @@ final class SessionEngine {
         lastFix = pending.flatMap(sanitized)
         stopping = false
         uploader.onStop = { [weak self] in self?.stop($0) }
+        uploader.processKeptAlive = { [weak self] in self?.source.backgroundUpdatesActive ?? false }
         uploader.begin(c, pending: lastFix, lastSuccessMs: lastUploadAtMs)
-        source.start(c)
+        startSource(c)
+        if source.accuracyAuthorization == .reducedAccuracy { reportReducedAccuracy(c) }
         observeTermination()
         scheduleExpiry(c)
+    }
+
+    private func startSource(_ c: SessionConfig) {
+        guard !source.start(c) else { return }
+        events.emitStickyError(code: "CONFIG_MISSING_BACKGROUND_MODE", message: "UIBackgroundModes does not contain location; the session only updates while the app is in the foreground")
     }
 
     private func scheduleExpiry(_ c: SessionConfig) {
@@ -194,11 +203,26 @@ final class SessionEngine {
             source.removeRegions()
             Log.info("permission", "authorization downgraded to whenInUse; session \(c.id) keeps running without relaunch", sessionId: c.id)
         case .authorizedAlways:
-            source.start(c)
+            startSource(c)
             Log.info("permission", "authorization upgraded to always; session \(c.id) can relaunch", sessionId: c.id)
         default:
             break
         }
+    }
+
+    private func accuracyChanged(_ accuracy: CLAccuracyAuthorization) {
+        guard let c = config else { return }
+        if accuracy == .reducedAccuracy {
+            reportReducedAccuracy(c)
+        } else {
+            events.clearStickyError("ACCURACY_REDUCED")
+            Log.info("permission", "precise location restored for session \(c.id)", sessionId: c.id)
+        }
+    }
+
+    private func reportReducedAccuracy(_ c: SessionConfig) {
+        Log.info("permission", "location accuracy reduced to approximate for session \(c.id)", sessionId: c.id)
+        events.emitStickyError(code: "ACCURACY_REDUCED", message: "Precise location is off; fixes are approximate and arrival cannot trigger")
     }
 
     private func validationMessage(_ code: String) -> String {

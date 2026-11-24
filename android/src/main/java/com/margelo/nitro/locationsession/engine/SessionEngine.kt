@@ -49,6 +49,7 @@ object SessionEngine {
     private var lastFix: Fix? = null
     private var stopping = false
     private var expiryRunnable: Runnable? = null
+    private var updatesRequestedForServiceStart = false
 
     val activeConfig: SessionConfig? get() = config
     val isActive: Boolean get() = config != null
@@ -207,6 +208,13 @@ object SessionEngine {
         uploader.whenSettled(settled)
     }
 
+    fun rearmExpiryAlarm(ctx: Context) {
+        val context = init(ctx)
+        val c = config ?: return
+        ElsLog.info("stop", "exact alarm permission changed; re-arming the expiry alarm", mapOf("canScheduleExactAlarms" to LaunchGate.canScheduleExactAlarms(context)), c.id)
+        scheduleAlarm(context, c)
+    }
+
     fun resumeIfNeeded(ctx: Context) {
         val context = init(ctx)
         if (config != null) return
@@ -241,6 +249,14 @@ object SessionEngine {
         }
     }
 
+    fun refreshUpdates(ctx: Context) {
+        if (updatesRequestedForServiceStart) {
+            updatesRequestedForServiceStart = false
+            return
+        }
+        config?.let { requestUpdates(ctx, it) }
+    }
+
     private fun activate(ctx: Context, c: SessionConfig, startedAt: Long, pending: Fix?, lastUploadAt: Long?) {
         config = c
         startedAtMs = startedAt
@@ -250,12 +266,14 @@ object SessionEngine {
         uploader.begin(c, lastFix, lastUploadAt)
         startService(ctx)
         requestUpdates(ctx, c)
+        updatesRequestedForServiceStart = LaunchGate.startPending
         scheduleExpiry(ctx, c)
     }
 
     private fun teardown(ctx: Context, c: SessionConfig, reason: StopReason?) {
         expiryRunnable?.let { main.removeCallbacks(it) }
         expiryRunnable = null
+        updatesRequestedForServiceStart = false
         cancelAlarm(ctx)
         LaunchGate.clear(ctx)
         removeUpdates(ctx)
@@ -328,7 +346,17 @@ object SessionEngine {
 
     private fun scheduleAlarm(ctx: Context, c: SessionConfig) {
         val alarms = ctx.getSystemService(AlarmManager::class.java) ?: return
+        if (LaunchGate.canScheduleExactAlarms(ctx)) {
+            try {
+                alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, c.expiresAtMs, alarmIntent(ctx))
+                ElsLog.info("stop", "exact expiry alarm set", mapOf("exact" to true, "expiresAtMs" to c.expiresAtMs), c.id)
+                return
+            } catch (e: SecurityException) {
+                ElsLog.info("stop", "exact expiry alarm denied: ${e.javaClass.simpleName}", sessionId = c.id, level = "warn")
+            }
+        }
         alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, c.expiresAtMs, alarmIntent(ctx))
+        ElsLog.info("stop", "inexact expiry alarm set", mapOf("exact" to false, "expiresAtMs" to c.expiresAtMs), c.id)
     }
 
     private fun cancelAlarm(ctx: Context) {

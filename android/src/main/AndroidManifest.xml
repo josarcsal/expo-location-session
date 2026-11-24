@@ -17,7 +17,12 @@
       android:stopWithTask="false" />
     <receiver
       android:name="com.margelo.nitro.locationsession.engine.LaunchGate"
-      android:exported="false" />
+      android:exported="false">
+      <intent-filter>
+        <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+        <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
+      </intent-filter>
+    </receiver>
     <provider
       android:name="com.margelo.nitro.locationsession.engine.SessionInitProvider"
       android:authorities="${applicationId}.expolocationsession.init"

@@ -112,6 +112,12 @@ private let here = Destination(latitude: 40.4168, longitude: -3.7038, radiusMete
         #expect(classify(status: 100) == .retry)
     }
 
+    @Test func redirectsRetry() {
+        for status in [301, 302, 303, 307, 308] {
+            #expect(classify(status: status) == .retry)
+        }
+    }
+
     @Test func backoffCapsAtSixtySeconds() {
         #expect((0...5).map(backoffMs) == [5000, 10000, 20000, 40000, 60000, 60000])
     }
@@ -178,5 +184,31 @@ private let here = Destination(latitude: 40.4168, longitude: -3.7038, radiusMete
     func malformedExtrasBecomeEmptyObject(extras: String) throws {
         let body = try decode(buildBody(sessionId: "s1", fix: fix(), battery: nil, extrasJson: extras))
         #expect((body["extras"] as? [String: Any])?.isEmpty == true)
+    }
+}
+
+@Suite struct TerminateRadiusTests {
+    @Test func freshAccurateFixGivesFloor() {
+        #expect(terminateRadius(fix(acc: 10, ts: 1_000), nowMs: 1_000) == 150)
+        #expect(terminateRadius(fix(acc: 149, ts: 1_000), nowMs: 1_000) == 150)
+    }
+
+    @Test func poorAccuracyIsAdded() {
+        #expect(terminateRadius(fix(acc: 150, ts: 1_000), nowMs: 1_000) == 300)
+        #expect(terminateRadius(fix(acc: 400, ts: 1_000), nowMs: 1_000) == 550)
+    }
+
+    @Test func speedTimesAgeGrowsIt() {
+        var f = fix(acc: 10, ts: 1_000)
+        f.speed = 10
+        #expect(terminateRadius(f, nowMs: 31_000) == 450)
+        #expect(terminateRadius(f, nowMs: 0) == 150)
+    }
+
+    @Test func capsAt1000() {
+        var f = fix(acc: 400, ts: 0)
+        f.speed = 30
+        #expect(terminateRadius(f, nowMs: 60_000) == 1000)
+        #expect(terminateRadius(fix(acc: 5000, ts: 0), nowMs: 0) == 1000)
     }
 }
