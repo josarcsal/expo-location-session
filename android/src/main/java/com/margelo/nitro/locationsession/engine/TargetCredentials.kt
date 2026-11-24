@@ -8,14 +8,14 @@ data class Credentials(val headers: Map<String, String>, val refreshHeaders: Map
 class TargetCredentials(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences("expo_location_session_targets", Context.MODE_PRIVATE)
 
-    fun save(sessionId: String, headers: Map<String, String>, refreshHeaders: Map<String, String>) {
+    fun save(sessionId: String, headers: Map<String, String>, refreshHeaders: Map<String, String>): Boolean {
         val json = JSONObject()
             .put("headers", JSONObject(headers))
             .put("refreshHeaders", JSONObject(refreshHeaders))
             .toString()
-        if (!prefs.edit().putString(key(sessionId), json).commit()) {
-            ElsLog.debug("auth", "credentials not persisted", sessionId = sessionId, level = "warn")
-        }
+        val saved = prefs.edit().putString(key(sessionId), json).commit()
+        if (!saved) ElsLog.debug("auth", "credentials not persisted", sessionId = sessionId, level = "warn")
+        return saved
     }
 
     fun load(sessionId: String): Credentials? {

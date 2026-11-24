@@ -34,7 +34,7 @@ import java.util.concurrent.TimeUnit
 class Uploader(
     context: Context,
     private val store: SessionStore,
-    private val queue: QueueStore,
+    private val queue: QueueDatabase,
     private val credentials: TargetCredentials,
     private val events: EventBus
 ) {
@@ -68,7 +68,8 @@ class Uploader(
         this.lastSuccessMs = lastSuccessMs
         if (c.sync.mode != QueueMode.LATEST) return
         val fix = pending?.let(::sanitized) ?: return
-        if (queue.latestPending(c.id) != null) return
+        val q = queue.store() ?: return
+        if (q.latestPending(c.id) != null) return
         enqueue(fix, c)
     }
 
@@ -77,7 +78,7 @@ class Uploader(
         epoch += 1
         if (inFlightRows.isNotEmpty()) {
             val c = config
-            if (c != null) giveBack(inFlightRows, c) else queue.release(inFlightRows)
+            if (c != null) giveBack(inFlightRows, c) else queue.store()?.release(inFlightRows)
         }
         inFlightRows = emptyList()
         inFlight = false
@@ -170,8 +171,13 @@ class Uploader(
             ElsLog.debug("queue", "could not encode location", mapOf("fixTimestamp" to fix.timestampMs), c.id, level = "warn")
             return 0
         }
+        val q = queue.store()
+        if (q == null) {
+            ElsLog.debug("queue", "database unavailable; location dropped", mapOf("fixTimestamp" to fix.timestampMs), c.id, level = "warn")
+            return 0
+        }
         return try {
-            val trimmed = queue.insert(c.id, uuid, fix.timestampMs, body, c.sync.mode, c.sync.maxRecords)
+            val trimmed = q.insert(c.id, uuid, fix.timestampMs, body, c.sync.mode, c.sync.maxRecords)
             ElsLog.debug("queue", "inserted", mapOf("mode" to c.sync.mode.wire, "fixTimestamp" to fix.timestampMs, "trimmed" to trimmed), c.id)
             if (trimmed > 0) {
                 ElsLog.debug("queue", "trimmed", mapOf("rows" to trimmed, "maxRecords" to c.sync.maxRecords), c.id, level = "warn")
@@ -183,20 +189,22 @@ class Uploader(
         }
     }
 
-    private fun generation(c: SessionConfig): Long = queue.latestPending(c.id)?.id ?: 0L
+    private fun generation(c: SessionConfig): Long = queue.store()?.latestPending(c.id)?.id ?: 0L
 
-    private fun hasPending(c: SessionConfig): Boolean = queue.latestPending(c.id) != null
+    private fun hasPending(c: SessionConfig): Boolean = queue.store()?.latestPending(c.id) != null
 
     private fun syncPendingFix(c: SessionConfig) {
         if (c.sync.mode != QueueMode.LATEST) return
-        store.pendingFix = queue.latestPending(c.id)?.let { decodeFix(it.body) }
+        val q = queue.store() ?: return
+        store.pendingFix = q.latestPending(c.id)?.let { decodeFix(it.body) }
     }
 
     private fun giveBack(ids: List<Long>, c: SessionConfig) {
-        if (c.sync.mode == QueueMode.LATEST && queue.latestPending(c.id) != null) {
-            queue.delete(ids)
+        val q = queue.store() ?: return
+        if (c.sync.mode == QueueMode.LATEST && q.latestPending(c.id) != null) {
+            q.delete(ids)
         } else {
-            queue.release(ids)
+            q.release(ids)
         }
     }
 
@@ -272,19 +280,20 @@ class Uploader(
 
     private fun send() {
         val c = config
-        if (c == null) {
+        val q = queue.store()
+        if (c == null || q == null) {
             completeFlush()
             return
         }
         cancelTimer()
         epoch += 1
-        var rows = queue.claim(c.id, if (c.sync.mode == QueueMode.LATEST) 1 else batchLimit(c.sync))
+        var rows = q.claim(c.id, if (c.sync.mode == QueueMode.LATEST) 1 else batchLimit(c.sync))
         if (c.sync.mode == QueueMode.LATEST) {
-            while (rows.isNotEmpty() && queue.latestPending(c.id) != null) {
+            while (rows.isNotEmpty() && q.latestPending(c.id) != null) {
                 val row = rows.first()
-                queue.delete(listOf(row.id))
+                q.delete(listOf(row.id))
                 ElsLog.debug("queue", "superseded row deleted", mapOf("fixTimestamp" to row.fixTs), c.id)
-                rows = queue.claim(c.id, 1)
+                rows = q.claim(c.id, 1)
             }
         }
         if (rows.isEmpty()) {
@@ -304,7 +313,7 @@ class Uploader(
             }
         }
         if (unreadable.isNotEmpty()) {
-            queue.delete(unreadable.map { it.id })
+            q.delete(unreadable.map { it.id })
             for (row in unreadable) {
                 ElsLog.debug("queue", "unreadable row deleted", mapOf("fixTimestamp" to row.fixTs, "attempts" to row.attempts), c.id, level = "warn")
                 events.emit(
@@ -427,7 +436,7 @@ class Uploader(
         cancelSendWatchdog()
         val c = config
         if (c == null) {
-            if (rows.isNotEmpty()) queue.release(rows)
+            if (rows.isNotEmpty()) queue.store()?.release(rows)
             notifySettled()
             return
         }
@@ -452,14 +461,14 @@ class Uploader(
 
         when (action) {
             SyncAction.DeleteSent -> {
-                queue.delete(rows)
+                queue.store()?.delete(rows)
                 syncPendingFix(c)
                 lastSuccessMs = at
                 store.lastUploadAtMs = at
                 attempt = 0
             }
             SyncAction.DropSent -> {
-                queue.delete(rows)
+                queue.store()?.delete(rows)
                 syncPendingFix(c)
                 attempt = 0
                 val message = if (rows.size == 1) {
