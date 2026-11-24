@@ -76,4 +76,16 @@ import Testing
         #expect(validateSync(SyncConfig(templateJson: "[1]"), extrasJson: "{}") == "template: must be a JSON object")
         #expect(validateSync(SyncConfig(mode: .latest, templateJson: #"{"a":"{{id}}"}"#), extrasJson: "{}") == nil)
     }
+
+    @Test func nonFiniteValueRendersAsNull() throws {
+        let bad = FixRecord(uuid: "u-1", sessionId: "s1", fix: Fix(latitude: 1.5, longitude: 2.5, accuracy: 7, speed: .nan, timestampMs: 1), battery: nil)
+        let o = try obj(renderTemplate(#"{"speed":"{{speed}}","lat":"{{latitude}}","s":"v={{speed}}"}"#, record: bad, extrasJson: "{}"))
+        #expect(o["speed"] is NSNull)
+        #expect(o["lat"] as? Double == 1.5)
+        #expect(o["s"] as? String == "v=")
+    }
+
+    @Test func trailingInputIsRejected() {
+        #expect(validateTemplate(#"{"a":1} xyz"#, extrasJson: "{}") == "must be a JSON object")
+    }
 }

@@ -89,6 +89,12 @@ private func lookup(_ name: String, _ record: FixRecord, _ extras: [String: Any]
         let value = extras[String(name.dropFirst("extras.".count))]
         return value is NSNull ? nil : value
     }
+    guard let value = rawLookup(name, record) else { return nil }
+    if let d = value as? Double, !d.isFinite { return NSNull() }
+    return value
+}
+
+private func rawLookup(_ name: String, _ record: FixRecord) -> Any? {
     switch name {
     case "id": return record.uuid
     case "sessionId": return record.sessionId
@@ -150,6 +156,7 @@ private func render(_ node: Any, _ record: FixRecord, _ extras: [String: Any]) -
 public func renderTemplate(_ json: String, record: FixRecord, extrasJson: String) -> String {
     guard let root = parseObject(json),
           let rendered = render(root, record, parseObject(extrasJson) ?? [:]),
+          JSONSerialization.isValidJSONObject(rendered),
           let data = try? JSONSerialization.data(withJSONObject: rendered, options: [.withoutEscapingSlashes]),
           let out = String(data: data, encoding: .utf8) else { return "{}" }
     return out

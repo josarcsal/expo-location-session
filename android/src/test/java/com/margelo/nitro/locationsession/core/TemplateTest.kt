@@ -102,4 +102,19 @@ class TemplateTest {
         assertEquals("template: must be a JSON object", validateSync(SyncConfig(templateJson = "[1]"), "{}"))
         assertNull(validateSync(SyncConfig(mode = QueueMode.LATEST, templateJson = """{"a":"{{id}}"}"""), "{}"))
     }
+
+    @Test
+    fun nonFiniteValueRendersAsNull() {
+        val bad = FixRecord("u-1", "s1", Fix(latitude = 1.5, longitude = 2.5, accuracy = 7.0, speed = Double.NaN, timestampMs = 1), null)
+        val o = obj(renderTemplate("""{"speed":"{{speed}}","lat":"{{latitude}}","s":"v={{speed}}"}""", bad, "{}"))
+        assertTrue(o.has("speed"))
+        assertTrue(o.isNull("speed"))
+        assertEquals(1.5, (o.get("lat") as Number).toDouble(), 0.0)
+        assertEquals("v=", o.getString("s"))
+    }
+
+    @Test
+    fun trailingInputIsRejected() {
+        assertEquals("must be a JSON object", validateTemplate("""{"a":1} xyz""", "{}"))
+    }
 }

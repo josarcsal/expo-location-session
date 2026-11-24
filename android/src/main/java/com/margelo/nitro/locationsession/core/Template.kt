@@ -49,7 +49,9 @@ private fun segmentsOf(s: String): List<Segment>? {
 
 private fun parseObject(json: String): JSONObject? =
     try {
-        JSONTokener(json).nextValue() as? JSONObject
+        val tokener = JSONTokener(json)
+        val value = tokener.nextValue() as? JSONObject
+        if (value != null && tokener.nextClean() != 0.toChar()) null else value
     } catch (e: Exception) {
         null
     }
@@ -92,6 +94,11 @@ private fun lookup(name: String, r: FixRecord, extras: JSONObject): Any? {
         val v = extras.opt(name.substring(EXTRAS_PREFIX.length))
         return if (v == null || v == JSONObject.NULL) null else v
     }
+    val value = rawLookup(name, r)
+    return if (value is Double && !value.isFinite()) JSONObject.NULL else value
+}
+
+private fun rawLookup(name: String, r: FixRecord): Any? {
     return when (name) {
         "id" -> r.uuid
         "sessionId" -> r.sessionId
@@ -132,7 +139,7 @@ private fun render(node: Any?, r: FixRecord, extras: JSONObject): Any? {
             for (seg in segs) {
                 when (seg) {
                     is Segment.Text -> sb.append(seg.value)
-                    is Segment.Placeholder -> lookup(seg.name, r, extras)?.let { sb.append(it.toString()) }
+                    is Segment.Placeholder -> lookup(seg.name, r, extras)?.let { if (it != JSONObject.NULL) sb.append(it.toString()) }
                 }
             }
             return sb.toString()
