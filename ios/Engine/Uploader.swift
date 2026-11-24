@@ -31,6 +31,7 @@ final class Uploader {
     private var inFlight: URLSessionDataTask?
     private var inFlightRows: [Int64] = []
     private var refreshing = false
+    private var refreshStartedAt: Int64 = 0
     private var refreshed: Set<String> = []
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var timer: Timer?
@@ -323,7 +324,7 @@ final class Uploader {
         flushId += 1
         inFlight?.cancel()
         if refreshing {
-            completeRefresh(status: nil, body: Data(), error: detail["error"] as? String)
+            completeRefresh(status: nil, body: Data(), error: detail["error"] as? String, latencyMs: nowMs() - refreshStartedAt)
         } else {
             complete(status: nil, detail: detail)
         }
@@ -440,6 +441,7 @@ final class Uploader {
         }
         inFlight = task
         refreshing = true
+        refreshStartedAt = startedAt
         startWatchdog(sentId, startedAt: startedAt)
         task.resume()
     }
@@ -467,8 +469,14 @@ final class Uploader {
             send()
             return
         }
-        let message = status.map { "Refresh rejected: server responded \($0) without usable headers" } ?? "Refresh transport failure: \(error ?? "no response")"
-        refreshFailed(c, rejected: status != nil, message: message, data: ["status": status ?? NSNull(), "latencyMs": latencyMs ?? NSNull(), "error": error ?? NSNull()])
+        let rejected = status.map { !(300..<400).contains($0) } ?? false
+        let message: String
+        if let status {
+            message = rejected ? "Refresh rejected: server responded \(status) without usable headers" : "Refresh transport failure: redirect \(status) refused"
+        } else {
+            message = "Refresh transport failure: no response"
+        }
+        refreshFailed(c, rejected: rejected, message: message, data: ["status": status ?? NSNull(), "latencyMs": latencyMs ?? NSNull(), "error": error ?? NSNull()])
     }
 
     private func refreshFailed(_ c: SessionConfig, rejected: Bool, message: String, data: [String: Any]) {

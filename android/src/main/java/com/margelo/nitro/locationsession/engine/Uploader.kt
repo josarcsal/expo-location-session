@@ -563,8 +563,13 @@ class Uploader(
         }
         val result = parseRefreshResponse(status, body)
         if (result == null) {
-            val message = if (status != null) "Refresh rejected: server responded $status without usable headers" else "Refresh transport failure: no response"
-            refreshFailed(c, status != null, message, mapOf("status" to status, "durationMs" to durationMs))
+            val rejected = status != null && status !in 300..399
+            val message = when {
+                status == null -> "Refresh transport failure: no response"
+                rejected -> "Refresh rejected: server responded $status without usable headers"
+                else -> "Refresh transport failure: redirect $status refused"
+            }
+            refreshFailed(c, rejected, message, mapOf("status" to status, "durationMs" to durationMs))
             return
         }
         val refreshHeaders = result.refreshHeaders ?: credentials.load(c.id)?.refreshHeaders ?: c.sync.refresh?.headers ?: emptyMap()
