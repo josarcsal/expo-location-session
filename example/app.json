@@ -31,7 +31,8 @@
         {
           "locationWhenInUseText": "Shares your location with the host during an active session.",
           "locationAlwaysText": "Keeps sharing your location during an active session when the app is in the background.",
-          "androidNotificationIcon": "./assets/notification-icon.png"
+          "androidNotificationIcon": "./assets/notification-icon.png",
+          "backgroundSync": true
         }
       ],
       "./plugins/with-dev-ca"

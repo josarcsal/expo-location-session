@@ -130,3 +130,13 @@ class StopQueueActionTest {
         assertEquals(StopQueueAction.DELETE_ROWS_DROPPED, stopQueueAction(QueueMode.ALL, StopReason.REJECTED))
     }
 }
+
+class BackgroundSyncGateTest {
+    @Test
+    fun gate() {
+        assertTrue(shouldScheduleSync(true, 1, false))
+        assertFalse(shouldScheduleSync(false, 1, false))
+        assertFalse(shouldScheduleSync(true, 0, false))
+        assertFalse(shouldScheduleSync(true, 5, true))
+    }
+}

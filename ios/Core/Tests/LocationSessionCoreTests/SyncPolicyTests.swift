@@ -99,3 +99,12 @@ import Testing
         #expect(stopQueueAction(mode: .all, reason: .rejected) == .deleteRowsDropped)
     }
 }
+
+@Suite struct BackgroundSyncGateTests {
+    @Test func gate() {
+        #expect(shouldScheduleSync(enabled: true, pending: 1, sessionRunning: false))
+        #expect(!shouldScheduleSync(enabled: false, pending: 1, sessionRunning: false))
+        #expect(!shouldScheduleSync(enabled: true, pending: 0, sessionRunning: false))
+        #expect(!shouldScheduleSync(enabled: true, pending: 5, sessionRunning: true))
+    }
+}

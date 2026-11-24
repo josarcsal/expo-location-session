@@ -74,3 +74,8 @@ class ConnectivityEdge {
         return regained
     }
 }
+
+const val QUEUE_SYNC_WORK = "els-queue-sync"
+
+fun shouldScheduleSync(enabled: Boolean, pending: Int, sessionRunning: Boolean): Boolean =
+    enabled && pending > 0 && !sessionRunning

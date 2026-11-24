@@ -245,6 +245,9 @@ final class Uploader {
             attempt += 1
             Log.debug("sync", "drain retry scheduled", data: ["backoffMs": delay])
             startTimer(afterMs: delay) { [weak self] in self?.drain(budgetMs: nil) { _ in } }
+            if BackgroundSync.isPermitted {
+                BackgroundSync.submitIfNeeded(pending: db.store()?.status().pending ?? 0, sessionRunning: false)
+            }
         }
         if p.requests > 0 { resumeRunning() }
         if dirty, inFlight == nil, flushCompletion == nil {

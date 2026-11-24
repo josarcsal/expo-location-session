@@ -15,6 +15,11 @@
 }
 
 + (void)load {
+  Class bootstrap = NSClassFromString(@"ELSBootstrap");
+  SEL registerTasks = NSSelectorFromString(@"registerBackgroundTasks");
+  if ([bootstrap respondsToSelector:registerTasks]) {
+    ((void (*)(id, SEL))[bootstrap methodForSelector:registerTasks])(bootstrap, registerTasks);
+  }
   [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidFinishLaunchingNotification
                                                     object:nil
                                                      queue:nil

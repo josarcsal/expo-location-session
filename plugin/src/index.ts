@@ -18,11 +18,14 @@ export type LocationSessionPluginProps = {
   locationAlwaysText?: string;
   enableBackgroundLocationPermission?: boolean;
   androidNotificationIcon?: string;
+  backgroundSync?: boolean;
 };
 
 const DEFAULT_WHEN_IN_USE_TEXT = 'Allow $(PRODUCT_NAME) to access your location';
 const DEFAULT_ALWAYS_TEXT = 'Allow $(PRODUCT_NAME) to access your location in the background';
 const ICON_NAME = 'expo_location_session_notification_icon';
+const QUEUE_SYNC_IDENTIFIER = '$(PRODUCT_BUNDLE_IDENTIFIER).els.queue-sync';
+const BACKGROUND_SYNC_META_DATA = 'expo-location-session.backgroundSync';
 
 const withIos: ConfigPlugin<LocationSessionPluginProps> = (config, props) =>
   withInfoPlist(config, (cfg) => {
@@ -32,7 +35,25 @@ const withIos: ConfigPlugin<LocationSessionPluginProps> = (config, props) =>
     plist.NSLocationAlwaysAndWhenInUseUsageDescription =
       props.locationAlwaysText ?? plist.NSLocationAlwaysAndWhenInUseUsageDescription ?? DEFAULT_ALWAYS_TEXT;
     const modes: string[] = Array.isArray(plist.UIBackgroundModes) ? plist.UIBackgroundModes : [];
-    if (!modes.includes('location')) plist.UIBackgroundModes = [...modes, 'location'];
+    const required = props.backgroundSync ? ['location', 'processing'] : ['location'];
+    const missing = required.filter((mode) => !modes.includes(mode));
+    if (missing.length > 0) plist.UIBackgroundModes = [...modes, ...missing];
+    if (props.backgroundSync) {
+      const current = plist.BGTaskSchedulerPermittedIdentifiers;
+      const identifiers = Array.isArray(current) ? current : [];
+      if (!identifiers.includes(QUEUE_SYNC_IDENTIFIER))
+        plist.BGTaskSchedulerPermittedIdentifiers = [...identifiers, QUEUE_SYNC_IDENTIFIER];
+    }
+    return cfg;
+  });
+
+const withAndroidBackgroundSync: ConfigPlugin = (config) =>
+  withAndroidManifest(config, (cfg) => {
+    AndroidConfig.Manifest.addMetaDataItemToMainApplication(
+      AndroidConfig.Manifest.getMainApplicationOrThrow(cfg.modResults),
+      BACKGROUND_SYNC_META_DATA,
+      'true',
+    );
     return cfg;
   });
 
@@ -168,6 +189,7 @@ const withLocationSession: ConfigPlugin<LocationSessionPluginProps | void> = (co
   config = withIos(config, options);
   if (options.enableBackgroundLocationPermission ?? true) config = withBackgroundPermission(config);
   config = withBackupRules(config);
+  if (options.backgroundSync) config = withAndroidBackgroundSync(config);
   if (options.androidNotificationIcon) config = withNotificationIcon(config, options.androidNotificationIcon);
   return config;
 };

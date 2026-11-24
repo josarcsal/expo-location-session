@@ -4,6 +4,10 @@ import UIKit
 
 @objc(ELSBootstrap)
 final class ELSBootstrap: NSObject {
+    @objc static func registerBackgroundTasks() {
+        BackgroundSync.register()
+    }
+
     @objc(didFinishLaunching:launchKeys:)
     static func didFinishLaunching(_ location: NSNumber?, launchKeys: NSArray?) {
         let locationLaunch = location?.boolValue ?? false

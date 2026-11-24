@@ -178,6 +178,11 @@ object SessionEngine {
         uploader.drain(budgetMs, completion)
     }
 
+    fun cancelSync(ctx: Context) {
+        init(ctx)
+        uploader.cancelDrain(true)
+    }
+
     fun clearQueue(ctx: Context) {
         init(ctx)
         uploader.cancelDrain(false)
@@ -383,7 +388,13 @@ object SessionEngine {
         ElsLog.info("stop", "stopped session ${c.id} reason=${reason.wire}", mapOf("reason" to reason.wire), c.id)
         DebugLogger.onStopping()
         events.emit("stop", JSONObject().put("reason", reason.wire).put("sessionId", c.id))
+        scheduleSync(ctx)
         uploader.drain(null) {}
+    }
+
+    private fun scheduleSync(ctx: Context) {
+        if (!QueueSync.isEnabled(ctx)) return
+        QueueSync.scheduleIfNeeded(ctx, queue.store()?.status()?.pending ?: 0, config != null)
     }
 
     private fun evaluate(ctx: Context, fix: Fix?) {

@@ -246,6 +246,7 @@ class Uploader(
             attempt += 1
             ElsLog.debug("sync", "drain retry scheduled", mapOf("backoffMs" to delay))
             startTimer(delay) { drain(null) {} }
+            if (QueueSync.isEnabled(appContext)) QueueSync.scheduleIfNeeded(appContext, queue.store()?.status()?.pending ?: 0, false)
         }
         if (p.requests > 0) resumeRunning()
         if (dirty && !inFlight && flushCompletion == null) {

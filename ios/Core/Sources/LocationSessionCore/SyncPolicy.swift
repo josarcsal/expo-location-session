@@ -79,3 +79,9 @@ public struct ConnectivityEdge {
         return satisfied == false && now
     }
 }
+
+public let queueSyncIdentifierSuffix = ".els.queue-sync"
+
+public func shouldScheduleSync(enabled: Bool, pending: Int, sessionRunning: Bool) -> Bool {
+    enabled && pending > 0 && !sessionRunning
+}

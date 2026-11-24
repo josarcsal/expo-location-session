@@ -50,6 +50,11 @@ final class SessionEngine {
         _ = NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
             self?.uploader.drain(budgetMs: nil) { _ in }
         }
+        if BackgroundSync.isPermitted {
+            _ = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+                self?.submitBackgroundSync()
+            }
+        }
     }
 
     func start(_ c: SessionConfig) throws {
@@ -113,7 +118,13 @@ final class SessionEngine {
         Log.info("stop", "stopped session \(c.id) reason=\(reason.rawValue)", sessionId: c.id)
         DebugLogger.shared.onStopping()
         events.emit(.stop, ["reason": reason.rawValue, "sessionId": c.id])
+        submitBackgroundSync()
         uploader.drain(budgetMs: nil) { _ in }
+    }
+
+    func submitBackgroundSync() {
+        guard BackgroundSync.isPermitted else { return }
+        BackgroundSync.submitIfNeeded(pending: queue.store()?.status().pending ?? 0, sessionRunning: config != nil)
     }
 
     func queueStatus() throws -> QueueStatus {
