@@ -63,5 +63,8 @@ public func validateSync(_ s: SyncConfig, extrasJson: String) -> String? {
             if !(parsed is [String: Any]) { return "auth.refresh.body must be a JSON object" }
         }
     }
+    if let t = s.templateJson, let reason = validateTemplate(t, extrasJson: extrasJson) {
+        return "template: \(reason)"
+    }
     return nil
 }

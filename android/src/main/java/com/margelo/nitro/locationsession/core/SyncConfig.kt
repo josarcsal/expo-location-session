@@ -88,5 +88,9 @@ fun validateSync(s: SyncConfig, extrasJson: String): String? {
             if (!ok) return "auth.refresh.body must be a JSON object"
         }
     }
+    if (s.templateJson != null) {
+        val reason = validateTemplate(s.templateJson, extrasJson)
+        if (reason != null) return "template: $reason"
+    }
     return null
 }
