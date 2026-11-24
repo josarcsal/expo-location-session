@@ -56,3 +56,54 @@ test('backgroundSync adds the Android meta-data once and only when on', async ()
   assert.deepEqual(metaData(twice), [META_DATA]);
   assert.deepEqual(metaData(await manifest({})), []);
 });
+
+const BOOT = 'android.permission.RECEIVE_BOOT_COMPLETED';
+const STARTUP = 'androidx.startup.InitializationProvider';
+const INITIALIZER = 'androidx.work.WorkManagerInitializer';
+
+const bootPermissions = (result) =>
+  (result.manifest['uses-permission'] ?? []).map((item) => item.$).filter((item) => item['android:name'] === BOOT);
+const startupProviders = (result) =>
+  (result.manifest.application[0].provider ?? []).filter((item) => item.$['android:name'] === STARTUP);
+
+test('backgroundSync off removes the WorkManager initializer and boot permission, once', async () => {
+  const once = await manifest({});
+  const twice = await manifest({}, structuredClone(once));
+  assert.deepEqual(twice, once);
+  assert.equal(once.manifest.$['xmlns:tools'], 'http://schemas.android.com/tools');
+  assert.deepEqual(bootPermissions(once), [{ 'android:name': BOOT, 'tools:node': 'remove' }]);
+  const providers = startupProviders(once);
+  assert.equal(providers.length, 1);
+  assert.equal(providers[0].$['tools:node'], 'merge');
+  assert.equal(providers[0].$['android:authorities'], '${applicationId}.androidx-startup');
+  assert.deepEqual(
+    providers[0]['meta-data'].map((item) => item.$),
+    [{ 'android:name': INITIALIZER, 'android:value': 'androidx.startup', 'tools:node': 'remove' }],
+  );
+});
+
+test('backgroundSync off keeps a boot permission and startup provider the app declares itself', async () => {
+  const start = emptyManifest();
+  start.manifest['uses-permission'] = [{ $: { 'android:name': BOOT } }];
+  start.manifest.application[0].provider = [
+    {
+      $: { 'android:name': STARTUP, 'android:authorities': 'com.app.androidx-startup', 'android:exported': 'false' },
+      'meta-data': [{ $: { 'android:name': 'com.app.Init', 'android:value': 'androidx.startup' } }],
+    },
+  ];
+  const result = await manifest({}, start);
+  assert.deepEqual(bootPermissions(result), [{ 'android:name': BOOT }]);
+  const providers = startupProviders(result);
+  assert.equal(providers.length, 1);
+  assert.equal(providers[0].$['android:authorities'], 'com.app.androidx-startup');
+  assert.deepEqual(
+    providers[0]['meta-data'].map((item) => item.$['android:name']),
+    ['com.app.Init', INITIALIZER],
+  );
+});
+
+test('backgroundSync on leaves WorkManager in the merged manifest', async () => {
+  const result = await manifest({ backgroundSync: true });
+  assert.deepEqual(bootPermissions(result), []);
+  assert.deepEqual(startupProviders(result), []);
+});
