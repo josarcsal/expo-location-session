@@ -2,14 +2,17 @@ package com.margelo.nitro.locationsession.engine
 
 import android.content.Context
 import android.database.Cursor
+import android.database.sqlite.SQLiteCursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import android.database.sqlite.SQLiteProgram
 import com.margelo.nitro.locationsession.core.BatchConfig
 import com.margelo.nitro.locationsession.core.PurgeResult
 import com.margelo.nitro.locationsession.core.QueueMode
 import com.margelo.nitro.locationsession.core.QueueStatus
 import com.margelo.nitro.locationsession.core.QueueTarget
 import com.margelo.nitro.locationsession.core.QueuedRow
+import com.margelo.nitro.locationsession.core.parseObject
 import com.margelo.nitro.locationsession.core.trimCount
 import java.io.File
 import org.json.JSONObject
@@ -73,7 +76,7 @@ class QueueStore(context: Context, file: File) {
     fun close() = helper.close()
 
     @Synchronized
-    fun recoverInFlight(): Int = attempt(0) { run("UPDATE fixes SET state = 0 WHERE state = 1") }
+    fun recoverInFlight(): Int = attempt(-1) { run("UPDATE fixes SET state = 0 WHERE state = 1") }
 
     @Synchronized
     fun saveTarget(t: QueueTarget) {
@@ -99,17 +102,21 @@ class QueueStore(context: Context, file: File) {
     }
 
     @Synchronized
-    fun target(sessionId: String): QueueTarget? = attempt(null) {
+    fun target(sessionId: String): QueueTarget? = attempt(null) { readTarget(sessionId) }
+
+    @Synchronized
+    fun readTarget(sessionId: String): QueueTarget? = try {
         query("SELECT url, refresh, batch, extras, mode, max_age_ms, ended FROM targets WHERE session_id = ?", sessionId) { c ->
-            val refresh = c.getStringOrNull(1)?.let { runCatching { JSONObject(it) }.getOrNull() }
+            val refresh = c.getStringOrNull(1)?.let(::parseObject)
             val mode = c.getStringOrNull(4)?.let(QueueMode::fromWire) ?: return@query null
+            val rawBatch = c.getStringOrNull(2)
+            val batch = rawBatch?.let(::batchOf)
+            if (rawBatch != null && batch == null) return@query null
             QueueTarget(
                 sessionId = sessionId,
                 url = c.getStringOrNull(0) ?: "",
                 mode = mode,
-                batch = c.getStringOrNull(2)?.let { raw ->
-                    runCatching { JSONObject(raw).let { BatchConfig(it.getInt("maxSize"), it.getString("rootProperty")) } }.getOrNull()
-                },
+                batch = batch,
                 extrasJson = c.getStringOrNull(3) ?: "{}",
                 maxAgeMs = c.getLong(5),
                 refreshUrl = refresh?.optString("url")?.takeIf { refresh.has("url") },
@@ -117,6 +124,8 @@ class QueueStore(context: Context, file: File) {
                 ended = c.getLong(6) != 0L
             )
         }.firstOrNull()
+    } catch (e: Exception) {
+        throw QueueStoreException(e.message ?: "read failed", e)
     }
 
     @Synchronized
@@ -157,9 +166,14 @@ class QueueStore(context: Context, file: File) {
     fun release(ids: List<Long>): Boolean = updateIds(ids, "UPDATE fixes SET state = 0 WHERE id IN")
 
     @Synchronized
-    fun existing(ids: List<Long>): Set<Long> = attempt(ids.toSet()) {
+    fun existing(ids: List<Long>, sessionId: String? = null): Set<Long> = attempt(ids.toSet()) {
         ids.chunked(500).flatMap { chunk ->
-            query("SELECT id FROM fixes WHERE id IN (${chunk.joinToString(",") { "?" }})", *chunk.toTypedArray()) { it.getLong(0) }
+            val marks = chunk.joinToString(",") { "?" }
+            if (sessionId == null) {
+                query("SELECT id FROM fixes WHERE id IN ($marks)", *chunk.toTypedArray()) { it.getLong(0) }
+            } else {
+                query("SELECT id FROM fixes WHERE id IN ($marks) AND session_id = ?", *chunk.toTypedArray(), sessionId) { it.getLong(0) }
+            }
         }.toSet()
     }
 
@@ -170,8 +184,14 @@ class QueueStore(context: Context, file: File) {
             rows = run("DELETE FROM fixes WHERE session_id = ?", sessionId)
             run("DELETE FROM targets WHERE session_id = ?", sessionId)
         }
-        return if (failure == null) rows else 0
+        return if (failure == null) rows else -1
     }
+
+    @Synchronized
+    fun probeWrite(): Boolean = transaction {
+        run("INSERT INTO fixes (uuid, session_id, fix_ts, body, state, attempts) VALUES ('', '', 0, '', 1, 0)")
+        run("DELETE FROM fixes WHERE id = last_insert_rowid()")
+    } == null
 
     @Synchronized
     fun markEnded(sessionId: String) {
@@ -179,15 +199,17 @@ class QueueStore(context: Context, file: File) {
     }
 
     @Synchronized
-    fun endLeftovers(): List<String> {
+    fun endLeftovers(running: String? = null): List<String> {
         var removed: List<String> = emptyList()
         val failure = transaction {
-            removed = query("SELECT session_id FROM targets WHERE ended = 0 AND mode = 'latest' ORDER BY session_id") { it.getString(0) }
+            removed = query("SELECT session_id FROM targets WHERE ended = 0 AND mode = 'latest' AND session_id IS NOT ? ORDER BY session_id", running) {
+                it.getString(0)
+            }
             for (id in removed) {
                 run("DELETE FROM fixes WHERE session_id = ?", id)
                 run("DELETE FROM targets WHERE session_id = ?", id)
             }
-            run("UPDATE targets SET ended = 1 WHERE ended = 0")
+            run("UPDATE targets SET ended = 1 WHERE ended = 0 AND session_id IS NOT ?", running)
         }
         return if (failure == null) removed else emptyList()
     }
@@ -203,7 +225,11 @@ class QueueStore(context: Context, file: File) {
                 """.trimIndent(),
                 nowMs
             )
-            val unreadable = query("SELECT session_id FROM targets WHERE mode NOT IN ('latest', 'all') ORDER BY session_id") { it.getString(0) }
+            val badMode = query("SELECT session_id FROM targets WHERE mode NOT IN ('latest', 'all') ORDER BY session_id") { it.getString(0) }
+            val badBatch = query("SELECT session_id, batch FROM targets WHERE batch IS NOT NULL ORDER BY session_id") { it.getString(0) to it.getString(1) }
+                .filter { batchOf(it.second) == null }
+                .map { it.first }
+            val unreadable = (badMode + badBatch).distinct().sorted()
             for (id in unreadable) run("DELETE FROM targets WHERE session_id = ?", id)
             val orphans = run("DELETE FROM fixes WHERE state = 0 AND session_id NOT IN (SELECT session_id FROM targets)")
             val removed = query(
@@ -225,37 +251,24 @@ class QueueStore(context: Context, file: File) {
     }
 
     @Synchronized
-    fun latestPending(sessionId: String): QueuedRow? = attempt(null) {
+    fun latestPending(sessionId: String): QueuedRow? = attempt(null) { newestPending(sessionId) }
+
+    @Synchronized
+    fun newestPending(sessionId: String): QueuedRow? = try {
         query(
             "SELECT id, uuid, session_id, fix_ts, body, attempts FROM fixes WHERE session_id = ? AND state = 0 ORDER BY id DESC LIMIT 1",
             sessionId
         ) { it.toRow() }.firstOrNull()
+    } catch (e: Exception) {
+        throw QueueStoreException(e.message ?: "read failed", e)
     }
 
     @Synchronized
     fun status(excluding: Set<Long> = emptySet()): QueueStatus = attempt(QueueStatus(0, null, 0)) {
-        if (excluding.isEmpty()) {
-            query("SELECT COUNT(*), MIN(fix_ts), COUNT(DISTINCT session_id) FROM fixes") { c ->
-                QueueStatus(c.getInt(0), if (c.isNull(1)) null else c.getLong(1), c.getInt(2))
-            }.first()
-        } else {
-            var pending = 0
-            var oldestAt: Long? = null
-            query("SELECT COUNT(*), MIN(fix_ts) FROM fixes WHERE state = 0") { c ->
-                pending = c.getInt(0)
-                oldestAt = if (c.isNull(1)) null else c.getLong(1)
-            }
-            val sessions = query("SELECT DISTINCT session_id FROM fixes WHERE state = 0") { it.getString(0) }.toMutableSet()
-            query("SELECT id, fix_ts, session_id FROM fixes WHERE state = 1") { c ->
-                if (c.getLong(0) !in excluding) {
-                    val ts = c.getLong(1)
-                    pending += 1
-                    oldestAt = oldestAt?.let { minOf(it, ts) } ?: ts
-                    sessions.add(c.getString(2))
-                }
-            }
-            QueueStatus(pending, oldestAt, sessions.size)
-        }
+        val filter = if (excluding.isEmpty()) "" else " WHERE id NOT IN (${excluding.sorted().joinToString(",")})"
+        query("SELECT COUNT(*), MIN(fix_ts), COUNT(DISTINCT session_id) FROM fixes$filter") { c ->
+            QueueStatus(c.getInt(0), if (c.isNull(1)) null else c.getLong(1), c.getInt(2))
+        }.first()
     }
 
     @Synchronized
@@ -273,40 +286,52 @@ class QueueStore(context: Context, file: File) {
 
     private fun Cursor.toRow() = QueuedRow(getLong(0), getString(1), getString(2), getLong(3), getString(4), getInt(5))
 
+    private fun batchOf(raw: String): BatchConfig? =
+        parseObject(raw)?.let { runCatching { BatchConfig(it.getInt("maxSize"), it.getString("rootProperty")) }.getOrNull() }
+
     private fun <T> attempt(fallback: T, body: () -> T): T = try {
         body()
     } catch (e: Exception) {
         fallback
     }
 
+    private fun bind(p: SQLiteProgram, args: Array<out Any?>) {
+        args.forEachIndexed { i, a ->
+            val idx = i + 1
+            when (a) {
+                null -> p.bindNull(idx)
+                is String -> p.bindString(idx, a)
+                is Long -> p.bindLong(idx, a)
+                is Int -> p.bindLong(idx, a.toLong())
+                is Double -> p.bindDouble(idx, a)
+                else -> throw IllegalArgumentException("unsupported bind")
+            }
+        }
+    }
+
     private fun run(sql: String, vararg args: Any?): Int {
         val st = db.compileStatement(sql)
         try {
-            args.forEachIndexed { i, a ->
-                val idx = i + 1
-                when (a) {
-                    null -> st.bindNull(idx)
-                    is String -> st.bindString(idx, a)
-                    is Long -> st.bindLong(idx, a)
-                    is Int -> st.bindLong(idx, a.toLong())
-                    else -> throw IllegalArgumentException("unsupported bind")
-                }
-            }
+            bind(st, args)
             return st.executeUpdateDelete()
         } finally {
             st.close()
         }
     }
 
-    private fun <T> query(sql: String, vararg args: Any, map: (Cursor) -> T): List<T> {
-        db.rawQuery(sql, args.map { it.toString() }.toTypedArray()).use { c ->
+    private fun <T> query(sql: String, vararg args: Any?, map: (Cursor) -> T): List<T> {
+        val factory = SQLiteDatabase.CursorFactory { _, driver, table, q ->
+            bind(q, args)
+            SQLiteCursor(driver, table, q)
+        }
+        db.rawQueryWithFactory(factory, sql, null, "").use { c ->
             val out = ArrayList<T>()
             while (c.moveToNext()) out.add(map(c))
             return out
         }
     }
 
-    private fun scalar(sql: String, vararg args: Any): Long? = query(sql, *args) { it.getLong(0) }.firstOrNull()
+    private fun scalar(sql: String, vararg args: Any?): Long? = query(sql, *args) { it.getLong(0) }.firstOrNull()
 
     private fun transaction(body: () -> Unit): Exception? {
         try {

@@ -16,6 +16,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
+import org.junit.After
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -25,10 +26,29 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class QueueStoreTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
+    private val files = mutableListOf<File>()
+    private val stores = mutableListOf<QueueStore>()
 
-    private fun newFile() = File(context.filesDir, "${UUID.randomUUID()}.sqlite")
+    @After
+    fun cleanUp() {
+        stores.forEach { it.close() }
+        for (file in files) {
+            for (suffix in listOf("", "-wal", "-shm", "-journal")) File(file.path + suffix).delete()
+        }
+    }
 
-    private fun open(file: File = newFile()) = QueueStore(context, file)
+    private fun newFile() = File(context.filesDir, "${UUID.randomUUID()}.sqlite").also { files.add(it) }
+
+    private fun open(file: File = newFile()) = QueueStore(context, file).also { stores.add(it) }
+
+    private fun raw(file: File, vararg sql: String) {
+        val db = SQLiteDatabase.openDatabase(file.absolutePath, null, SQLiteDatabase.OPEN_READWRITE)
+        try {
+            sql.forEach(db::execSQL)
+        } finally {
+            db.close()
+        }
+    }
 
     private fun target(id: String, mode: QueueMode = QueueMode.ALL, maxAgeMs: Long = 60_000, ended: Boolean = false) =
         QueueTarget(id, "https://x.dev/l", mode, null, "{}", maxAgeMs, null, null, ended)
@@ -312,5 +332,158 @@ class QueueStoreTest {
         } finally {
             raw.close()
         }
+    }
+
+    @Test
+    fun newestPendingThrowsWhenTheReadFails() {
+        val file = newFile()
+        val s = open(file)
+        s.saveTarget(target("s1", QueueMode.LATEST))
+        put(s, "s1", "a", mode = QueueMode.LATEST)
+        raw(file, "ALTER TABLE fixes RENAME TO fixes_off")
+        try {
+            s.newestPending("s1")
+            fail("expected the read to throw")
+        } catch (_: QueueStoreException) {
+        }
+        assertNull(s.latestPending("s1"))
+        raw(file, "ALTER TABLE fixes_off RENAME TO fixes")
+        assertEquals("a", s.newestPending("s1")?.uuid)
+        assertNull(s.newestPending("s2"))
+    }
+
+    @Test
+    fun stepErrorInAReadIsReported() {
+        val file = newFile()
+        val s = open(file)
+        s.saveTarget(target("s1"))
+        put(s, "s1", "a", ts = 1)
+        put(s, "s1", "b", ts = 2)
+        raw(
+            file,
+            "ALTER TABLE fixes RENAME TO fixes_real",
+            "CREATE VIEW fixes AS SELECT id, uuid, session_id, CASE WHEN id = 2 THEN abs(-9223372036854775808) ELSE fix_ts END AS fix_ts, body, state, attempts FROM fixes_real"
+        )
+        try {
+            s.newestPending("s1")
+            fail("expected the read to throw")
+        } catch (_: QueueStoreException) {
+        }
+        assertTrue(s.claim("s1", 10).isEmpty())
+        raw(file, "DROP VIEW fixes", "ALTER TABLE fixes_real RENAME TO fixes")
+        assertEquals(listOf("a", "b"), s.claim("s1", 10).map { it.uuid })
+    }
+
+    @Test
+    fun readTargetThrowsWhenTheReadFails() {
+        val file = newFile()
+        val s = open(file)
+        s.saveTarget(target("s1"))
+        raw(file, "ALTER TABLE targets RENAME TO targets_off")
+        try {
+            s.readTarget("s1")
+            fail("expected the read to throw")
+        } catch (_: QueueStoreException) {
+        }
+        assertNull(s.target("s1"))
+        raw(file, "ALTER TABLE targets_off RENAME TO targets")
+        assertEquals(target("s1"), s.readTarget("s1"))
+        assertNull(s.readTarget("s2"))
+    }
+
+    @Test
+    fun undecodableBatchTargetIsUnreadableAndPurged() {
+        val file = newFile()
+        val s = open(file)
+        s.saveTarget(target("A"))
+        s.saveTarget(target("B", ended = true))
+        put(s, "A", "a", ts = 100_000)
+        put(s, "B", "b", ts = 100_000)
+        raw(file, """UPDATE targets SET batch = '{"maxSize":5' WHERE session_id = 'B'""")
+        assertNull(s.readTarget("B"))
+        assertNotNull(s.target("A"))
+        assertEquals(PurgeResult(1, listOf("B")), s.purge(120_000))
+        assertEquals(1, s.status().pending)
+        assertEquals("A", s.nextSession(null))
+    }
+
+    @Test
+    fun endLeftoversKeepsTheRunningSession() {
+        val s = open()
+        s.saveTarget(target("L", QueueMode.LATEST))
+        s.saveTarget(target("R", QueueMode.LATEST))
+        s.saveTarget(target("A"))
+        put(s, "L", "l", mode = QueueMode.LATEST)
+        put(s, "R", "r", mode = QueueMode.LATEST)
+        assertEquals(listOf("L"), s.endLeftovers("R"))
+        assertEquals(false, s.target("R")?.ended)
+        assertEquals("r", s.latestPending("R")?.uuid)
+        assertEquals(true, s.target("A")?.ended)
+        assertNull(s.target("L"))
+    }
+
+    @Test
+    fun existingFiltersBySession() {
+        val s = open()
+        s.saveTarget(target("s1"))
+        s.saveTarget(target("s2"))
+        put(s, "s1", "a")
+        put(s, "s2", "b")
+        val ids = s.claim("s1", 1).map { it.id } + s.claim("s2", 1).map { it.id }
+        assertEquals(setOf(ids[1]), s.existing(ids, "s2"))
+        assertTrue(s.existing(ids, "s3").isEmpty())
+    }
+
+    @Test
+    fun statusExcludesPendingRows() {
+        val s = open()
+        s.saveTarget(target("s1"))
+        s.saveTarget(target("s2"))
+        put(s, "s1", "a", ts = 10)
+        put(s, "s2", "b", ts = 20)
+        val hidden = s.latestPending("s1")!!.id
+        assertEquals(QueueStatus(1, 20, 1), s.status(setOf(hidden)))
+    }
+
+    @Test
+    fun deleteSessionReportsFailure() {
+        val file = newFile()
+        val s = open(file)
+        s.saveTarget(target("s1"))
+        put(s, "s1", "a")
+        raw(file, "CREATE TRIGGER boom BEFORE DELETE ON fixes BEGIN SELECT RAISE(ABORT, 'boom'); END")
+        assertEquals(-1, s.deleteSession("s1"))
+        assertNotNull(s.target("s1"))
+        assertEquals(1, s.status().pending)
+    }
+
+    @Test
+    fun probeWriteLeavesNoRowAndReportsFailure() {
+        val file = newFile()
+        val s = open(file)
+        s.saveTarget(target("s1"))
+        assertTrue(s.probeWrite())
+        assertEquals(0, s.status().pending)
+        raw(file, "CREATE TRIGGER boom BEFORE INSERT ON fixes BEGIN SELECT RAISE(ABORT, 'full'); END")
+        assertFalse(s.probeWrite())
+        raw(file, "DROP TRIGGER boom")
+        put(s, "s1", "a")
+        assertEquals(1, s.status().pending)
+    }
+
+    @Test
+    fun trimFailureUndoesTheInsert() {
+        val file = newFile()
+        val s = open(file)
+        s.saveTarget(target("s1"))
+        put(s, "s1", "a", max = 1)
+        raw(file, "CREATE TRIGGER boom BEFORE DELETE ON fixes BEGIN SELECT RAISE(ABORT, 'boom'); END")
+        try {
+            put(s, "s1", "b", max = 1)
+            fail("expected insert to throw")
+        } catch (_: QueueStoreException) {
+        }
+        raw(file, "DROP TRIGGER boom")
+        assertEquals(listOf("a"), s.claim("s1", 10).map { it.uuid })
     }
 }

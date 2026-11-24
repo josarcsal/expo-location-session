@@ -34,6 +34,15 @@ public struct QueuedRow: Equatable {
     public var fixTs: Int64
     public var body: String
     public var attempts: Int
+
+    public init(id: Int64, uuid: String, sessionId: String, fixTs: Int64, body: String, attempts: Int) {
+        self.id = id
+        self.uuid = uuid
+        self.sessionId = sessionId
+        self.fixTs = fixTs
+        self.body = body
+        self.attempts = attempts
+    }
 }
 
 public struct QueueStatus: Equatable {
@@ -141,22 +150,32 @@ public final class QueueStore {
     }
 
     public func target(_ sessionId: String) -> QueueTarget? {
-        locked {
-            query("SELECT url, refresh, batch, extras, mode, max_age_ms, ended FROM targets WHERE session_id = ?", [.text(sessionId)]) { st -> QueueTarget? in
+        try? readTarget(sessionId)
+    }
+
+    public func readTarget(_ sessionId: String) throws -> QueueTarget? {
+        try locked {
+            let found = try query("SELECT url, refresh, batch, extras, mode, max_age_ms, ended FROM targets WHERE session_id = ?", [.text(sessionId)]) { st -> QueueTarget? in
                 let refresh = Self.column(st, 1).flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
                 guard let mode = Self.column(st, 4).flatMap(QueueMode.init(rawValue:)) else { return nil }
+                var batch: BatchConfig?
+                if let raw = Self.column(st, 2) {
+                    guard let decoded = Self.batch(raw) else { return nil }
+                    batch = decoded
+                }
                 return QueueTarget(
                     sessionId: sessionId,
                     url: Self.column(st, 0) ?? "",
                     mode: mode,
-                    batch: Self.column(st, 2).flatMap { try? JSONDecoder().decode(BatchConfig.self, from: Data($0.utf8)) },
+                    batch: batch,
                     extrasJson: Self.column(st, 3) ?? "{}",
                     maxAgeMs: sqlite3_column_int64(st, 5),
                     refreshUrl: refresh?["url"] as? String,
                     refreshBodyJson: refresh?["body"] as? String,
                     ended: sqlite3_column_int64(st, 6) != 0
                 )
-            }.first ?? nil
+            }
+            return found.first ?? nil
         }
     }
 
@@ -168,7 +187,7 @@ public final class QueueStore {
                 if run("INSERT INTO fixes (uuid, session_id, fix_ts, body, state, attempts) VALUES (?, ?, ?, ?, 0, 0)",
                        [.text(uuid), .text(sessionId), .int(fixTs), .text(body)]) < 0 { return false }
                 if mode == .all {
-                    let total = scalar("SELECT COUNT(*) FROM fixes", []) ?? 0
+                    guard let total = try? scalar("SELECT COUNT(*) FROM fixes", []) else { return false }
                     let excess = trimCount(rows: Int(total), maxRecords: maxRecords)
                     if excess > 0 {
                         let deleted = run("DELETE FROM fixes WHERE id IN (SELECT id FROM fixes WHERE state = 0 ORDER BY id LIMIT ?)", [.int(Int64(excess))])
@@ -187,11 +206,9 @@ public final class QueueStore {
         locked {
             var rows: [QueuedRow] = []
             let committed = transaction {
-                rows = query("SELECT id, uuid, session_id, fix_ts, body, attempts FROM fixes WHERE session_id = ? AND state = 0 ORDER BY id LIMIT ?",
-                             [.text(sessionId), .int(Int64(limit))]) { st in
-                    QueuedRow(id: sqlite3_column_int64(st, 0), uuid: Self.column(st, 1) ?? "", sessionId: Self.column(st, 2) ?? "",
-                              fixTs: sqlite3_column_int64(st, 3), body: Self.column(st, 4) ?? "", attempts: Int(sqlite3_column_int64(st, 5)))
-                }
+                guard let found = try? query("SELECT id, uuid, session_id, fix_ts, body, attempts FROM fixes WHERE session_id = ? AND state = 0 ORDER BY id LIMIT ?",
+                                             [.text(sessionId), .int(Int64(limit))], Self.row) else { return false }
+                rows = found
                 for i in rows.indices {
                     if run("UPDATE fixes SET state = 1, attempts = attempts + 1 WHERE id = ?", [.int(rows[i].id)]) < 0 { return false }
                     rows[i].attempts += 1
@@ -212,20 +229,16 @@ public final class QueueStore {
         locked { updateIds(ids, "UPDATE fixes SET state = 0 WHERE id IN") }
     }
 
-    public func existing(ids: [Int64]) -> Set<Int64> {
+    public func existing(ids: [Int64], sessionId: String? = nil) -> Set<Int64> {
         locked {
             var found: Set<Int64> = []
             for start in stride(from: 0, to: ids.count, by: 500) {
                 let chunk = ids[start..<min(start + 500, ids.count)]
                 let marks = Array(repeating: "?", count: chunk.count).joined(separator: ",")
-                guard let st = prepare("SELECT id FROM fixes WHERE id IN (\(marks))", chunk.map { Bind.int($0) }) else { return Set(ids) }
-                var rc = sqlite3_step(st)
-                while rc == SQLITE_ROW {
-                    found.insert(sqlite3_column_int64(st, 0))
-                    rc = sqlite3_step(st)
-                }
-                sqlite3_finalize(st)
-                if rc != SQLITE_DONE { return Set(ids) }
+                let binds = chunk.map { Bind.int($0) } + (sessionId.map { [Bind.text($0)] } ?? [])
+                let sql = "SELECT id FROM fixes WHERE id IN (\(marks))" + (sessionId == nil ? "" : " AND session_id = ?")
+                guard let rows = try? query(sql, binds, { sqlite3_column_int64($0, 0) }) else { return Set(ids) }
+                found.formUnion(rows)
             }
             return found
         }
@@ -240,7 +253,16 @@ public final class QueueStore {
                 rows = deleted
                 return true
             }
-            return committed ? rows : 0
+            return committed ? rows : -1
+        }
+    }
+
+    public func probeWrite() -> Bool {
+        locked {
+            transaction {
+                run("INSERT INTO fixes (uuid, session_id, fix_ts, body, state, attempts) VALUES ('', '', 0, '', 1, 0)", []) >= 0
+                    && run("DELETE FROM fixes WHERE id = last_insert_rowid()", []) >= 0
+            }
         }
     }
 
@@ -248,15 +270,17 @@ public final class QueueStore {
         locked { _ = run("UPDATE targets SET ended = 1 WHERE session_id = ?", [.text(sessionId)]) }
     }
 
-    public func endLeftovers() -> [String] {
+    public func endLeftovers(except running: String? = nil) -> [String] {
         locked {
             var removed: [String] = []
             let committed = transaction {
-                removed = query("SELECT session_id FROM targets WHERE ended = 0 AND mode = 'latest' ORDER BY session_id", []) { Self.column($0, 0) ?? "" }
+                guard let found = try? query("SELECT session_id FROM targets WHERE ended = 0 AND mode = 'latest' AND session_id IS NOT ? ORDER BY session_id",
+                                             [running.map(Bind.text) ?? .null], { Self.column($0, 0) ?? "" }) else { return false }
+                removed = found
                 for id in removed {
                     if run("DELETE FROM fixes WHERE session_id = ?", [.text(id)]) < 0 || run("DELETE FROM targets WHERE session_id = ?", [.text(id)]) < 0 { return false }
                 }
-                return run("UPDATE targets SET ended = 1 WHERE ended = 0", []) >= 0
+                return run("UPDATE targets SET ended = 1 WHERE ended = 0 AND session_id IS NOT ?", [running.map(Bind.text) ?? .null]) >= 0
             }
             return committed ? removed : []
         }
@@ -270,11 +294,15 @@ public final class QueueStore {
                 DELETE FROM fixes WHERE state = 0 AND session_id IN (SELECT session_id FROM targets WHERE mode = 'all')
                 AND ? - fix_ts > (SELECT max_age_ms FROM targets WHERE targets.session_id = fixes.session_id)
                 """, [.int(nowMs)])
-                let unreadable = query("SELECT session_id FROM targets WHERE mode NOT IN ('latest', 'all') ORDER BY session_id", []) { Self.column($0, 0) ?? "" }
+                guard let badMode = try? query("SELECT session_id FROM targets WHERE mode NOT IN ('latest', 'all') ORDER BY session_id", [], { Self.column($0, 0) ?? "" }),
+                      let batches = try? query("SELECT session_id, batch FROM targets WHERE batch IS NOT NULL ORDER BY session_id", [], { (Self.column($0, 0) ?? "", Self.column($0, 1) ?? "") })
+                else { return false }
+                let unreadable = Set(badMode + batches.filter { Self.batch($0.1) == nil }.map(\.0)).sorted()
                 for id in unreadable where run("DELETE FROM targets WHERE session_id = ?", [.text(id)]) < 0 { return false }
                 let orphans = run("DELETE FROM fixes WHERE state = 0 AND session_id NOT IN (SELECT session_id FROM targets)", [])
                 if aged < 0 || orphans < 0 { return false }
-                let removed = query("SELECT session_id FROM targets WHERE ended = 1 AND session_id NOT IN (SELECT session_id FROM fixes) ORDER BY session_id", []) { Self.column($0, 0) ?? "" }
+                guard let removed = try? query("SELECT session_id FROM targets WHERE ended = 1 AND session_id NOT IN (SELECT session_id FROM fixes) ORDER BY session_id", [], { Self.column($0, 0) ?? "" })
+                else { return false }
                 for id in removed where run("DELETE FROM targets WHERE session_id = ?", [.text(id)]) < 0 { return false }
                 result = PurgeResult(rowsDeleted: aged + orphans, targetsRemoved: unreadable + removed)
                 return true
@@ -285,47 +313,32 @@ public final class QueueStore {
 
     public func nextSession(running: String?) -> String? {
         locked {
-            if let running, (scalar("SELECT COUNT(*) FROM fixes WHERE session_id = ? AND state = 0", [.text(running)]) ?? 0) > 0 {
+            if let running, ((try? scalar("SELECT COUNT(*) FROM fixes WHERE session_id = ? AND state = 0", [.text(running)])) ?? 0) > 0 {
                 return running
             }
-            return query("SELECT session_id FROM fixes WHERE state = 0 ORDER BY id LIMIT 1", []) { Self.column($0, 0) ?? "" }.first
+            return (try? query("SELECT session_id FROM fixes WHERE state = 0 ORDER BY id LIMIT 1", [], { Self.column($0, 0) ?? "" }))?.first
         }
     }
 
     public func latestPending(sessionId: String) -> QueuedRow? {
-        locked {
-            query("SELECT id, uuid, session_id, fix_ts, body, attempts FROM fixes WHERE session_id = ? AND state = 0 ORDER BY id DESC LIMIT 1", [.text(sessionId)]) { st in
-                QueuedRow(id: sqlite3_column_int64(st, 0), uuid: Self.column(st, 1) ?? "", sessionId: Self.column(st, 2) ?? "",
-                          fixTs: sqlite3_column_int64(st, 3), body: Self.column(st, 4) ?? "", attempts: Int(sqlite3_column_int64(st, 5)))
-            }.first
+        try? newestPending(sessionId: sessionId)
+    }
+
+    public func newestPending(sessionId: String) throws -> QueuedRow? {
+        try locked {
+            try query("SELECT id, uuid, session_id, fix_ts, body, attempts FROM fixes WHERE session_id = ? AND state = 0 ORDER BY id DESC LIMIT 1", [.text(sessionId)], Self.row).first
         }
     }
 
     public func status(excluding: Set<Int64> = []) -> QueueStatus {
         locked {
-            guard !excluding.isEmpty else {
-                return query("SELECT COUNT(*), MIN(fix_ts), COUNT(DISTINCT session_id) FROM fixes", []) { st in
-                    QueueStatus(pending: Int(sqlite3_column_int64(st, 0)),
-                                oldestAt: sqlite3_column_type(st, 1) == SQLITE_NULL ? nil : sqlite3_column_int64(st, 1),
-                                sessions: Int(sqlite3_column_int64(st, 2)))
-                }.first ?? QueueStatus(pending: 0, oldestAt: nil, sessions: 0)
-            }
-            var status = query("SELECT COUNT(*), MIN(fix_ts) FROM fixes WHERE state = 0", []) { st in
+            let filter = excluding.isEmpty ? "" : " WHERE id NOT IN (\(excluding.sorted().map(String.init).joined(separator: ",")))"
+            let found = try? query("SELECT COUNT(*), MIN(fix_ts), COUNT(DISTINCT session_id) FROM fixes" + filter, []) { st in
                 QueueStatus(pending: Int(sqlite3_column_int64(st, 0)),
                             oldestAt: sqlite3_column_type(st, 1) == SQLITE_NULL ? nil : sqlite3_column_int64(st, 1),
-                            sessions: 0)
-            }.first ?? QueueStatus(pending: 0, oldestAt: nil, sessions: 0)
-            var sessions = Set(query("SELECT DISTINCT session_id FROM fixes WHERE state = 0", []) { Self.column($0, 0) ?? "" })
-            let inFlight = query("SELECT id, fix_ts, session_id FROM fixes WHERE state = 1", []) { st in
-                (id: sqlite3_column_int64(st, 0), fixTs: sqlite3_column_int64(st, 1), sessionId: Self.column(st, 2) ?? "")
+                            sessions: Int(sqlite3_column_int64(st, 2)))
             }
-            for row in inFlight where !excluding.contains(row.id) {
-                status.pending += 1
-                status.oldestAt = min(status.oldestAt ?? row.fixTs, row.fixTs)
-                sessions.insert(row.sessionId)
-            }
-            status.sessions = sessions.count
-            return status
+            return found?.first ?? QueueStatus(pending: 0, oldestAt: nil, sessions: 0)
         }
     }
 
@@ -334,7 +347,8 @@ public final class QueueStore {
             var removed: [String] = []
             let committed = transaction {
                 if run("DELETE FROM fixes", []) < 0 { return false }
-                removed = query("SELECT session_id FROM targets WHERE ended = 1 ORDER BY session_id", []) { Self.column($0, 0) ?? "" }
+                guard let found = try? query("SELECT session_id FROM targets WHERE ended = 1 ORDER BY session_id", [], { Self.column($0, 0) ?? "" }) else { return false }
+                removed = found
                 return run("DELETE FROM targets WHERE ended = 1", []) >= 0
             }
             return committed ? removed : []
@@ -414,16 +428,30 @@ public final class QueueStore {
         }
     }
 
-    private func query<T>(_ sql: String, _ binds: [Bind], _ map: (OpaquePointer) -> T) -> [T] {
-        guard let st = prepare(sql, binds) else { return [] }
+    private func query<T>(_ sql: String, _ binds: [Bind], _ map: (OpaquePointer) -> T) throws -> [T] {
+        guard let st = prepare(sql, binds) else { throw QueueStoreError(message: lastError(), code: sqlite3_errcode(db)) }
         defer { sqlite3_finalize(st) }
         var out: [T] = []
-        while sqlite3_step(st) == SQLITE_ROW { out.append(map(st)) }
+        var rc = sqlite3_step(st)
+        while rc == SQLITE_ROW {
+            out.append(map(st))
+            rc = sqlite3_step(st)
+        }
+        guard rc == SQLITE_DONE else { throw QueueStoreError(message: lastError(), code: rc) }
         return out
     }
 
-    private func scalar(_ sql: String, _ binds: [Bind]) -> Int64? {
-        query(sql, binds) { sqlite3_column_int64($0, 0) }.first
+    private func scalar(_ sql: String, _ binds: [Bind]) throws -> Int64 {
+        try query(sql, binds) { sqlite3_column_int64($0, 0) }.first ?? 0
+    }
+
+    private static func row(_ st: OpaquePointer) -> QueuedRow {
+        QueuedRow(id: sqlite3_column_int64(st, 0), uuid: column(st, 1) ?? "", sessionId: column(st, 2) ?? "",
+                  fixTs: sqlite3_column_int64(st, 3), body: column(st, 4) ?? "", attempts: Int(sqlite3_column_int64(st, 5)))
+    }
+
+    private static func batch(_ raw: String) -> BatchConfig? {
+        try? JSONDecoder().decode(BatchConfig.self, from: Data(raw.utf8))
     }
 
     private static func column(_ st: OpaquePointer, _ i: Int32) -> String? {

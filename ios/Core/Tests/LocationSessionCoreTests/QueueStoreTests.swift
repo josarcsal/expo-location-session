@@ -3,8 +3,32 @@ import SQLite3
 import Testing
 @testable import LocationSessionCore
 
-@Suite struct QueueStoreTests {
-    private func open(_ path: String = NSTemporaryDirectory() + UUID().uuidString + ".sqlite") throws -> (QueueStore, String) { (try QueueStore(path: path), path) }
+@Suite final class QueueStoreTests {
+    private var paths: [String] = []
+
+    deinit {
+        for path in paths {
+            for suffix in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: path + suffix) }
+        }
+    }
+
+    private func tempPath() -> String {
+        let path = NSTemporaryDirectory() + UUID().uuidString + ".sqlite"
+        paths.append(path)
+        return path
+    }
+
+    private func open(_ path: String? = nil) throws -> (QueueStore, String) {
+        let path = path ?? tempPath()
+        return (try QueueStore(path: path), path)
+    }
+
+    private func raw(_ path: String, _ sql: String) {
+        var db: OpaquePointer?
+        #expect(sqlite3_open(path, &db) == SQLITE_OK)
+        #expect(sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK)
+        sqlite3_close(db)
+    }
     private func target(_ id: String, _ mode: QueueMode = .all, maxAgeMs: Int64 = 60_000, ended: Bool = false) -> QueueTarget {
         QueueTarget(sessionId: id, url: "https://x.dev/l", mode: mode, batch: nil, extrasJson: "{}", maxAgeMs: maxAgeMs, refreshUrl: nil, refreshBodyJson: nil, ended: ended)
     }
@@ -64,7 +88,7 @@ import Testing
     }
 
     @Test func garbageFileIsReportedCorrupt() throws {
-        let path = NSTemporaryDirectory() + UUID().uuidString + ".sqlite"
+        let path = tempPath()
         try Data(repeating: 0x5A, count: 4096).write(to: URL(fileURLWithPath: path))
         let error = #expect(throws: QueueStoreError.self) { try QueueStore(path: path) }
         #expect(error?.isCorrupt == true)
@@ -191,5 +215,101 @@ import Testing
         #expect(s.existing(ids: [1, 999]) == [1, 999])
         #expect(sqlite3_exec(raw, "ALTER TABLE fixes_off RENAME TO fixes", nil, nil, nil) == SQLITE_OK)
         #expect(s.existing(ids: [1, 999]) == [1])
+    }
+
+    @Test func newestPendingThrowsWhenTheReadFails() throws {
+        let (s, path) = try open(); try s.saveTarget(target("s1", .latest))
+        _ = try put(s, "s1", "a", mode: .latest)
+        raw(path, "ALTER TABLE fixes RENAME TO fixes_off")
+        #expect(throws: QueueStoreError.self) { try s.newestPending(sessionId: "s1") }
+        #expect(s.latestPending(sessionId: "s1") == nil)
+        raw(path, "ALTER TABLE fixes_off RENAME TO fixes")
+        #expect(try s.newestPending(sessionId: "s1")?.uuid == "a")
+        #expect(try s.newestPending(sessionId: "s2") == nil)
+    }
+
+    @Test func stepErrorInAReadIsReported() throws {
+        let (s, path) = try open(); try s.saveTarget(target("s1"))
+        _ = try put(s, "s1", "a", ts: 1); _ = try put(s, "s1", "b", ts: 2)
+        raw(path, """
+        ALTER TABLE fixes RENAME TO fixes_real;
+        CREATE VIEW fixes AS SELECT id, uuid, session_id, CASE WHEN id = 2 THEN abs(-9223372036854775808) ELSE fix_ts END AS fix_ts, body, state, attempts FROM fixes_real
+        """)
+        #expect(throws: QueueStoreError.self) { try s.newestPending(sessionId: "s1") }
+        #expect(s.claim(sessionId: "s1", limit: 10).isEmpty)
+        raw(path, "DROP VIEW fixes; ALTER TABLE fixes_real RENAME TO fixes")
+        #expect(s.claim(sessionId: "s1", limit: 10).map(\.uuid) == ["a", "b"])
+    }
+
+    @Test func readTargetThrowsWhenTheReadFails() throws {
+        let (s, path) = try open(); try s.saveTarget(target("s1"))
+        raw(path, "ALTER TABLE targets RENAME TO targets_off")
+        #expect(throws: QueueStoreError.self) { try s.readTarget("s1") }
+        #expect(s.target("s1") == nil)
+        raw(path, "ALTER TABLE targets_off RENAME TO targets")
+        #expect(try s.readTarget("s1") == target("s1"))
+        #expect(try s.readTarget("s2") == nil)
+    }
+
+    @Test func undecodableBatchTargetIsUnreadableAndPurged() throws {
+        let (s, path) = try open(); try s.saveTarget(target("A")); try s.saveTarget(target("B", ended: true))
+        _ = try put(s, "A", "a", ts: 100_000); _ = try put(s, "B", "b", ts: 100_000)
+        raw(path, #"UPDATE targets SET batch = '{"maxSize":5' WHERE session_id = 'B'"#)
+        #expect(try s.readTarget("B") == nil)
+        #expect(s.target("A") != nil)
+        #expect(s.purge(nowMs: 120_000) == PurgeResult(rowsDeleted: 1, targetsRemoved: ["B"]))
+        #expect(s.status().pending == 1 && s.nextSession(running: nil) == "A")
+    }
+
+    @Test func endLeftoversKeepsTheRunningSession() throws {
+        let (s, _) = try open()
+        try s.saveTarget(target("L", .latest)); try s.saveTarget(target("R", .latest)); try s.saveTarget(target("A"))
+        _ = try put(s, "L", "l", mode: .latest); _ = try put(s, "R", "r", mode: .latest)
+        #expect(s.endLeftovers(except: "R") == ["L"])
+        #expect(s.target("R")?.ended == false && s.latestPending(sessionId: "R")?.uuid == "r")
+        #expect(s.target("A")?.ended == true && s.target("L") == nil)
+    }
+
+    @Test func existingFiltersBySession() throws {
+        let (s, _) = try open(); try s.saveTarget(target("s1")); try s.saveTarget(target("s2"))
+        _ = try put(s, "s1", "a"); _ = try put(s, "s2", "b")
+        let ids = s.claim(sessionId: "s1", limit: 1).map(\.id) + s.claim(sessionId: "s2", limit: 1).map(\.id)
+        #expect(s.existing(ids: ids, sessionId: "s2") == [ids[1]])
+        #expect(s.existing(ids: ids, sessionId: "s3").isEmpty)
+    }
+
+    @Test func statusExcludesPendingRows() throws {
+        let (s, _) = try open(); try s.saveTarget(target("s1")); try s.saveTarget(target("s2"))
+        _ = try put(s, "s1", "a", ts: 10); _ = try put(s, "s2", "b", ts: 20)
+        let hidden = try #require(s.latestPending(sessionId: "s1")).id
+        #expect(s.status(excluding: [hidden]) == QueueStatus(pending: 1, oldestAt: 20, sessions: 1))
+    }
+
+    @Test func deleteSessionReportsFailure() throws {
+        let (s, path) = try open(); try s.saveTarget(target("s1"))
+        _ = try put(s, "s1", "a")
+        raw(path, "CREATE TRIGGER boom BEFORE DELETE ON fixes BEGIN SELECT RAISE(ABORT, 'boom'); END")
+        #expect(s.deleteSession("s1") == -1)
+        #expect(s.target("s1") != nil && s.status().pending == 1)
+    }
+
+    @Test func probeWriteLeavesNoRowAndReportsFailure() throws {
+        let (s, path) = try open(); try s.saveTarget(target("s1"))
+        #expect(s.probeWrite())
+        #expect(s.status().pending == 0)
+        raw(path, "CREATE TRIGGER boom BEFORE INSERT ON fixes BEGIN SELECT RAISE(ABORT, 'full'); END")
+        #expect(!s.probeWrite())
+        raw(path, "DROP TRIGGER boom")
+        _ = try put(s, "s1", "a")
+        #expect(s.status().pending == 1)
+    }
+
+    @Test func trimFailureUndoesTheInsert() throws {
+        let (s, path) = try open(); try s.saveTarget(target("s1"))
+        _ = try put(s, "s1", "a", max: 1)
+        raw(path, "CREATE TRIGGER boom BEFORE DELETE ON fixes BEGIN SELECT RAISE(ABORT, 'boom'); END")
+        #expect(throws: QueueStoreError.self) { try put(s, "s1", "b", max: 1) }
+        raw(path, "DROP TRIGGER boom")
+        #expect(s.claim(sessionId: "s1", limit: 10).map(\.uuid) == ["a"])
     }
 }
