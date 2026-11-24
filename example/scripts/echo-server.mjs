@@ -16,13 +16,31 @@ const handler = (req, res) => {
     return res.end();
   }
   if (url.pathname === '/logs') return logs(req, res, url);
-  const status = failNext > 0 ? (failNext--, 503) : Number(url.searchParams.get('status') ?? 204);
+  if (url.pathname === '/refresh') return refresh(req, res, url);
+  const auth = url.searchParams.get('auth');
+  const authorized = !auth || (auth !== 'never' && req.headers.authorization === 'Bearer fresh');
+  const status = !authorized ? 401 : failNext > 0 ? (failNext--, 503) : Number(url.searchParams.get('status') ?? 204);
   let body = '';
   req.on('data', (chunk) => (body += chunk));
   req.on('end', () => {
     console.log(`${new Date().toISOString()} ${req.method} ${url.pathname}${url.search} -> ${status} ${body}`);
     res.writeHead(status, status >= 300 && status < 400 ? { Location: '/redirected' } : undefined);
     res.end();
+  });
+};
+
+const refresh = (req, res, url) => {
+  const failed = url.searchParams.get('fail') === '1';
+  let body = '';
+  req.on('data', (chunk) => (body += chunk));
+  req.on('end', () => {
+    console.log(`${new Date().toISOString()} POST /refresh${url.search} -> ${failed ? 500 : 200} ${body}`);
+    if (failed) {
+      res.writeHead(500);
+      return res.end();
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ headers: { Authorization: 'Bearer fresh' } }));
   });
 };
 

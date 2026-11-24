@@ -30,6 +30,8 @@ final class Uploader {
     private var flushId = 0
     private var inFlight: URLSessionDataTask?
     private var inFlightRows: [Int64] = []
+    private var refreshing = false
+    private var refreshed: Set<String> = []
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var timer: Timer?
     private var watchdog: Timer?
@@ -65,6 +67,8 @@ final class Uploader {
         inFlightRows = []
         inFlight?.cancel()
         inFlight = nil
+        refreshing = false
+        refreshed = []
         timer?.invalidate()
         timer = nil
         watchdog?.invalidate()
@@ -95,6 +99,7 @@ final class Uploader {
     func pump() {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let c = config, inFlight == nil, flushCompletion == nil, hasPending(c) else { return }
+        refreshed = []
         let now = nowMs()
         if shouldUploadNow(lastSuccessMs: lastSuccessMs, nowMs: now, minIntervalMs: c.uploadMinIntervalMs, bypass: false) {
             send()
@@ -121,7 +126,10 @@ final class Uploader {
         }
         RunLoop.main.add(t, forMode: .common)
         flushDeadline = t
-        if inFlight == nil { send() }
+        if inFlight == nil {
+            refreshed = []
+            send()
+        }
     }
 
     @discardableResult
@@ -314,7 +322,11 @@ final class Uploader {
     private func abandonInFlight(detail: [String: Any]) {
         flushId += 1
         inFlight?.cancel()
-        complete(status: nil, detail: detail)
+        if refreshing {
+            completeRefresh(status: nil, body: Data(), error: detail["error"] as? String)
+        } else {
+            complete(status: nil, detail: detail)
+        }
     }
 
     private func finish(_ sentId: Int, status: Int?, detail: [String: Any]) {
@@ -337,7 +349,7 @@ final class Uploader {
             return
         }
         let at = nowMs()
-        let action = syncAction(status: status, ended: false, refreshConfigured: false, alreadyRefreshed: false)
+        let action = syncAction(status: status, ended: false, refreshConfigured: c.sync.refresh != nil, alreadyRefreshed: refreshed.contains(c.id))
         var payload: [String: Any] = ["ok": action == .deleteSent, "at": at, "sessionId": c.id]
         if let status { payload["status"] = status }
         if c.sync.mode == .all { payload["count"] = rows.count }
@@ -349,7 +361,7 @@ final class Uploader {
         if let status { data["status"] = status }
         let retrying: Bool
         switch action {
-        case .retry, .refreshAndRetry, .dropSession: retrying = true
+        case .retry, .dropSession: retrying = true
         default: retrying = false
         }
         if retrying { data["backoffMs"] = backoffMs(attempt: attempt) }
@@ -373,18 +385,101 @@ final class Uploader {
             giveBack(rows, c)
             onStop?(reason)
             return
-        case .retry, .refreshAndRetry, .dropSession:
+        case .refreshAndRetry:
             giveBack(rows, c)
-            let delay = backoffMs(attempt: attempt)
-            attempt += 1
-            if flushCompletion != nil {
-                scheduleFlushRetry(afterMs: delay)
-            } else {
-                schedule(afterMs: delay)
-            }
+            refresh(c)
+            return
+        case .retry, .dropSession:
+            giveBack(rows, c)
+            scheduleRetry()
             return
         }
         continueAfterSend(c)
+    }
+
+    private func scheduleRetry() {
+        let delay = backoffMs(attempt: attempt)
+        attempt += 1
+        if flushCompletion != nil {
+            scheduleFlushRetry(afterMs: delay)
+        } else {
+            schedule(afterMs: delay)
+        }
+    }
+
+    private func refresh(_ c: SessionConfig) {
+        refreshed.insert(c.id)
+        flushId += 1
+        guard let r = c.sync.refresh, let url = URL(string: r.url) else {
+            completeRefresh(status: nil, body: Data(), error: "invalid refresh url")
+            return
+        }
+        let headers = credentials.load(sessionId: c.id)?.refreshHeaders ?? r.headers
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        for (name, value) in headers {
+            request.setValue(value, forHTTPHeaderField: name)
+        }
+        request.httpBody = refreshRequestBody(bodyJson: r.bodyJson, sessionId: c.id)
+        let sentId = flushId
+        let startedAt = nowMs()
+        Log.debug("auth", "refresh attempt", data: ["headers": headers.keys.sorted()], sessionId: c.id)
+        beginBackgroundTask()
+        let task = session.dataTask(with: request) { [weak self] data, response, error in
+            let status = error == nil ? (response as? HTTPURLResponse)?.statusCode : nil
+            let failure = error.map { "\(($0 as NSError).domain) \(($0 as NSError).code) \($0.localizedDescription)" }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard sentId == self.flushId else {
+                    Log.debug("auth", "stale refresh response ignored", data: ["status": status ?? NSNull()])
+                    return
+                }
+                self.completeRefresh(status: status, body: data ?? Data(), error: failure, latencyMs: nowMs() - startedAt)
+            }
+        }
+        inFlight = task
+        refreshing = true
+        startWatchdog(sentId, startedAt: startedAt)
+        task.resume()
+    }
+
+    private func completeRefresh(status: Int?, body: Data, error: String?, latencyMs: Int64? = nil) {
+        inFlight = nil
+        refreshing = false
+        watchdog?.invalidate()
+        watchdog = nil
+        endBackgroundTask()
+        guard let c = config else { return }
+        if let result = parseRefreshResponse(status: status, body: body) {
+            let refreshHeaders = result.refreshHeaders ?? credentials.load(sessionId: c.id)?.refreshHeaders ?? c.sync.refresh?.headers ?? [:]
+            do {
+                try credentials.save(sessionId: c.id, headers: result.headers, refreshHeaders: refreshHeaders)
+            } catch {
+                refreshFailed(c, message: "Could not store refreshed credentials", data: ["error": "\(error)"])
+                return
+            }
+            var data: [String: Any] = ["headers": result.headers.keys.sorted()]
+            if let rotated = result.refreshHeaders { data["refreshHeaders"] = rotated.keys.sorted() }
+            if let status { data["status"] = status }
+            if let latencyMs { data["latencyMs"] = latencyMs }
+            Log.debug("auth", "refresh succeeded", data: data, sessionId: c.id)
+            send()
+            return
+        }
+        let message = status.map { "Refresh responded \($0) without usable headers" } ?? "Refresh request failed"
+        refreshFailed(c, message: message, data: ["status": status ?? NSNull(), "latencyMs": latencyMs ?? NSNull(), "error": error ?? NSNull()])
+    }
+
+    private func refreshFailed(_ c: SessionConfig, message: String, data: [String: Any]) {
+        Log.debug("auth", "refresh failed", data: data, sessionId: c.id, level: "warn")
+        events.emit(.error, ["code": "AUTH_REFRESH_FAILED", "message": message, "sessionId": c.id])
+        switch syncAction(status: 401, ended: false, refreshConfigured: true, alreadyRefreshed: true) {
+        case .stop(let reason):
+            onStop?(reason)
+        default:
+            scheduleRetry()
+        }
     }
 
     private func battery() -> Battery? {
