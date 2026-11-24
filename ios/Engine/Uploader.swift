@@ -435,7 +435,10 @@ final class Uploader {
 
     private func syncPendingFix(_ t: Target) {
         guard !t.ended, t.sync.mode == .latest else { return }
-        store.pendingFix = fallback.next(sessionId: t.id)?.fix ?? queued(t.id, .latest).flatMap { try? JSONDecoder().decode(Fix.self, from: Data($0.body.utf8)) }
+        let q = db.store()
+        let row = q?.latestPending(sessionId: t.id)
+        let queuedFix = row.flatMap { try? JSONDecoder().decode(Fix.self, from: Data($0.body.utf8)) }
+        store.pendingFix = fallback.pendingFix(sessionId: t.id, queuedFixTs: row?.fixTs, queuedFix: queuedFix, queueReadable: q != nil)
     }
 
     private func giveBack(_ ids: [Int64], _ t: Target) {

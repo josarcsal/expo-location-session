@@ -89,4 +89,21 @@ class FallbackSlotTest {
         assertFalse(FallbackSlot.resumes(10, 10))
         assertFalse(FallbackSlot.resumes(10, 12))
     }
+
+    @Test
+    fun deliveredFixStaysPendingWhileASupersededRowRemains() {
+        val s = FallbackSlot()
+        assertEquals(fix(5), s.pendingFix("s1", 5, fix(5), true))
+        assertNull(s.pendingFix("s1", null, null, true))
+        val g = s.put("s1", "a", fix(10))
+        assertEquals(fix(10), s.pendingFix("s1", 5, fix(5), true))
+        s.markSent(g)
+        assertEquals(fix(10), s.pendingFix("s1", 5, fix(5), true))
+        assertEquals(fix(10), s.pendingFix("s1", null, null, false))
+        assertNull(s.pendingFix("s1", null, null, true))
+        assertEquals(fix(11), s.pendingFix("s1", 11, fix(11), true))
+        assertEquals(fix(5), s.pendingFix("s2", 5, fix(5), true))
+        s.stored()
+        assertEquals(fix(5), s.pendingFix("s1", 5, fix(5), true))
+    }
 }

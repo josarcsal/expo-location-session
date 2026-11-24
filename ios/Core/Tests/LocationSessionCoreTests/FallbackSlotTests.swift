@@ -77,4 +77,20 @@ import Testing
         #expect(!FallbackSlot.resumes(pendingFixTs: 10, over: 10))
         #expect(!FallbackSlot.resumes(pendingFixTs: 10, over: 12))
     }
+
+    @Test func deliveredFixStaysPendingWhileASupersededRowRemains() {
+        var s = FallbackSlot()
+        #expect(s.pendingFix(sessionId: "s1", queuedFixTs: 5, queuedFix: fix(5), queueReadable: true) == fix(5))
+        #expect(s.pendingFix(sessionId: "s1", queuedFixTs: nil, queuedFix: nil, queueReadable: true) == nil)
+        let g = s.put(sessionId: "s1", uuid: "a", fix: fix(10))
+        #expect(s.pendingFix(sessionId: "s1", queuedFixTs: 5, queuedFix: fix(5), queueReadable: true) == fix(10))
+        s.markSent(generation: g)
+        #expect(s.pendingFix(sessionId: "s1", queuedFixTs: 5, queuedFix: fix(5), queueReadable: true) == fix(10))
+        #expect(s.pendingFix(sessionId: "s1", queuedFixTs: nil, queuedFix: nil, queueReadable: false) == fix(10))
+        #expect(s.pendingFix(sessionId: "s1", queuedFixTs: nil, queuedFix: nil, queueReadable: true) == nil)
+        #expect(s.pendingFix(sessionId: "s1", queuedFixTs: 11, queuedFix: fix(11), queueReadable: true) == fix(11))
+        #expect(s.pendingFix(sessionId: "s2", queuedFixTs: 5, queuedFix: fix(5), queueReadable: true) == fix(5))
+        s.stored()
+        #expect(s.pendingFix(sessionId: "s1", queuedFixTs: 5, queuedFix: fix(5), queueReadable: true) == fix(5))
+    }
 }

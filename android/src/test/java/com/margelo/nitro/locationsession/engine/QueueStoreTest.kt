@@ -296,4 +296,21 @@ class QueueStoreTest {
         assertEquals(setOf(ids[1]), s.existing(ids + 999L))
         assertTrue(s.existing(emptyList()).isEmpty())
     }
+
+    @Test
+    fun existingKeepsIdsWhenTheReadFails() {
+        val file = newFile()
+        val s = open(file)
+        s.saveTarget(target("s1"))
+        put(s, "s1", "a")
+        val raw = SQLiteDatabase.openDatabase(file.absolutePath, null, SQLiteDatabase.OPEN_READWRITE)
+        try {
+            raw.execSQL("ALTER TABLE fixes RENAME TO fixes_off")
+            assertEquals(setOf(1L, 999L), s.existing(listOf(1L, 999L)))
+            raw.execSQL("ALTER TABLE fixes_off RENAME TO fixes")
+            assertEquals(setOf(1L), s.existing(listOf(1L, 999L)))
+        } finally {
+            raw.close()
+        }
+    }
 }

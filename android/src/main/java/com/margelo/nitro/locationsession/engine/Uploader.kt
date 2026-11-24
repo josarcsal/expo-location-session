@@ -493,7 +493,9 @@ class Uploader(
 
     private fun syncPendingFix(t: Target) {
         if (t.ended || t.sync.mode != QueueMode.LATEST) return
-        store.pendingFix = fallback.next(t.id)?.fix ?: queued(t.id, QueueMode.LATEST)?.let { decodeFix(it.body) }
+        val q = queue.store()
+        val row = q?.latestPending(t.id)
+        store.pendingFix = fallback.pendingFix(t.id, row?.fixTs, row?.let { decodeFix(it.body) }, q != null)
     }
 
     private fun giveBack(ids: List<Long>, t: Target) {

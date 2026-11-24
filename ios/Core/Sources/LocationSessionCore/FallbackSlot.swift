@@ -14,7 +14,7 @@ public enum LatestPick: Equatable {
 public struct FallbackSlot {
     public private(set) var pending: FallbackFix?
     private var generation = 0
-    private var floor: (sessionId: String, fixTs: Int64)?
+    private var floor: (sessionId: String, fix: Fix)?
 
     public init() {}
 
@@ -22,8 +22,10 @@ public struct FallbackSlot {
     public mutating func put(sessionId: String, uuid: String, fix: Fix) -> Int {
         generation += 1
         pending = FallbackFix(sessionId: sessionId, uuid: uuid, fix: fix, generation: generation)
-        let previous = floor?.sessionId == sessionId ? floor?.fixTs : nil
-        floor = (sessionId, max(previous ?? fix.timestampMs, fix.timestampMs))
+        if let floor, floor.sessionId == sessionId, floor.fix.timestampMs >= fix.timestampMs {
+            return generation
+        }
+        floor = (sessionId, fix)
         return generation
     }
 
@@ -35,6 +37,16 @@ public struct FallbackSlot {
         if next(sessionId: sessionId) != nil { return .memory }
         guard let queuedFixTs, !supersedes(sessionId: sessionId, fixTs: queuedFixTs) else { return .none }
         return .queue
+    }
+
+    public func pendingFix(sessionId: String, queuedFixTs: Int64?, queuedFix: Fix?, queueReadable: Bool) -> Fix? {
+        switch pick(sessionId: sessionId, queuedFixTs: queuedFixTs) {
+        case .memory: return pending?.fix
+        case .queue: return queuedFix
+        case .none:
+            guard let floor, floor.sessionId == sessionId, queuedFixTs != nil || !queueReadable else { return nil }
+            return floor.fix
+        }
     }
 
     public static func resumes(pendingFixTs: Int64, over queuedFixTs: Int64?) -> Bool {
@@ -52,7 +64,7 @@ public struct FallbackSlot {
 
     public func supersedes(sessionId: String, fixTs: Int64) -> Bool {
         guard let floor, floor.sessionId == sessionId else { return false }
-        return fixTs <= floor.fixTs
+        return fixTs <= floor.fix.timestampMs
     }
 
     public mutating func keep(sessionId: String?) {

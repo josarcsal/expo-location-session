@@ -180,4 +180,16 @@ import Testing
         #expect(s.existing(ids: ids + [999]) == [ids[1]])
         #expect(s.existing(ids: []).isEmpty)
     }
+
+    @Test func existingKeepsIdsWhenTheReadFails() throws {
+        let (s, path) = try open(); try s.saveTarget(target("s1"))
+        _ = try put(s, "s1", "a")
+        var raw: OpaquePointer?
+        #expect(sqlite3_open(path, &raw) == SQLITE_OK)
+        defer { sqlite3_close(raw) }
+        #expect(sqlite3_exec(raw, "ALTER TABLE fixes RENAME TO fixes_off", nil, nil, nil) == SQLITE_OK)
+        #expect(s.existing(ids: [1, 999]) == [1, 999])
+        #expect(sqlite3_exec(raw, "ALTER TABLE fixes_off RENAME TO fixes", nil, nil, nil) == SQLITE_OK)
+        #expect(s.existing(ids: [1, 999]) == [1])
+    }
 }
