@@ -70,6 +70,14 @@ namespace margelo::nitro::locationsession::bridge::swift {
     };
   }
   
+  // pragma MARK: std::function<void(const NativeQueueStatus& /* result */)>
+  Func_void_NativeQueueStatus create_Func_void_NativeQueueStatus(void* NON_NULL swiftClosureWrapper) noexcept {
+    auto swiftClosure = LocationSession::Func_void_NativeQueueStatus::fromUnsafe(swiftClosureWrapper);
+    return [swiftClosure = std::move(swiftClosure)](const NativeQueueStatus& result) mutable -> void {
+      swiftClosure.call(result);
+    };
+  }
+  
   // pragma MARK: std::shared_ptr<HybridLocationSessionSpec>
   std::shared_ptr<HybridLocationSessionSpec> create_std__shared_ptr_HybridLocationSessionSpec_(void* NON_NULL swiftUnsafePointer) noexcept {
     LocationSession::HybridLocationSessionSpec_cxx swiftPart = LocationSession::HybridLocationSessionSpec_cxx::fromUnsafe(swiftUnsafePointer);

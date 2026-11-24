@@ -30,6 +30,14 @@ export type SessionConfig = {
     headers?: Record<string, string>;
     extras?: Record<string, string | number | boolean>;
     minIntervalMs?: number;
+    queue?: {
+      mode: 'latest' | 'all';
+      maxRecords?: number;
+      maxAgeMs?: number;
+    };
+    batch?: { maxSize: number; rootProperty?: string };
+    body?: { template: Record<string, unknown> };
+    auth?: { refresh: { url: string; headers?: Record<string, string>; body?: Record<string, unknown> } };
   };
   android: {
     notification: { title: string; text: string; channelName: string };
@@ -53,9 +61,10 @@ export type SessionState =
       survivesProcessDeath: boolean;
     };
 
-export type UploadResult = { ok: boolean; status?: number; at: number };
+export type QueueStatus = { pending: number; oldestAt?: number; sessions: number };
+export type UploadResult = { ok: boolean; status?: number; at: number; sessionId?: string; count?: number };
 export type StopEvent = { reason: StopReason; sessionId: string };
-export type ErrorEvent = { code: string; message: string };
+export type ErrorEvent = { code: string; message: string; sessionId?: string };
 
 export type DebugOptions = {
   enabled: boolean;
@@ -67,7 +76,19 @@ export type DebugOptions = {
 
 export type DebugLogLevel = 'debug' | 'info' | 'warn' | 'error';
 export type DebugLogTag =
-  'lifecycle' | 'permission' | 'location' | 'upload' | 'stop' | 'service' | 'gate' | 'region' | 'store' | 'debug';
+  | 'lifecycle'
+  | 'permission'
+  | 'location'
+  | 'upload'
+  | 'stop'
+  | 'service'
+  | 'gate'
+  | 'region'
+  | 'store'
+  | 'debug'
+  | 'queue'
+  | 'auth'
+  | 'sync';
 
 export type DebugLogLine = {
   seq: number;

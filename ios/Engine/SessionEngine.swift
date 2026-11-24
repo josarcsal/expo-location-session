@@ -67,7 +67,7 @@ final class SessionEngine {
         }
         let now = nowMs()
         if let code = validate(c, nowMs: now, running: config != nil) {
-            throw LocationSessionError(code: code, message: validationMessage(code))
+            throw LocationSessionError(code: code, message: validationMessage(code, c))
         }
         guard LocationSource.hasBackgroundLocationMode else {
             throw LocationSessionError(code: "INVALID_CONFIG", message: "missing UIBackgroundModes location")
@@ -296,7 +296,8 @@ final class SessionEngine {
         events.emitStickyError(code: "ACCURACY_REDUCED", message: "Precise location is off; fixes are approximate and arrival cannot trigger")
     }
 
-    private func validationMessage(_ code: String) -> String {
+    private func validationMessage(_ code: String, _ c: SessionConfig) -> String {
+        if code == "INVALID_CONFIG", let reason = validateSync(c.sync, extrasJson: c.uploadExtrasJson) { return reason }
         switch code {
         case "ALREADY_RUNNING": return "A session is already running; call stop() first"
         case "EXPIRED": return "expiresAt is in the past"

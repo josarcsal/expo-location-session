@@ -13,7 +13,9 @@
 #include "Accuracy.hpp"
 #include "JAccuracy.hpp"
 #include "JNativeDestination.hpp"
+#include "JNativeQueueMode.hpp"
 #include "NativeDestination.hpp"
+#include "NativeQueueMode.hpp"
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -55,6 +57,24 @@ namespace margelo::nitro::locationsession {
       jni::local_ref<jni::JString> uploadExtrasJson = this->getFieldValue(fieldUploadExtrasJson);
       static const auto fieldUploadMinIntervalMs = clazz->getField<double>("uploadMinIntervalMs");
       double uploadMinIntervalMs = this->getFieldValue(fieldUploadMinIntervalMs);
+      static const auto fieldUploadQueueMode = clazz->getField<JNativeQueueMode>("uploadQueueMode");
+      jni::local_ref<JNativeQueueMode> uploadQueueMode = this->getFieldValue(fieldUploadQueueMode);
+      static const auto fieldUploadQueueMaxRecords = clazz->getField<double>("uploadQueueMaxRecords");
+      double uploadQueueMaxRecords = this->getFieldValue(fieldUploadQueueMaxRecords);
+      static const auto fieldUploadQueueMaxAgeMs = clazz->getField<double>("uploadQueueMaxAgeMs");
+      double uploadQueueMaxAgeMs = this->getFieldValue(fieldUploadQueueMaxAgeMs);
+      static const auto fieldUploadBatchMaxSize = clazz->getField<jni::JDouble>("uploadBatchMaxSize");
+      jni::local_ref<jni::JDouble> uploadBatchMaxSize = this->getFieldValue(fieldUploadBatchMaxSize);
+      static const auto fieldUploadBatchRootProperty = clazz->getField<jni::JString>("uploadBatchRootProperty");
+      jni::local_ref<jni::JString> uploadBatchRootProperty = this->getFieldValue(fieldUploadBatchRootProperty);
+      static const auto fieldUploadBodyTemplateJson = clazz->getField<jni::JString>("uploadBodyTemplateJson");
+      jni::local_ref<jni::JString> uploadBodyTemplateJson = this->getFieldValue(fieldUploadBodyTemplateJson);
+      static const auto fieldUploadRefreshUrl = clazz->getField<jni::JString>("uploadRefreshUrl");
+      jni::local_ref<jni::JString> uploadRefreshUrl = this->getFieldValue(fieldUploadRefreshUrl);
+      static const auto fieldUploadRefreshHeaders = clazz->getField<jni::JMap<jni::JString, jni::JString>>("uploadRefreshHeaders");
+      jni::local_ref<jni::JMap<jni::JString, jni::JString>> uploadRefreshHeaders = this->getFieldValue(fieldUploadRefreshHeaders);
+      static const auto fieldUploadRefreshBodyJson = clazz->getField<jni::JString>("uploadRefreshBodyJson");
+      jni::local_ref<jni::JString> uploadRefreshBodyJson = this->getFieldValue(fieldUploadRefreshBodyJson);
       static const auto fieldAndroidNotificationTitle = clazz->getField<jni::JString>("androidNotificationTitle");
       jni::local_ref<jni::JString> androidNotificationTitle = this->getFieldValue(fieldAndroidNotificationTitle);
       static const auto fieldAndroidNotificationText = clazz->getField<jni::JString>("androidNotificationText");
@@ -78,6 +98,22 @@ namespace margelo::nitro::locationsession {
         }(),
         uploadExtrasJson->toStdString(),
         uploadMinIntervalMs,
+        uploadQueueMode->toCpp(),
+        uploadQueueMaxRecords,
+        uploadQueueMaxAgeMs,
+        uploadBatchMaxSize != nullptr ? std::make_optional(uploadBatchMaxSize->value()) : std::nullopt,
+        uploadBatchRootProperty != nullptr ? std::make_optional(uploadBatchRootProperty->toStdString()) : std::nullopt,
+        uploadBodyTemplateJson != nullptr ? std::make_optional(uploadBodyTemplateJson->toStdString()) : std::nullopt,
+        uploadRefreshUrl != nullptr ? std::make_optional(uploadRefreshUrl->toStdString()) : std::nullopt,
+        uploadRefreshHeaders != nullptr ? std::make_optional([&]() {
+          std::unordered_map<std::string, std::string> __map;
+          __map.reserve(uploadRefreshHeaders->size());
+          for (const auto& __entry : *uploadRefreshHeaders) {
+            __map.emplace(__entry.first->toStdString(), __entry.second->toStdString());
+          }
+          return __map;
+        }()) : std::nullopt,
+        uploadRefreshBodyJson != nullptr ? std::make_optional(uploadRefreshBodyJson->toStdString()) : std::nullopt,
         androidNotificationTitle->toStdString(),
         androidNotificationText->toStdString(),
         androidNotificationChannelName->toStdString()
@@ -90,7 +126,7 @@ namespace margelo::nitro::locationsession {
      */
     [[maybe_unused]]
     static jni::local_ref<JNativeSessionConfig::javaobject> fromCpp(const NativeSessionConfig& value) {
-      using JSignature = JNativeSessionConfig(jni::alias_ref<jni::JString>, double, jni::alias_ref<JNativeDestination>, jni::alias_ref<JAccuracy>, double, jni::alias_ref<jni::JString>, jni::alias_ref<jni::JMap<jni::JString, jni::JString>>, jni::alias_ref<jni::JString>, double, jni::alias_ref<jni::JString>, jni::alias_ref<jni::JString>, jni::alias_ref<jni::JString>);
+      using JSignature = JNativeSessionConfig(jni::alias_ref<jni::JString>, double, jni::alias_ref<JNativeDestination>, jni::alias_ref<JAccuracy>, double, jni::alias_ref<jni::JString>, jni::alias_ref<jni::JMap<jni::JString, jni::JString>>, jni::alias_ref<jni::JString>, double, jni::alias_ref<JNativeQueueMode>, double, double, jni::alias_ref<jni::JDouble>, jni::alias_ref<jni::JString>, jni::alias_ref<jni::JString>, jni::alias_ref<jni::JString>, jni::alias_ref<jni::JMap<jni::JString, jni::JString>>, jni::alias_ref<jni::JString>, jni::alias_ref<jni::JString>, jni::alias_ref<jni::JString>, jni::alias_ref<jni::JString>);
       static const auto clazz = javaClassStatic();
       static const auto create = clazz->getStaticMethod<JSignature>("fromCpp");
       return create(
@@ -110,6 +146,21 @@ namespace margelo::nitro::locationsession {
         }(),
         jni::make_jstring(value.uploadExtrasJson),
         value.uploadMinIntervalMs,
+        JNativeQueueMode::fromCpp(value.uploadQueueMode),
+        value.uploadQueueMaxRecords,
+        value.uploadQueueMaxAgeMs,
+        value.uploadBatchMaxSize.has_value() ? jni::JDouble::valueOf(value.uploadBatchMaxSize.value()) : nullptr,
+        value.uploadBatchRootProperty.has_value() ? jni::make_jstring(value.uploadBatchRootProperty.value()) : nullptr,
+        value.uploadBodyTemplateJson.has_value() ? jni::make_jstring(value.uploadBodyTemplateJson.value()) : nullptr,
+        value.uploadRefreshUrl.has_value() ? jni::make_jstring(value.uploadRefreshUrl.value()) : nullptr,
+        value.uploadRefreshHeaders.has_value() ? [&]() -> jni::local_ref<jni::JMap<jni::JString, jni::JString>> {
+          auto __map = jni::JHashMap<jni::JString, jni::JString>::create(value.uploadRefreshHeaders.value().size());
+          for (const auto& __entry : value.uploadRefreshHeaders.value()) {
+            __map->put(jni::make_jstring(__entry.first), jni::make_jstring(__entry.second));
+          }
+          return __map;
+        }() : nullptr,
+        value.uploadRefreshBodyJson.has_value() ? jni::make_jstring(value.uploadRefreshBodyJson.value()) : nullptr,
         jni::make_jstring(value.androidNotificationTitle),
         jni::make_jstring(value.androidNotificationText),
         jni::make_jstring(value.androidNotificationChannelName)

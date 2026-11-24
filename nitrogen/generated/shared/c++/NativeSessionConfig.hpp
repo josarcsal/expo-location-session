@@ -32,12 +32,15 @@
 namespace margelo::nitro::locationsession { struct NativeDestination; }
 // Forward declaration of `Accuracy` to properly resolve imports.
 namespace margelo::nitro::locationsession { enum class Accuracy; }
+// Forward declaration of `NativeQueueMode` to properly resolve imports.
+namespace margelo::nitro::locationsession { enum class NativeQueueMode; }
 
 #include <string>
 #include "NativeDestination.hpp"
 #include <optional>
 #include "Accuracy.hpp"
 #include <unordered_map>
+#include "NativeQueueMode.hpp"
 
 namespace margelo::nitro::locationsession {
 
@@ -55,13 +58,22 @@ namespace margelo::nitro::locationsession {
     std::unordered_map<std::string, std::string> uploadHeaders     SWIFT_PRIVATE;
     std::string uploadExtrasJson     SWIFT_PRIVATE;
     double uploadMinIntervalMs     SWIFT_PRIVATE;
+    NativeQueueMode uploadQueueMode     SWIFT_PRIVATE;
+    double uploadQueueMaxRecords     SWIFT_PRIVATE;
+    double uploadQueueMaxAgeMs     SWIFT_PRIVATE;
+    std::optional<double> uploadBatchMaxSize     SWIFT_PRIVATE;
+    std::optional<std::string> uploadBatchRootProperty     SWIFT_PRIVATE;
+    std::optional<std::string> uploadBodyTemplateJson     SWIFT_PRIVATE;
+    std::optional<std::string> uploadRefreshUrl     SWIFT_PRIVATE;
+    std::optional<std::unordered_map<std::string, std::string>> uploadRefreshHeaders     SWIFT_PRIVATE;
+    std::optional<std::string> uploadRefreshBodyJson     SWIFT_PRIVATE;
     std::string androidNotificationTitle     SWIFT_PRIVATE;
     std::string androidNotificationText     SWIFT_PRIVATE;
     std::string androidNotificationChannelName     SWIFT_PRIVATE;
 
   public:
     NativeSessionConfig() = default;
-    explicit NativeSessionConfig(std::string id, double expiresAt, std::optional<NativeDestination> destination, Accuracy accuracy, double distanceFilterMeters, std::string uploadUrl, std::unordered_map<std::string, std::string> uploadHeaders, std::string uploadExtrasJson, double uploadMinIntervalMs, std::string androidNotificationTitle, std::string androidNotificationText, std::string androidNotificationChannelName): id(id), expiresAt(expiresAt), destination(destination), accuracy(accuracy), distanceFilterMeters(distanceFilterMeters), uploadUrl(uploadUrl), uploadHeaders(uploadHeaders), uploadExtrasJson(uploadExtrasJson), uploadMinIntervalMs(uploadMinIntervalMs), androidNotificationTitle(androidNotificationTitle), androidNotificationText(androidNotificationText), androidNotificationChannelName(androidNotificationChannelName) {}
+    explicit NativeSessionConfig(std::string id, double expiresAt, std::optional<NativeDestination> destination, Accuracy accuracy, double distanceFilterMeters, std::string uploadUrl, std::unordered_map<std::string, std::string> uploadHeaders, std::string uploadExtrasJson, double uploadMinIntervalMs, NativeQueueMode uploadQueueMode, double uploadQueueMaxRecords, double uploadQueueMaxAgeMs, std::optional<double> uploadBatchMaxSize, std::optional<std::string> uploadBatchRootProperty, std::optional<std::string> uploadBodyTemplateJson, std::optional<std::string> uploadRefreshUrl, std::optional<std::unordered_map<std::string, std::string>> uploadRefreshHeaders, std::optional<std::string> uploadRefreshBodyJson, std::string androidNotificationTitle, std::string androidNotificationText, std::string androidNotificationChannelName): id(id), expiresAt(expiresAt), destination(destination), accuracy(accuracy), distanceFilterMeters(distanceFilterMeters), uploadUrl(uploadUrl), uploadHeaders(uploadHeaders), uploadExtrasJson(uploadExtrasJson), uploadMinIntervalMs(uploadMinIntervalMs), uploadQueueMode(uploadQueueMode), uploadQueueMaxRecords(uploadQueueMaxRecords), uploadQueueMaxAgeMs(uploadQueueMaxAgeMs), uploadBatchMaxSize(uploadBatchMaxSize), uploadBatchRootProperty(uploadBatchRootProperty), uploadBodyTemplateJson(uploadBodyTemplateJson), uploadRefreshUrl(uploadRefreshUrl), uploadRefreshHeaders(uploadRefreshHeaders), uploadRefreshBodyJson(uploadRefreshBodyJson), androidNotificationTitle(androidNotificationTitle), androidNotificationText(androidNotificationText), androidNotificationChannelName(androidNotificationChannelName) {}
 
   public:
     friend bool operator==(const NativeSessionConfig& lhs, const NativeSessionConfig& rhs) = default;
@@ -86,6 +98,15 @@ namespace margelo::nitro {
         JSIConverter<std::unordered_map<std::string, std::string>>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "uploadHeaders"))),
         JSIConverter<std::string>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "uploadExtrasJson"))),
         JSIConverter<double>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "uploadMinIntervalMs"))),
+        JSIConverter<margelo::nitro::locationsession::NativeQueueMode>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "uploadQueueMode"))),
+        JSIConverter<double>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "uploadQueueMaxRecords"))),
+        JSIConverter<double>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "uploadQueueMaxAgeMs"))),
+        JSIConverter<std::optional<double>>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "uploadBatchMaxSize"))),
+        JSIConverter<std::optional<std::string>>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "uploadBatchRootProperty"))),
+        JSIConverter<std::optional<std::string>>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "uploadBodyTemplateJson"))),
+        JSIConverter<std::optional<std::string>>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "uploadRefreshUrl"))),
+        JSIConverter<std::optional<std::unordered_map<std::string, std::string>>>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "uploadRefreshHeaders"))),
+        JSIConverter<std::optional<std::string>>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "uploadRefreshBodyJson"))),
         JSIConverter<std::string>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "androidNotificationTitle"))),
         JSIConverter<std::string>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "androidNotificationText"))),
         JSIConverter<std::string>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "androidNotificationChannelName")))
@@ -102,6 +123,15 @@ namespace margelo::nitro {
       obj.setProperty(runtime, PropNameIDCache::get(runtime, "uploadHeaders"), JSIConverter<std::unordered_map<std::string, std::string>>::toJSI(runtime, arg.uploadHeaders));
       obj.setProperty(runtime, PropNameIDCache::get(runtime, "uploadExtrasJson"), JSIConverter<std::string>::toJSI(runtime, arg.uploadExtrasJson));
       obj.setProperty(runtime, PropNameIDCache::get(runtime, "uploadMinIntervalMs"), JSIConverter<double>::toJSI(runtime, arg.uploadMinIntervalMs));
+      obj.setProperty(runtime, PropNameIDCache::get(runtime, "uploadQueueMode"), JSIConverter<margelo::nitro::locationsession::NativeQueueMode>::toJSI(runtime, arg.uploadQueueMode));
+      obj.setProperty(runtime, PropNameIDCache::get(runtime, "uploadQueueMaxRecords"), JSIConverter<double>::toJSI(runtime, arg.uploadQueueMaxRecords));
+      obj.setProperty(runtime, PropNameIDCache::get(runtime, "uploadQueueMaxAgeMs"), JSIConverter<double>::toJSI(runtime, arg.uploadQueueMaxAgeMs));
+      obj.setProperty(runtime, PropNameIDCache::get(runtime, "uploadBatchMaxSize"), JSIConverter<std::optional<double>>::toJSI(runtime, arg.uploadBatchMaxSize));
+      obj.setProperty(runtime, PropNameIDCache::get(runtime, "uploadBatchRootProperty"), JSIConverter<std::optional<std::string>>::toJSI(runtime, arg.uploadBatchRootProperty));
+      obj.setProperty(runtime, PropNameIDCache::get(runtime, "uploadBodyTemplateJson"), JSIConverter<std::optional<std::string>>::toJSI(runtime, arg.uploadBodyTemplateJson));
+      obj.setProperty(runtime, PropNameIDCache::get(runtime, "uploadRefreshUrl"), JSIConverter<std::optional<std::string>>::toJSI(runtime, arg.uploadRefreshUrl));
+      obj.setProperty(runtime, PropNameIDCache::get(runtime, "uploadRefreshHeaders"), JSIConverter<std::optional<std::unordered_map<std::string, std::string>>>::toJSI(runtime, arg.uploadRefreshHeaders));
+      obj.setProperty(runtime, PropNameIDCache::get(runtime, "uploadRefreshBodyJson"), JSIConverter<std::optional<std::string>>::toJSI(runtime, arg.uploadRefreshBodyJson));
       obj.setProperty(runtime, PropNameIDCache::get(runtime, "androidNotificationTitle"), JSIConverter<std::string>::toJSI(runtime, arg.androidNotificationTitle));
       obj.setProperty(runtime, PropNameIDCache::get(runtime, "androidNotificationText"), JSIConverter<std::string>::toJSI(runtime, arg.androidNotificationText));
       obj.setProperty(runtime, PropNameIDCache::get(runtime, "androidNotificationChannelName"), JSIConverter<std::string>::toJSI(runtime, arg.androidNotificationChannelName));
@@ -124,6 +154,15 @@ namespace margelo::nitro {
       if (!JSIConverter<std::unordered_map<std::string, std::string>>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "uploadHeaders")))) return false;
       if (!JSIConverter<std::string>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "uploadExtrasJson")))) return false;
       if (!JSIConverter<double>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "uploadMinIntervalMs")))) return false;
+      if (!JSIConverter<margelo::nitro::locationsession::NativeQueueMode>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "uploadQueueMode")))) return false;
+      if (!JSIConverter<double>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "uploadQueueMaxRecords")))) return false;
+      if (!JSIConverter<double>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "uploadQueueMaxAgeMs")))) return false;
+      if (!JSIConverter<std::optional<double>>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "uploadBatchMaxSize")))) return false;
+      if (!JSIConverter<std::optional<std::string>>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "uploadBatchRootProperty")))) return false;
+      if (!JSIConverter<std::optional<std::string>>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "uploadBodyTemplateJson")))) return false;
+      if (!JSIConverter<std::optional<std::string>>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "uploadRefreshUrl")))) return false;
+      if (!JSIConverter<std::optional<std::unordered_map<std::string, std::string>>>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "uploadRefreshHeaders")))) return false;
+      if (!JSIConverter<std::optional<std::string>>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "uploadRefreshBodyJson")))) return false;
       if (!JSIConverter<std::string>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "androidNotificationTitle")))) return false;
       if (!JSIConverter<std::string>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "androidNotificationText")))) return false;
       if (!JSIConverter<std::string>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "androidNotificationChannelName")))) return false;

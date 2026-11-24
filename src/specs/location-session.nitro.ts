@@ -5,6 +5,7 @@ export type PermissionLevel = 'whenInUse' | 'always';
 export type PermissionValue = 'granted' | 'denied' | 'undetermined';
 export type SessionStatus = 'idle' | 'running';
 export type SessionEvent = 'location' | 'upload' | 'stop' | 'error' | 'log';
+export type NativeQueueMode = 'latest' | 'all';
 
 export interface NativeDestination {
   latitude: number;
@@ -22,6 +23,15 @@ export interface NativeSessionConfig {
   uploadHeaders: Record<string, string>;
   uploadExtrasJson: string;
   uploadMinIntervalMs: number;
+  uploadQueueMode: NativeQueueMode;
+  uploadQueueMaxRecords: number;
+  uploadQueueMaxAgeMs: number;
+  uploadBatchMaxSize?: number;
+  uploadBatchRootProperty?: string;
+  uploadBodyTemplateJson?: string;
+  uploadRefreshUrl?: string;
+  uploadRefreshHeaders?: Record<string, string>;
+  uploadRefreshBodyJson?: string;
   androidNotificationTitle: string;
   androidNotificationText: string;
   androidNotificationChannelName: string;
@@ -57,6 +67,12 @@ export interface NativeSessionState {
   lastStopSessionId?: string;
 }
 
+export interface NativeQueueStatus {
+  pending: number;
+  oldestAt?: number;
+  sessions: number;
+}
+
 export interface NativeDebugOptions {
   enabled: boolean;
   url?: string;
@@ -77,6 +93,9 @@ export interface LocationSession extends HybridObject<{ ios: 'swift'; android: '
   clearDebugLog(): Promise<void>;
   flushDebugLog(): Promise<number>;
   getDebugInstallId(): Promise<string>;
+  getQueueStatus(): Promise<NativeQueueStatus>;
+  syncQueue(): Promise<number>;
+  clearQueue(): Promise<void>;
   addListener(event: SessionEvent, callback: (payloadJson: string) => void): number;
   removeListener(id: number): void;
 }

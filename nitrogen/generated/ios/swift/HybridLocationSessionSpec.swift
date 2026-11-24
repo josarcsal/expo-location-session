@@ -24,6 +24,9 @@ public protocol HybridLocationSessionSpec_protocol: HybridObject {
   func clearDebugLog() throws -> Promise<Void>
   func flushDebugLog() throws -> Promise<Double>
   func getDebugInstallId() throws -> Promise<String>
+  func getQueueStatus() throws -> Promise<NativeQueueStatus>
+  func syncQueue() throws -> Promise<Double>
+  func clearQueue() throws -> Promise<Void>
   func addListener(event: SessionEvent, callback: @escaping (_ payloadJson: String) -> Void) throws -> Double
   func removeListener(id: Double) throws -> Void
 }

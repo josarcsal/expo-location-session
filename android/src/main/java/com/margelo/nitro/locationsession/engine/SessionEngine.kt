@@ -26,6 +26,7 @@ import com.margelo.nitro.locationsession.core.isDuplicateFix
 import com.margelo.nitro.locationsession.core.stopDecision
 import com.margelo.nitro.locationsession.core.stopQueueAction
 import com.margelo.nitro.locationsession.core.validate
+import com.margelo.nitro.locationsession.core.validateSync
 import org.json.JSONObject
 
 class LocationSessionException(val code: String, message: String) : RuntimeException("$code: $message")
@@ -113,7 +114,7 @@ object SessionEngine {
         }
         val now = nowMs()
         validate(c, now, config != null, Permissions.notificationsGranted(context))?.let {
-            throw LocationSessionException(it, validationMessage(it))
+            throw LocationSessionException(it, validationMessage(it, c))
         }
         if (!store.save(c, now)) {
             store.wipe()
@@ -521,11 +522,14 @@ object SessionEngine {
         return info.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
     }
 
-    private fun validationMessage(code: String): String = when (code) {
-        "ALREADY_RUNNING" -> "A session is already running; call stop() first"
-        "EXPIRED" -> "expiresAt is in the past"
-        "NOTIFICATION_PERMISSION_DENIED" -> "Notification permission is not granted"
-        else -> "Invalid session config (https upload url, non-empty id, positive radius, valid accuracy)"
+    private fun validationMessage(code: String, c: SessionConfig): String {
+        if (code == "INVALID_CONFIG") validateSync(c.sync, c.uploadExtrasJson)?.let { return it }
+        return when (code) {
+            "ALREADY_RUNNING" -> "A session is already running; call stop() first"
+            "EXPIRED" -> "expiresAt is in the past"
+            "NOTIFICATION_PERMISSION_DENIED" -> "Notification permission is not granted"
+            else -> "Invalid session config (https upload url, non-empty id, positive radius, valid accuracy)"
+        }
     }
 }
 

@@ -26,12 +26,16 @@ namespace margelo::nitro::locationsession { enum class Accuracy; }
 namespace margelo::nitro::locationsession { struct NativeSessionConfig; }
 // Forward declaration of `NativeDestination` to properly resolve imports.
 namespace margelo::nitro::locationsession { struct NativeDestination; }
+// Forward declaration of `NativeQueueMode` to properly resolve imports.
+namespace margelo::nitro::locationsession { enum class NativeQueueMode; }
 // Forward declaration of `NativeSessionState` to properly resolve imports.
 namespace margelo::nitro::locationsession { struct NativeSessionState; }
 // Forward declaration of `SessionStatus` to properly resolve imports.
 namespace margelo::nitro::locationsession { enum class SessionStatus; }
 // Forward declaration of `NativeDebugOptions` to properly resolve imports.
 namespace margelo::nitro::locationsession { struct NativeDebugOptions; }
+// Forward declaration of `NativeQueueStatus` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeQueueStatus; }
 // Forward declaration of `SessionEvent` to properly resolve imports.
 namespace margelo::nitro::locationsession { enum class SessionEvent; }
 
@@ -46,9 +50,11 @@ namespace margelo::nitro::locationsession { enum class SessionEvent; }
 #include <string>
 #include "NativeDestination.hpp"
 #include <unordered_map>
+#include "NativeQueueMode.hpp"
 #include "NativeSessionState.hpp"
 #include "SessionStatus.hpp"
 #include "NativeDebugOptions.hpp"
+#include "NativeQueueStatus.hpp"
 #include "SessionEvent.hpp"
 #include <functional>
 
@@ -184,6 +190,30 @@ namespace margelo::nitro::locationsession {
     }
     inline std::shared_ptr<Promise<std::string>> getDebugInstallId() override {
       auto __result = _swiftPart.getDebugInstallId();
+      if (__result.hasError()) [[unlikely]] {
+        std::rethrow_exception(__result.error());
+      }
+      auto __value = std::move(__result.value());
+      return __value;
+    }
+    inline std::shared_ptr<Promise<NativeQueueStatus>> getQueueStatus() override {
+      auto __result = _swiftPart.getQueueStatus();
+      if (__result.hasError()) [[unlikely]] {
+        std::rethrow_exception(__result.error());
+      }
+      auto __value = std::move(__result.value());
+      return __value;
+    }
+    inline std::shared_ptr<Promise<double>> syncQueue() override {
+      auto __result = _swiftPart.syncQueue();
+      if (__result.hasError()) [[unlikely]] {
+        std::rethrow_exception(__result.error());
+      }
+      auto __value = std::move(__result.value());
+      return __value;
+    }
+    inline std::shared_ptr<Promise<void>> clearQueue() override {
+      auto __result = _swiftPart.clearQueue();
       if (__result.hasError()) [[unlikely]] {
         std::rethrow_exception(__result.error());
       }

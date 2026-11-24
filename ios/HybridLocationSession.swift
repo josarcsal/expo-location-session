@@ -109,6 +109,32 @@ class HybridLocationSession: HybridLocationSessionSpec {
         }
     }
 
+    func getQueueStatus() throws -> Promise<NativeQueueStatus> {
+        onMain { promise in
+            do {
+                let status = try self.engine.queueStatus()
+                promise.resolve(withResult: NativeQueueStatus(pending: Double(status.pending), oldestAt: status.oldestAt.map(Double.init), sessions: Double(status.sessions)))
+            } catch let error as LocationSessionError {
+                promise.reject(withError: runtimeError(error))
+            } catch {
+                promise.reject(withError: RuntimeError.error(withMessage: "INTERNAL: \(error)"))
+            }
+        }
+    }
+
+    func syncQueue() throws -> Promise<Double> {
+        onMain { promise in
+            self.engine.syncQueue { promise.resolve(withResult: Double($0)) }
+        }
+    }
+
+    func clearQueue() throws -> Promise<Void> {
+        onMain { promise in
+            self.engine.clearQueue()
+            promise.resolve()
+        }
+    }
+
     func addListener(event: SessionEvent, callback: @escaping (String) -> Void) throws -> Double {
         guard let kind = EventBus.Event(rawValue: event.stringValue) else {
             throw RuntimeError.error(withMessage: "INVALID_EVENT: \(event.stringValue)")
@@ -149,6 +175,32 @@ private func milliseconds(_ value: Double) -> Int64? {
     return Int64(value.rounded())
 }
 
+private func integer(_ value: Double, _ field: String) throws -> Int64 {
+    guard value.isFinite, value.rounded() == value, abs(value) < 9.0e15 else {
+        throw LocationSessionError(code: "INVALID_CONFIG", message: "\(field) must be an integer")
+    }
+    return Int64(value)
+}
+
+private func syncConfig(_ c: NativeSessionConfig) throws -> SyncConfig {
+    let maxRecords = try integer(c.uploadQueueMaxRecords, "queue.maxRecords")
+    let maxAgeMs = try integer(c.uploadQueueMaxAgeMs, "queue.maxAgeMs")
+    let batch = try c.uploadBatchMaxSize.map {
+        BatchConfig(maxSize: Int(try integer($0, "batch.maxSize")), rootProperty: c.uploadBatchRootProperty ?? "locations")
+    }
+    let refresh = c.uploadRefreshUrl.map {
+        RefreshConfig(url: $0, headers: c.uploadRefreshHeaders ?? [:], bodyJson: c.uploadRefreshBodyJson)
+    }
+    return SyncConfig(
+        mode: QueueMode(rawValue: c.uploadQueueMode.stringValue) ?? .latest,
+        maxRecords: Int(maxRecords),
+        maxAgeMs: maxAgeMs,
+        batch: batch,
+        templateJson: c.uploadBodyTemplateJson,
+        refresh: refresh
+    )
+}
+
 private func sessionConfig(_ c: NativeSessionConfig) throws -> SessionConfig {
     guard let expiresAt = milliseconds(c.expiresAt), let minInterval = milliseconds(c.uploadMinIntervalMs), c.distanceFilterMeters.isFinite else {
         throw LocationSessionError(code: "INVALID_CONFIG", message: "expiresAt, distanceFilterMeters and upload.minIntervalMs must be finite numbers")
@@ -168,7 +220,8 @@ private func sessionConfig(_ c: NativeSessionConfig) throws -> SessionConfig {
         uploadUrl: c.uploadUrl,
         uploadHeaders: c.uploadHeaders,
         uploadExtrasJson: c.uploadExtrasJson,
-        uploadMinIntervalMs: minInterval
+        uploadMinIntervalMs: minInterval,
+        sync: try syncConfig(c)
     )
 }
 

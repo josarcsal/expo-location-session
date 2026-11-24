@@ -7,11 +7,15 @@ import androidx.annotation.Keep
 import com.facebook.proguard.annotations.DoNotStrip
 import com.margelo.nitro.NitroModules
 import com.margelo.nitro.core.Promise
+import com.margelo.nitro.locationsession.core.BatchConfig
 import com.margelo.nitro.locationsession.core.DebugOptions
 import com.margelo.nitro.locationsession.core.Destination
 import com.margelo.nitro.locationsession.core.Fix
+import com.margelo.nitro.locationsession.core.QueueMode
+import com.margelo.nitro.locationsession.core.RefreshConfig
 import com.margelo.nitro.locationsession.core.SessionConfig
 import com.margelo.nitro.locationsession.core.StopReason
+import com.margelo.nitro.locationsession.core.SyncConfig
 import com.margelo.nitro.locationsession.engine.CurrentPosition
 import com.margelo.nitro.locationsession.engine.DebugLogger
 import com.margelo.nitro.locationsession.engine.EngineState
@@ -127,6 +131,20 @@ class HybridLocationSession : HybridLocationSessionSpec() {
         }
     }
 
+    override fun getQueueStatus(): Promise<NativeQueueStatus> = onMain { ctx, promise ->
+        val status = SessionEngine.queueStatus(ctx)
+        promise.resolve(NativeQueueStatus(status.pending.toDouble(), status.oldestAt?.toDouble(), status.sessions.toDouble()))
+    }
+
+    override fun syncQueue(): Promise<Double> = onMain { ctx, promise ->
+        SessionEngine.syncQueue(ctx) { promise.resolve(it.toDouble()) }
+    }
+
+    override fun clearQueue(): Promise<Unit> = onMain { ctx, promise ->
+        SessionEngine.clearQueue(ctx)
+        promise.resolve(Unit)
+    }
+
     override fun addListener(event: SessionEvent, callback: (payloadJson: String) -> Unit): Double {
         val name = when (event) {
             SessionEvent.LOCATION -> "location"
@@ -155,6 +173,33 @@ private fun Accuracy.wire(): String = when (this) {
 private fun milliseconds(value: Double): Long? =
     if (value.isFinite() && abs(value) < 9.0e15) value.roundToLong() else null
 
+private fun integer(value: Double, field: String): Long {
+    if (!value.isFinite() || value != Math.rint(value) || abs(value) >= 9.0e15) {
+        throw LocationSessionException("INVALID_CONFIG", "$field must be an integer")
+    }
+    return value.toLong()
+}
+
+private fun syncConfig(c: NativeSessionConfig): SyncConfig {
+    val maxRecords = integer(c.uploadQueueMaxRecords, "queue.maxRecords")
+    val maxAgeMs = integer(c.uploadQueueMaxAgeMs, "queue.maxAgeMs")
+    val batch = c.uploadBatchMaxSize?.let {
+        BatchConfig(integer(it, "batch.maxSize").coerceIn(Int.MIN_VALUE.toLong(), Int.MAX_VALUE.toLong()).toInt(), c.uploadBatchRootProperty ?: "locations")
+    }
+    val refresh = c.uploadRefreshUrl?.let { RefreshConfig(it, c.uploadRefreshHeaders ?: emptyMap(), c.uploadRefreshBodyJson) }
+    return SyncConfig(
+        mode = when (c.uploadQueueMode) {
+            NativeQueueMode.LATEST -> QueueMode.LATEST
+            NativeQueueMode.ALL -> QueueMode.ALL
+        },
+        maxRecords = maxRecords.coerceIn(Int.MIN_VALUE.toLong(), Int.MAX_VALUE.toLong()).toInt(),
+        maxAgeMs = maxAgeMs,
+        batch = batch,
+        templateJson = c.uploadBodyTemplateJson,
+        refresh = refresh
+    )
+}
+
 private fun sessionConfig(c: NativeSessionConfig): SessionConfig {
     val expiresAt = milliseconds(c.expiresAt)
     val minInterval = milliseconds(c.uploadMinIntervalMs)
@@ -181,7 +226,8 @@ private fun sessionConfig(c: NativeSessionConfig): SessionConfig {
         uploadMinIntervalMs = minInterval,
         notificationTitle = c.androidNotificationTitle,
         notificationText = c.androidNotificationText,
-        notificationChannelName = c.androidNotificationChannelName
+        notificationChannelName = c.androidNotificationChannelName,
+        sync = syncConfig(c)
     )
 }
 

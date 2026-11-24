@@ -65,6 +65,9 @@ namespace margelo::nitro::locationsession {
     std::shared_ptr<Promise<void>> clearDebugLog() override;
     std::shared_ptr<Promise<double>> flushDebugLog() override;
     std::shared_ptr<Promise<std::string>> getDebugInstallId() override;
+    std::shared_ptr<Promise<NativeQueueStatus>> getQueueStatus() override;
+    std::shared_ptr<Promise<double>> syncQueue() override;
+    std::shared_ptr<Promise<void>> clearQueue() override;
     double addListener(SessionEvent event, const std::function<void(const std::string& /* payloadJson */)>& callback) override;
     void removeListener(double id) override;
 

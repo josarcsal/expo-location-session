@@ -18,7 +18,7 @@ public extension NativeSessionConfig {
   /**
    * Create a new instance of `NativeSessionConfig`.
    */
-  init(id: String, expiresAt: Double, destination: NativeDestination?, accuracy: Accuracy, distanceFilterMeters: Double, uploadUrl: String, uploadHeaders: Dictionary<String, String>, uploadExtrasJson: String, uploadMinIntervalMs: Double, androidNotificationTitle: String, androidNotificationText: String, androidNotificationChannelName: String) {
+  init(id: String, expiresAt: Double, destination: NativeDestination?, accuracy: Accuracy, distanceFilterMeters: Double, uploadUrl: String, uploadHeaders: Dictionary<String, String>, uploadExtrasJson: String, uploadMinIntervalMs: Double, uploadQueueMode: NativeQueueMode, uploadQueueMaxRecords: Double, uploadQueueMaxAgeMs: Double, uploadBatchMaxSize: Double?, uploadBatchRootProperty: String?, uploadBodyTemplateJson: String?, uploadRefreshUrl: String?, uploadRefreshHeaders: Dictionary<String, String>?, uploadRefreshBodyJson: String?, androidNotificationTitle: String, androidNotificationText: String, androidNotificationChannelName: String) {
     self.init(std.string(id), expiresAt, { () -> bridge.std__optional_NativeDestination_ in
       if let __unwrappedValue = destination {
         return bridge.create_std__optional_NativeDestination_(__unwrappedValue)
@@ -31,7 +31,49 @@ public extension NativeSessionConfig {
         bridge.emplace_std__unordered_map_std__string__std__string_(&__map, std.string(__k), std.string(__v))
       }
       return __map
-    }(), std.string(uploadExtrasJson), uploadMinIntervalMs, std.string(androidNotificationTitle), std.string(androidNotificationText), std.string(androidNotificationChannelName))
+    }(), std.string(uploadExtrasJson), uploadMinIntervalMs, uploadQueueMode, uploadQueueMaxRecords, uploadQueueMaxAgeMs, { () -> bridge.std__optional_double_ in
+      if let __unwrappedValue = uploadBatchMaxSize {
+        return bridge.create_std__optional_double_(__unwrappedValue)
+      } else {
+        return .init()
+      }
+    }(), { () -> bridge.std__optional_std__string_ in
+      if let __unwrappedValue = uploadBatchRootProperty {
+        return bridge.create_std__optional_std__string_(std.string(__unwrappedValue))
+      } else {
+        return .init()
+      }
+    }(), { () -> bridge.std__optional_std__string_ in
+      if let __unwrappedValue = uploadBodyTemplateJson {
+        return bridge.create_std__optional_std__string_(std.string(__unwrappedValue))
+      } else {
+        return .init()
+      }
+    }(), { () -> bridge.std__optional_std__string_ in
+      if let __unwrappedValue = uploadRefreshUrl {
+        return bridge.create_std__optional_std__string_(std.string(__unwrappedValue))
+      } else {
+        return .init()
+      }
+    }(), { () -> bridge.std__optional_std__unordered_map_std__string__std__string__ in
+      if let __unwrappedValue = uploadRefreshHeaders {
+        return bridge.create_std__optional_std__unordered_map_std__string__std__string__({ () -> bridge.std__unordered_map_std__string__std__string_ in
+          var __map = bridge.create_std__unordered_map_std__string__std__string_(__unwrappedValue.count)
+          for (__k, __v) in __unwrappedValue {
+            bridge.emplace_std__unordered_map_std__string__std__string_(&__map, std.string(__k), std.string(__v))
+          }
+          return __map
+        }())
+      } else {
+        return .init()
+      }
+    }(), { () -> bridge.std__optional_std__string_ in
+      if let __unwrappedValue = uploadRefreshBodyJson {
+        return bridge.create_std__optional_std__string_(std.string(__unwrappedValue))
+      } else {
+        return .init()
+      }
+    }(), std.string(androidNotificationTitle), std.string(androidNotificationText), std.string(androidNotificationChannelName))
   }
 
   @inline(__always)
@@ -85,6 +127,101 @@ public extension NativeSessionConfig {
   @inline(__always)
   var uploadMinIntervalMs: Double {
     return self.__uploadMinIntervalMs
+  }
+  
+  @inline(__always)
+  var uploadQueueMode: NativeQueueMode {
+    return self.__uploadQueueMode
+  }
+  
+  @inline(__always)
+  var uploadQueueMaxRecords: Double {
+    return self.__uploadQueueMaxRecords
+  }
+  
+  @inline(__always)
+  var uploadQueueMaxAgeMs: Double {
+    return self.__uploadQueueMaxAgeMs
+  }
+  
+  @inline(__always)
+  var uploadBatchMaxSize: Double? {
+    return { () -> Double? in
+      if bridge.has_value_std__optional_double_(self.__uploadBatchMaxSize) {
+        let __unwrapped = bridge.get_std__optional_double_(self.__uploadBatchMaxSize)
+        return __unwrapped
+      } else {
+        return nil
+      }
+    }()
+  }
+  
+  @inline(__always)
+  var uploadBatchRootProperty: String? {
+    return { () -> String? in
+      if bridge.has_value_std__optional_std__string_(self.__uploadBatchRootProperty) {
+        let __unwrapped = bridge.get_std__optional_std__string_(self.__uploadBatchRootProperty)
+        return String(__unwrapped)
+      } else {
+        return nil
+      }
+    }()
+  }
+  
+  @inline(__always)
+  var uploadBodyTemplateJson: String? {
+    return { () -> String? in
+      if bridge.has_value_std__optional_std__string_(self.__uploadBodyTemplateJson) {
+        let __unwrapped = bridge.get_std__optional_std__string_(self.__uploadBodyTemplateJson)
+        return String(__unwrapped)
+      } else {
+        return nil
+      }
+    }()
+  }
+  
+  @inline(__always)
+  var uploadRefreshUrl: String? {
+    return { () -> String? in
+      if bridge.has_value_std__optional_std__string_(self.__uploadRefreshUrl) {
+        let __unwrapped = bridge.get_std__optional_std__string_(self.__uploadRefreshUrl)
+        return String(__unwrapped)
+      } else {
+        return nil
+      }
+    }()
+  }
+  
+  @inline(__always)
+  var uploadRefreshHeaders: Dictionary<String, String>? {
+    return { () -> Dictionary<String, String>? in
+      if bridge.has_value_std__optional_std__unordered_map_std__string__std__string__(self.__uploadRefreshHeaders) {
+        let __unwrapped = bridge.get_std__optional_std__unordered_map_std__string__std__string__(self.__uploadRefreshHeaders)
+        return { () -> Dictionary<String, String> in
+          var __dictionary = Dictionary<String, String>(minimumCapacity: __unwrapped.size())
+          let __keys = bridge.get_std__unordered_map_std__string__std__string__keys(__unwrapped)
+          for __key in __keys {
+            let __value = bridge.get_std__unordered_map_std__string__std__string__value(__unwrapped, __key)
+            __dictionary[String(__key)] = String(__value)
+          }
+          return __dictionary
+        }()
+      } else {
+        return nil
+      }
+    }()
+  }
+  
+  @inline(__always)
+  var uploadRefreshBodyJson: String? {
+    return { () -> String? in
+      if bridge.has_value_std__optional_std__string_(self.__uploadRefreshBodyJson) {
+        let __unwrapped = bridge.get_std__optional_std__string_(self.__uploadRefreshBodyJson)
+        return String(__unwrapped)
+      } else {
+        return nil
+      }
+    }()
   }
   
   @inline(__always)
