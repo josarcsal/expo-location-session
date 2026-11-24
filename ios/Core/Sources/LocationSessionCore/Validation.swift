@@ -13,5 +13,6 @@ private func isInvalid(_ c: SessionConfig) -> Bool {
     if let d = c.destination, !(d.radiusMeters > 0) { return true }
     if !(c.distanceFilterMeters >= 0) { return true }
     if c.uploadMinIntervalMs < 0 { return true }
+    if validateSync(c.sync, extrasJson: c.uploadExtrasJson) != nil { return true }
     return !["high", "balanced", "low"].contains(c.accuracy)
 }

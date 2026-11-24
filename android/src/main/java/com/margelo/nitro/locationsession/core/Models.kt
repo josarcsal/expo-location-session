@@ -28,7 +28,8 @@ data class SessionConfig(
     val uploadMinIntervalMs: Long,
     val notificationTitle: String,
     val notificationText: String,
-    val notificationChannelName: String
+    val notificationChannelName: String,
+    val sync: SyncConfig = SyncConfig()
 ) {
     fun toJson(): String {
         val o = JSONObject()
@@ -54,6 +55,7 @@ data class SessionConfig(
         o.put("notificationTitle", notificationTitle)
         o.put("notificationText", notificationText)
         o.put("notificationChannelName", notificationChannelName)
+        o.put("sync", sync.toJsonObject())
         return o.toString()
     }
 
@@ -78,7 +80,8 @@ data class SessionConfig(
                 uploadMinIntervalMs = o.getLong("uploadMinIntervalMs"),
                 notificationTitle = o.getString("notificationTitle"),
                 notificationText = o.getString("notificationText"),
-                notificationChannelName = o.getString("notificationChannelName")
+                notificationChannelName = o.getString("notificationChannelName"),
+                sync = o.optJSONObject("sync")?.let { SyncConfig.fromJsonObject(it) } ?: SyncConfig()
             )
         }
     }

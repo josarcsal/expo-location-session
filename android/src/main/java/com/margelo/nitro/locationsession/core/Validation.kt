@@ -19,5 +19,6 @@ private fun isInvalid(c: SessionConfig): Boolean {
     if (d != null && !(d.radiusMeters > 0)) return true
     if (!(c.distanceFilterMeters >= 0)) return true
     if (c.uploadMinIntervalMs < 0) return true
+    if (validateSync(c.sync, c.uploadExtrasJson) != null) return true
     return c.accuracy !in listOf("high", "balanced", "low")
 }
