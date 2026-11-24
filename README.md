@@ -298,11 +298,12 @@ Error event codes:
 - `UPLOAD_DROPPED`: the server answered a 4xx other than 401, 403 or 410 (or, on Android, the body could not be encoded). That location, or that whole batch, is dropped and the session keeps running. It is also emitted for ended sessions (see the status table) and when a queued row is unreadable.
 - `QUEUE_TRIMMED` (queue mode `all`): the queue reached `maxRecords` and the oldest pending rows were dropped to make room. The message says how many. The session keeps running.
 - `AUTH_REFRESH_FAILED`: a token refresh did not succeed (see [Token refresh](#token-refresh)). Whether the session stops depends on the failure.
+- `QUEUE_UNAVAILABLE`: the queue database (`queue.sqlite`) cannot be opened while a session runs, so its locations are not uploaded, in every queue mode. Emitted once per session; the session keeps running and the library tries to open the database again on every location. On iOS the latest 500 locations are kept in memory and queued once it opens; a file that is not a valid database is deleted and recreated once per process before this is reported, and nothing is reported before the first unlock after a reboot. On Android the locations are dropped, and a corrupt file is recreated by Android's SQLite. On iOS it is sticky (see below); on Android it carries `sessionId`.
 - `CONFIG_MISSING_BACKGROUND_MODE` (iOS): a session resumed, or was upgraded to Always, in a build whose `UIBackgroundModes` has no `location`. Background updates are not enabled; the session keeps running and only updates in the foreground. Sticky, see below.
 - `ACCURACY_REDUCED` (iOS): precise location is off for this app, either when the session starts or resumes, or because the user turned it off while it runs. Emitted once per change and sticky (see below); the session keeps running. Fixes are then approximate (often 1–5 km), so arrival cannot trigger (it needs an accuracy within `max(radiusMeters, 100)` m) and region monitoring does not relaunch the app; the session runs to `expiresAt`. Check `getPermissionStatus().precise` before `start` to warn the user earlier. iOS only: on Android, switching an app to approximate location revokes `ACCESS_FINE_LOCATION`, which kills the process, so there is no running session to notify; `precise` reports it.
 - `FGS_PROMOTION_FAILED` (Android): Android refused to restart the foreground service for 10 minutes. The session then stops with reason `stopped`. See [Android](#android).
 
-Sticky errors carry no `sessionId`. `CONFIG_MISSING_BACKGROUND_MODE` and `ACCURACY_REDUCED` are sticky on iOS, because they are often raised during a resume at launch, before JS has added a listener. The latest event of each is kept while its condition holds and the session runs, and is emitted again to each `error` listener when it is added. It is dropped when the condition clears (precise location turned back on) or the session stops.
+Sticky errors carry no `sessionId`. `CONFIG_MISSING_BACKGROUND_MODE`, `ACCURACY_REDUCED` and `QUEUE_UNAVAILABLE` are sticky on iOS, because they are often raised during a resume at launch, before JS has added a listener. The latest event of each is kept while its condition holds and the session runs, and is emitted again to each `error` listener when it is added. It is dropped when the condition clears (precise location turned back on) or the session stops.
 
 ## Debug logging
 
@@ -584,7 +585,7 @@ Content-Type: application/json
 { "sessionId": "plan-123" }
 ```
 
-The body is `auth.refresh.body` as given when you set it, otherwise `{ "sessionId": "<id>" }`. `auth.refresh.url` must be https, and redirects are never followed. The request times out after 20 s.
+The body is `auth.refresh.body` as given when you set it, otherwise `{ "sessionId": "<id>" }`. `auth.refresh.url` must be https, and redirects are never followed. The request times out after 20 s. `auth.refresh.body` is stored with the session's target in the app's private queue database (`queue.sqlite`, excluded from backup), not in the Keychain, so do not put secrets in it; put them in `auth.refresh.headers`, which are stored like the upload headers.
 
 A `2xx` answer must be a JSON object:
 
@@ -601,7 +602,7 @@ A `2xx` answer must be a JSON object:
 
 Failures emit `AUTH_REFRESH_FAILED` and are told apart:
 
-- Transport failure (network error, timeout, a `3xx`): the upload is retried with backoff, and so is the refresh. The session keeps running.
+- Transport failure (network error, timeout, a `3xx`): the upload is retried with backoff, and so is the refresh. Until the backoff timer fires, new locations are queued but do not trigger an upload; connectivity returning or a successful upload ends the wait early. The session keeps running.
 - Rejected by the server (a non-2xx, non-3xx status, or a `2xx` whose body is not the object above): the running session stops with `unauthorized`. For an ended session the rows stay and are retried later.
 
 The refresh also applies in queue mode `latest`.
@@ -673,6 +674,15 @@ In a bare app with its own rules files, add these excludes to them yourself (ins
 <exclude domain="sharedpref" path="expo_location_session_targets.xml" />
 <exclude domain="file" path="expo-location-session/" />
 ```
+
+## Upgrading to 0.2
+
+With none of the new options, the upload contract is the one of 0.1. Other changes to know about:
+
+- Android: the library depends on `androidx.work:work-runtime`, even with `backgroundSync` off. Its manifest is merged into your app: WorkManager's startup initializer (through `androidx.startup`) and its permissions, such as `RECEIVE_BOOT_COMPLETED`, appear in your merged manifest.
+- A connectivity monitor runs in every queue mode, the default included, while a session runs or rows are pending. When the network returns it resets the backoff and uploads at once.
+- Delivery is at-least-once: a request whose response is lost (timeout, process killed) is sent again, so the server may receive the same location twice. Deduplicate on `sessionId` with the location `timestamp`, or on the `id` template field.
+- A new error code, `QUEUE_UNAVAILABLE`, reports that the queue database cannot be opened (see [Events](#events)).
 
 ## Known limits
 
