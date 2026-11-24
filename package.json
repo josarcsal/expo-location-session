@@ -12,6 +12,7 @@
     "clean": "git clean -dfX",
     "build": "npm run typecheck && bob build",
     "build:plugin": "tsc -p plugin",
+    "test:plugin": "tsc -p plugin && node --test plugin/test/*.test.mjs",
     "codegen": "nitrogen --logLevel=\"debug\" && npm run build",
     "prepare": "npm run build:plugin",
     "lint": "eslint . && prettier --check \"**/*.{js,mjs,cjs,ts,tsx}\"",

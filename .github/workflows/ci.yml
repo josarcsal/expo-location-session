@@ -39,6 +39,9 @@ jobs:
       - name: Lint
         run: yarn lint
 
+      - name: Plugin tests
+        run: yarn test:plugin
+
       - name: Nitrogen output is up to date
         run: |
           yarn nitrogen
