@@ -38,6 +38,7 @@ class LaunchGate : BroadcastReceiver() {
 
     companion object {
         private const val PROMOTION_DEADLINE_MS = 10 * 60_000L
+        private const val PACKAGE_REPLACED_DRAIN_BUDGET_MS = 8_000L
 
         private var deliveryRoute: String? = null
         private var startedRoute: String? = null
@@ -105,6 +106,7 @@ class LaunchGate : BroadcastReceiver() {
                         SessionEngine.rearmExpiryAlarm(ctx)
                         finish()
                     }
+                    Kind.PACKAGE_REPLACED -> SessionEngine.syncQueue(ctx, PACKAGE_REPLACED_DRAIN_BUDGET_MS) { finish() }
                     else -> finish()
                 }
             } finally {

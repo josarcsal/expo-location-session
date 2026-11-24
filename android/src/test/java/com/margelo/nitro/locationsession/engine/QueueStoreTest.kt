@@ -92,6 +92,16 @@ class QueueStoreTest {
     }
 
     @Test
+    fun markAllEndedLetsPurgeRemoveTargets() {
+        val s = open()
+        s.saveTarget(target("A"))
+        s.saveTarget(target("B", ended = true))
+        s.markAllEnded()
+        assertTrue(s.target("A")!!.ended && s.target("B")!!.ended)
+        assertEquals(PurgeResult(0, listOf("A", "B")), s.purge(0))
+    }
+
+    @Test
     fun purgeDropsOrphanRows() {
         val s = open()
         s.saveTarget(target("A"))

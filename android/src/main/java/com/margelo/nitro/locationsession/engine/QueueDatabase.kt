@@ -6,6 +6,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class QueueDatabase(context: Context, private val file: File) {
     private val appContext = context.applicationContext
+    private val credentials = TargetCredentials(appContext)
     private var opened: QueueStore? = null
     private var loggedUnavailable = false
 
@@ -28,11 +29,20 @@ class QueueDatabase(context: Context, private val file: File) {
             val rows = s.recoverInFlight()
             ElsLog.debug("queue", "recovered in-flight rows", mapOf("rows" to rows))
         }
+        purge(s)
+        return s
+    }
+
+    fun purge() {
+        store()?.let(::purge)
+    }
+
+    private fun purge(s: QueueStore) {
         val purged = s.purge(nowMs())
+        purged.targetsRemoved.forEach(credentials::remove)
         if (purged.rowsDeleted > 0 || purged.targetsRemoved.isNotEmpty()) {
             ElsLog.debug("queue", "purged", mapOf("rows" to purged.rowsDeleted, "targets" to purged.targetsRemoved.size))
         }
-        return s
     }
 
     companion object {

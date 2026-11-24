@@ -14,6 +14,7 @@ final class QueueDatabase {
 
     private static var recovered = false
 
+    private let credentials = TargetCredentials()
     private var opened: QueueStore?
     private var buffer = BoundedBuffer<PendingInsert>(capacity: 500)
     private var loggedUnavailable = false
@@ -31,11 +32,22 @@ final class QueueDatabase {
             let count = s.recoverInFlight()
             Log.debug("queue", "recovered in-flight rows", data: ["rows": count])
         }
+        purge(s)
+        return s
+    }
+
+    func purge() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let s = store() else { return }
+        purge(s)
+    }
+
+    private func purge(_ s: QueueStore) {
         let purged = s.purge(nowMs: nowMs())
+        purged.targetsRemoved.forEach { credentials.remove(sessionId: $0) }
         if purged.rowsDeleted > 0 || !purged.targetsRemoved.isEmpty {
             Log.debug("queue", "purged", data: ["rows": purged.rowsDeleted, "targets": purged.targetsRemoved.count])
         }
-        return s
     }
 
     func enqueue(_ p: PendingInsert) -> Int {

@@ -52,6 +52,13 @@ import Testing
         #expect(s.target("A") == nil && s.target("L") != nil)
     }
 
+    @Test func markAllEndedLetsPurgeRemoveTargets() throws {
+        let (s, _) = try open(); try s.saveTarget(target("A")); try s.saveTarget(target("B", ended: true))
+        s.markAllEnded()
+        #expect(s.target("A")?.ended == true && s.target("B")?.ended == true)
+        #expect(s.purge(nowMs: 0) == PurgeResult(rowsDeleted: 0, targetsRemoved: ["A", "B"]))
+    }
+
     @Test func purgeDropsOrphanRows() throws {
         let (s, _) = try open(); try s.saveTarget(target("A"))
         _ = try put(s, "A", "a", ts: 100_000); _ = try put(s, "X", "x1", ts: 100_000); _ = try put(s, "X", "x2", ts: 100_000)

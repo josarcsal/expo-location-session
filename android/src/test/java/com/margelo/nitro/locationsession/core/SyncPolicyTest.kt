@@ -113,3 +113,20 @@ class ConnectivityEdgeTest {
         }
     }
 }
+
+class StopQueueActionTest {
+    @Test
+    fun latestAlwaysDeletes() {
+        for (reason in StopReason.values()) {
+            assertEquals("$reason", StopQueueAction.DELETE_ROWS, stopQueueAction(QueueMode.LATEST, reason))
+        }
+    }
+
+    @Test
+    fun allKeepsTrailUnlessRejected() {
+        for (r in listOf(StopReason.STOPPED, StopReason.EXPIRED, StopReason.ARRIVED, StopReason.UNAUTHORIZED, StopReason.PERMISSION_REVOKED)) {
+            assertEquals("$r", StopQueueAction.MARK_ENDED, stopQueueAction(QueueMode.ALL, r))
+        }
+        assertEquals(StopQueueAction.DELETE_ROWS_DROPPED, stopQueueAction(QueueMode.ALL, StopReason.REJECTED))
+    }
+}

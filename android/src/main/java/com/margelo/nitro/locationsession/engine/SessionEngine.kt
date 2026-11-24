@@ -15,12 +15,16 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.margelo.nitro.locationsession.core.Fix
+import com.margelo.nitro.locationsession.core.QueueMode
+import com.margelo.nitro.locationsession.core.QueueStatus
 import com.margelo.nitro.locationsession.core.QueueTarget
 import com.margelo.nitro.locationsession.core.SessionConfig
+import com.margelo.nitro.locationsession.core.StopQueueAction
 import com.margelo.nitro.locationsession.core.StopReason
 import com.margelo.nitro.locationsession.core.acceptFix
 import com.margelo.nitro.locationsession.core.isDuplicateFix
 import com.margelo.nitro.locationsession.core.stopDecision
+import com.margelo.nitro.locationsession.core.stopQueueAction
 import com.margelo.nitro.locationsession.core.validate
 import org.json.JSONObject
 
@@ -68,6 +72,7 @@ object SessionEngine {
             override fun onActivityResumed(activity: Activity) {
                 ElsLog.debug("lifecycle", "activity resumed", level = "info")
                 resumeIfNeeded(activity)
+                uploader.drain(null) {}
             }
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
                 DebugLogger.launched("activity", mapOf("restored" to (savedInstanceState != null)))
@@ -162,6 +167,34 @@ object SessionEngine {
         )
     }
 
+    fun queueStatus(ctx: Context): QueueStatus {
+        init(ctx)
+        val q = queue.store() ?: throw LocationSessionException("INTERNAL", "queue storage is not available")
+        return q.status()
+    }
+
+    fun syncQueue(ctx: Context, budgetMs: Long? = null, completion: (Int) -> Unit) {
+        init(ctx)
+        uploader.drain(budgetMs, completion)
+    }
+
+    fun clearQueue(ctx: Context) {
+        init(ctx)
+        uploader.cancelDrain(false)
+        val q = queue.store() ?: return
+        val removed = q.clear()
+        removed.forEach(credentials::remove)
+        if (config?.sync?.mode == QueueMode.LATEST) store.pendingFix = null
+        ElsLog.debug("queue", "cleared", mapOf("targets" to removed.size), config?.id)
+        uploader.evaluateConnectivity()
+    }
+
+    fun drainAtProcessStart(ctx: Context) {
+        init(ctx)
+        if (config == null && store.load() != StoredSession.None) return
+        uploader.drain(null) {}
+    }
+
     fun onFixes(ctx: Context, fixes: List<Fix>) = onFixes(ctx, fixes) {}
 
     fun onFixes(ctx: Context, fixes: List<Fix>, settled: () -> Unit) {
@@ -234,6 +267,7 @@ object SessionEngine {
             StoredSession.Corrupt -> {
                 ElsLog.info("store", "discarding unreadable persisted session", level = "warn")
                 store.wipe()
+                queue.store()?.markAllEnded()
                 removeUpdates(context)
                 cancelAlarm(context)
                 LaunchGate.clear(context)
@@ -311,22 +345,39 @@ object SessionEngine {
         removeUpdates(ctx)
         stopService(ctx)
         uploader.reset()
-        val deleted = queue.store()?.deleteSession(c.id) ?: 0
-        ElsLog.debug("queue", "session rows deleted", mapOf("rows" to deleted), c.id)
+        val action = if (reason == null) StopQueueAction.DELETE_ROWS else stopQueueAction(c.sync.mode, reason)
+        if (action == StopQueueAction.MARK_ENDED) {
+            queue.store()?.markEnded(c.id)
+            ElsLog.debug("queue", "session marked ended", mapOf("pending" to (queue.store()?.status()?.pending ?: 0)), c.id)
+        } else {
+            val deleted = queue.store()?.deleteSession(c.id) ?: 0
+            ElsLog.debug("queue", "session rows deleted", mapOf("rows" to deleted), c.id)
+            credentials.remove(c.id)
+            if (action == StopQueueAction.DELETE_ROWS_DROPPED && deleted > 0) {
+                events.emit(
+                    "error",
+                    JSONObject()
+                        .put("code", "UPLOAD_DROPPED")
+                        .put("message", "Session rejected; $deleted location${if (deleted == 1) "" else "s"} dropped")
+                        .put("sessionId", c.id)
+                )
+            }
+        }
         uploader.evaluateConnectivity()
-        credentials.remove(c.id)
         store.wipe()
         config = null
         lastFix = null
         stopping = false
         if (reason == null) {
             ElsLog.info("stop", "discarded session ${c.id} after a failed start", sessionId = c.id)
+            uploader.drain(null) {}
             return
         }
         store.lastStop = LastStop(reason, nowMs(), c.id)
         ElsLog.info("stop", "stopped session ${c.id} reason=${reason.wire}", mapOf("reason" to reason.wire), c.id)
         DebugLogger.onStopping()
         events.emit("stop", JSONObject().put("reason", reason.wire).put("sessionId", c.id))
+        uploader.drain(null) {}
     }
 
     private fun evaluate(ctx: Context, fix: Fix?) {

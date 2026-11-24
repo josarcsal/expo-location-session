@@ -87,3 +87,15 @@ import Testing
         #expect(inputs.map { e.update(satisfied: $0) } == expected)
     }
 }
+
+@Suite struct StopQueueActionTests {
+    @Test(arguments: [StopReason.stopped, .expired, .arrived, .unauthorized, .rejected, .permissionRevoked])
+    func latestAlwaysDeletes(reason: StopReason) { #expect(stopQueueAction(mode: .latest, reason: reason) == .deleteRows) }
+
+    @Test func allKeepsTrailUnlessRejected() {
+        for r in [StopReason.stopped, .expired, .arrived, .unauthorized, .permissionRevoked] {
+            #expect(stopQueueAction(mode: .all, reason: r) == .markEnded)
+        }
+        #expect(stopQueueAction(mode: .all, reason: .rejected) == .deleteRowsDropped)
+    }
+}

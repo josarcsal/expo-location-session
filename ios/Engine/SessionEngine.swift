@@ -47,6 +47,9 @@ final class SessionEngine {
             self?.queue.onProtectedDataAvailable()
             self?.uploader.pump()
         }
+        _ = NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.uploader.drain(budgetMs: nil) { _ in }
+        }
     }
 
     func start(_ c: SessionConfig) throws {
@@ -89,10 +92,19 @@ final class SessionEngine {
         source.stop()
         events.clearStickyErrors()
         uploader.reset()
-        let deleted = queue.store()?.deleteSession(c.id) ?? 0
-        Log.debug("queue", "session rows deleted", data: ["rows": deleted], sessionId: c.id)
+        let action = stopQueueAction(mode: c.sync.mode, reason: reason)
+        if action == .markEnded {
+            queue.store()?.markEnded(c.id)
+            Log.debug("queue", "session marked ended", data: ["pending": queue.store()?.status().pending ?? 0], sessionId: c.id)
+        } else {
+            let deleted = queue.store()?.deleteSession(c.id) ?? 0
+            Log.debug("queue", "session rows deleted", data: ["rows": deleted], sessionId: c.id)
+            credentials.remove(sessionId: c.id)
+            if action == .deleteRowsDropped, deleted > 0 {
+                events.emit(.error, ["code": "UPLOAD_DROPPED", "message": "Session rejected; \(deleted) location\(deleted == 1 ? "" : "s") dropped", "sessionId": c.id])
+            }
+        }
         uploader.evaluateConnectivity()
-        credentials.remove(sessionId: c.id)
         store.wipe()
         store.lastStop = LastStop(reason: reason, atMs: nowMs(), sessionId: c.id)
         config = nil
@@ -101,6 +113,31 @@ final class SessionEngine {
         Log.info("stop", "stopped session \(c.id) reason=\(reason.rawValue)", sessionId: c.id)
         DebugLogger.shared.onStopping()
         events.emit(.stop, ["reason": reason.rawValue, "sessionId": c.id])
+        uploader.drain(budgetMs: nil) { _ in }
+    }
+
+    func queueStatus() throws -> QueueStatus {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let q = queue.store() else {
+            throw LocationSessionError(code: "INTERNAL", message: "queue storage is not available")
+        }
+        return q.status()
+    }
+
+    func syncQueue(_ completion: @escaping (Int) -> Void) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        uploader.drain(budgetMs: nil, completion: completion)
+    }
+
+    func clearQueue() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        uploader.cancelDrain(release: false)
+        guard let q = queue.store() else { return }
+        let removed = q.clear()
+        removed.forEach { credentials.remove(sessionId: $0) }
+        if config?.sync.mode == .latest { store.pendingFix = nil }
+        Log.debug("queue", "cleared", data: ["targets": removed.count], sessionId: config?.id)
+        uploader.evaluateConnectivity()
     }
 
     func state() -> EngineState {

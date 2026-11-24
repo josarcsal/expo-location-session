@@ -43,6 +43,7 @@ extension SessionEngine {
             stopWaitingForProtectedData()
             Log.info("store", "discarding unreadable persisted session")
             store.wipe()
+            queue.store()?.markAllEnded()
             source.stop()
         case let .session(c, startedAt):
             stopWaitingForProtectedData()
@@ -58,6 +59,7 @@ extension SessionEngine {
                 if let fix = lastFix { evaluate(fix: fix) } else { uploader.pump() }
             }
         }
+        uploader.drain(budgetMs: nil) { _ in }
     }
 
     private func waitForProtectedData() {

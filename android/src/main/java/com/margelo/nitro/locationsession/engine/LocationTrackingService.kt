@@ -42,6 +42,7 @@ class LocationTrackingService : Service() {
         if (intent == null) {
             ElsLog.info("service", "service restarted by the system")
             SessionEngine.resumeIfNeeded(this)
+            SessionEngine.syncQueue(this) {}
         }
         val c = SessionEngine.activeConfig
         if (c != null && activeBefore) SessionEngine.refreshUpdates(this)

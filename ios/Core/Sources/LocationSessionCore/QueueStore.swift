@@ -220,6 +220,10 @@ public final class QueueStore {
         locked { _ = run("UPDATE targets SET ended = 1 WHERE session_id = ?", [.text(sessionId)]) }
     }
 
+    public func markAllEnded() {
+        locked { _ = run("UPDATE targets SET ended = 1 WHERE ended = 0", []) }
+    }
+
     public func purge(nowMs: Int64) -> PurgeResult {
         locked {
             var result = PurgeResult(rowsDeleted: 0, targetsRemoved: [])

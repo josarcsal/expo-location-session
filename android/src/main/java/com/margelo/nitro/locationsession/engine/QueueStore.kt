@@ -171,6 +171,11 @@ class QueueStore(context: Context, file: File) {
     }
 
     @Synchronized
+    fun markAllEnded() {
+        attempt(0) { run("UPDATE targets SET ended = 1 WHERE ended = 0") }
+    }
+
+    @Synchronized
     fun purge(nowMs: Long): PurgeResult {
         var result = PurgeResult(0, emptyList())
         val failure = transaction {

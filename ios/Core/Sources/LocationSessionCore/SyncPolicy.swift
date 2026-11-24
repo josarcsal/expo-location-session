@@ -23,6 +23,15 @@ public func syncAction(status: Int?, ended: Bool, refreshConfigured: Bool, alrea
     }
 }
 
+public enum StopQueueAction: Equatable {
+    case deleteRows, deleteRowsDropped, markEnded
+}
+
+public func stopQueueAction(mode: QueueMode, reason: StopReason) -> StopQueueAction {
+    guard mode == .all else { return .deleteRows }
+    return reason == .rejected ? .deleteRowsDropped : .markEnded
+}
+
 public func isExpired(fixTs: Int64, nowMs: Int64, maxAgeMs: Int64) -> Bool {
     nowMs - fixTs > maxAgeMs
 }

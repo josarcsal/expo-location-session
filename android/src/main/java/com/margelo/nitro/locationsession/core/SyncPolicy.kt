@@ -29,6 +29,14 @@ fun syncAction(status: Int?, ended: Boolean, refreshConfigured: Boolean, already
     }
 }
 
+enum class StopQueueAction { DELETE_ROWS, DELETE_ROWS_DROPPED, MARK_ENDED }
+
+fun stopQueueAction(mode: QueueMode, reason: StopReason): StopQueueAction = when {
+    mode != QueueMode.ALL -> StopQueueAction.DELETE_ROWS
+    reason == StopReason.REJECTED -> StopQueueAction.DELETE_ROWS_DROPPED
+    else -> StopQueueAction.MARK_ENDED
+}
+
 fun isExpired(fixTs: Long, nowMs: Long, maxAgeMs: Long): Boolean = nowMs - fixTs > maxAgeMs
 
 fun trimCount(rows: Int, maxRecords: Int): Int = maxOf(0, rows - maxRecords)
