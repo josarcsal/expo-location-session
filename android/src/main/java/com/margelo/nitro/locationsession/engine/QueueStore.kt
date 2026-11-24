@@ -102,10 +102,11 @@ class QueueStore(context: Context, file: File) {
     fun target(sessionId: String): QueueTarget? = attempt(null) {
         query("SELECT url, refresh, batch, extras, mode, max_age_ms, ended FROM targets WHERE session_id = ?", sessionId) { c ->
             val refresh = c.getStringOrNull(1)?.let { runCatching { JSONObject(it) }.getOrNull() }
+            val mode = c.getStringOrNull(4)?.let(QueueMode::fromWire) ?: return@query null
             QueueTarget(
                 sessionId = sessionId,
                 url = c.getStringOrNull(0) ?: "",
-                mode = QueueMode.fromWire(c.getStringOrNull(4) ?: "latest"),
+                mode = mode,
                 batch = c.getStringOrNull(2)?.let { raw ->
                     runCatching { JSONObject(raw).let { BatchConfig(it.getInt("maxSize"), it.getString("rootProperty")) } }.getOrNull()
                 },
@@ -195,12 +196,14 @@ class QueueStore(context: Context, file: File) {
                 """.trimIndent(),
                 nowMs
             )
+            val unreadable = query("SELECT session_id FROM targets WHERE mode NOT IN ('latest', 'all') ORDER BY session_id") { it.getString(0) }
+            for (id in unreadable) run("DELETE FROM targets WHERE session_id = ?", id)
             val orphans = run("DELETE FROM fixes WHERE state = 0 AND session_id NOT IN (SELECT session_id FROM targets)")
             val removed = query(
                 "SELECT session_id FROM targets WHERE ended = 1 AND session_id NOT IN (SELECT session_id FROM fixes) ORDER BY session_id"
             ) { it.getString(0) }
             for (id in removed) run("DELETE FROM targets WHERE session_id = ?", id)
-            result = PurgeResult(aged + orphans, removed)
+            result = PurgeResult(aged + orphans, unreadable + removed)
         }
         return if (failure == null) result else PurgeResult(0, emptyList())
     }

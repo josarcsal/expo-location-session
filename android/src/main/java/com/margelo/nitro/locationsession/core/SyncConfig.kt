@@ -1,6 +1,7 @@
 package com.margelo.nitro.locationsession.core
 
 import java.net.URI
+import org.json.JSONException
 import org.json.JSONObject
 
 enum class QueueMode(val wire: String) {
@@ -8,7 +9,7 @@ enum class QueueMode(val wire: String) {
     ALL("all");
 
     companion object {
-        fun fromWire(value: String): QueueMode = values().firstOrNull { it.wire == value } ?: LATEST
+        fun fromWire(value: String): QueueMode? = values().firstOrNull { it.wire == value }
     }
 }
 
@@ -52,7 +53,7 @@ data class SyncConfig(
             val b = o.optJSONObject("batch")
             val r = o.optJSONObject("refresh")
             return SyncConfig(
-                mode = QueueMode.fromWire(o.optString("mode", "latest")),
+                mode = QueueMode.fromWire(o.optString("mode", "latest")) ?: throw JSONException("unknown queue mode"),
                 maxRecords = o.optInt("maxRecords", 10_000),
                 maxAgeMs = o.optLong("maxAgeMs", 86_400_000),
                 batch = b?.let { BatchConfig(it.getInt("maxSize"), it.optString("rootProperty", "locations")) },
@@ -84,8 +85,7 @@ fun validateSync(s: SyncConfig, extrasJson: String): String? {
             return "auth.refresh.url must be an https URL"
         }
         if (r.bodyJson != null) {
-            val ok = try { JSONObject(r.bodyJson); true } catch (e: Exception) { false }
-            if (!ok) return "auth.refresh.body must be a JSON object"
+            if (parseObject(r.bodyJson) == null) return "auth.refresh.body must be a JSON object"
         }
     }
     if (s.templateJson != null) {

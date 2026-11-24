@@ -1,6 +1,5 @@
 package com.margelo.nitro.locationsession.core
 
-import org.json.JSONException
 import org.json.JSONObject
 
 sealed class SyncAction {
@@ -54,7 +53,7 @@ private fun stringMap(o: JSONObject): Map<String, String>? {
 
 fun parseRefreshResponse(status: Int?, body: String): RefreshResult? {
     if (status == null || status !in 200..299) return null
-    val obj = try { JSONObject(body) } catch (e: JSONException) { return null }
+    val obj = parseObject(body) ?: return null
     val headers = (obj.opt("headers") as? JSONObject)?.let(::stringMap)?.takeIf { it.isNotEmpty() } ?: return null
     val refreshHeaders = if (obj.has("refreshHeaders")) {
         (obj.opt("refreshHeaders") as? JSONObject)?.let(::stringMap) ?: return null

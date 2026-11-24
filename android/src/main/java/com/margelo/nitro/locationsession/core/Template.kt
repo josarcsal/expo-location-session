@@ -47,7 +47,7 @@ private fun segmentsOf(s: String): List<Segment>? {
     return out
 }
 
-private fun parseObject(json: String): JSONObject? =
+internal fun parseObject(json: String): JSONObject? =
     try {
         val tokener = JSONTokener(json)
         val value = tokener.nextValue() as? JSONObject

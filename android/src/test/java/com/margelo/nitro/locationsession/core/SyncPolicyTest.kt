@@ -82,6 +82,7 @@ class RefreshContractTest {
             200 to "not json", 200 to "[]", 200 to "{}", 200 to """{"headers":{}}""", 200 to """{"headers":{"A":1}}""",
             200 to """{"headers":"x"}""", 200 to """{"headers":{"A":"b"},"refreshHeaders":{"B":2}}""",
             401 to """{"headers":{"A":"b"}}""", 500 to """{"headers":{"A":"b"}}""", 204 to "",
+            200 to """{"headers":{"A":"b"}} junk""", 200 to """{"headers":{"A":"b"}}{}""",
         )
         for ((status, body) in cases) assertEquals("$status $body", null, parse(status, body))
     }

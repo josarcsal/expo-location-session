@@ -12,6 +12,16 @@ data class Fix(
     val timestampMs: Long
 )
 
+fun sanitize(f: Fix): Fix? {
+    if (!f.latitude.isFinite() || !f.longitude.isFinite() || !f.accuracy.isFinite()) return null
+    if (f.accuracy < 0 || kotlin.math.abs(f.latitude) > 90 || kotlin.math.abs(f.longitude) > 180) return null
+    return f.copy(
+        altitude = f.altitude?.takeIf { it.isFinite() },
+        speed = f.speed?.takeIf { it.isFinite() && it >= 0 },
+        heading = f.heading?.takeIf { it.isFinite() && it >= 0 }
+    )
+}
+
 data class Battery(val level: Double, val charging: Boolean)
 
 data class Destination(val latitude: Double, val longitude: Double, val radiusMeters: Double)

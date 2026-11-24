@@ -142,12 +142,13 @@ public final class QueueStore {
 
     public func target(_ sessionId: String) -> QueueTarget? {
         locked {
-            query("SELECT url, refresh, batch, extras, mode, max_age_ms, ended FROM targets WHERE session_id = ?", [.text(sessionId)]) { st in
+            query("SELECT url, refresh, batch, extras, mode, max_age_ms, ended FROM targets WHERE session_id = ?", [.text(sessionId)]) { st -> QueueTarget? in
                 let refresh = Self.column(st, 1).flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
+                guard let mode = Self.column(st, 4).flatMap(QueueMode.init(rawValue:)) else { return nil }
                 return QueueTarget(
                     sessionId: sessionId,
                     url: Self.column(st, 0) ?? "",
-                    mode: Self.column(st, 4).flatMap(QueueMode.init(rawValue:)) ?? .latest,
+                    mode: mode,
                     batch: Self.column(st, 2).flatMap { try? JSONDecoder().decode(BatchConfig.self, from: Data($0.utf8)) },
                     extrasJson: Self.column(st, 3) ?? "{}",
                     maxAgeMs: sqlite3_column_int64(st, 5),
@@ -155,7 +156,7 @@ public final class QueueStore {
                     refreshBodyJson: refresh?["body"] as? String,
                     ended: sqlite3_column_int64(st, 6) != 0
                 )
-            }.first
+            }.first ?? nil
         }
     }
 
@@ -248,11 +249,13 @@ public final class QueueStore {
                 DELETE FROM fixes WHERE state = 0 AND session_id IN (SELECT session_id FROM targets WHERE mode = 'all')
                 AND ? - fix_ts > (SELECT max_age_ms FROM targets WHERE targets.session_id = fixes.session_id)
                 """, [.int(nowMs)])
+                let unreadable = query("SELECT session_id FROM targets WHERE mode NOT IN ('latest', 'all') ORDER BY session_id", []) { Self.column($0, 0) ?? "" }
+                for id in unreadable where run("DELETE FROM targets WHERE session_id = ?", [.text(id)]) < 0 { return false }
                 let orphans = run("DELETE FROM fixes WHERE state = 0 AND session_id NOT IN (SELECT session_id FROM targets)", [])
                 if aged < 0 || orphans < 0 { return false }
                 let removed = query("SELECT session_id FROM targets WHERE ended = 1 AND session_id NOT IN (SELECT session_id FROM fixes) ORDER BY session_id", []) { Self.column($0, 0) ?? "" }
                 for id in removed where run("DELETE FROM targets WHERE session_id = ?", [.text(id)]) < 0 { return false }
-                result = PurgeResult(rowsDeleted: aged + orphans, targetsRemoved: removed)
+                result = PurgeResult(rowsDeleted: aged + orphans, targetsRemoved: unreadable + removed)
                 return true
             }
             return committed ? result : PurgeResult(rowsDeleted: 0, targetsRemoved: [])

@@ -3,6 +3,7 @@ package com.margelo.nitro.locationsession.core
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 private fun baseCfg(sync: SyncConfig = SyncConfig()) = SessionConfig(
@@ -41,7 +42,8 @@ class SyncConfigTest {
             SyncConfig(maxAgeMs = 2_592_000_001) to "queue.maxAgeMs must be between 60000 and 2592000000",
             SyncConfig(refresh = RefreshConfig("http://x.dev/r")) to "auth.refresh.url must be an https URL",
             SyncConfig(refresh = RefreshConfig("nope")) to "auth.refresh.url must be an https URL",
-            SyncConfig(refresh = RefreshConfig("https://x.dev/r", bodyJson = "[1]")) to "auth.refresh.body must be a JSON object"
+            SyncConfig(refresh = RefreshConfig("https://x.dev/r", bodyJson = "[1]")) to "auth.refresh.body must be a JSON object",
+            SyncConfig(refresh = RefreshConfig("https://x.dev/r", bodyJson = """{"k":"v"} junk""")) to "auth.refresh.body must be a JSON object"
         )
         cases.forEach { (sync, reason) -> assertEquals(reason, validateSync(sync, "{}")) }
     }
@@ -63,6 +65,22 @@ class SyncConfigTest {
     fun invalidSyncMakesValidateReturnInvalidConfig() {
         assertNull(validate(baseCfg(), 0, false))
         assertEquals("INVALID_CONFIG", validate(baseCfg(SyncConfig(maxRecords = 0)), 0, false))
+    }
+
+    @Test
+    fun baseConfigReasonComesBeforeSyncReason() {
+        val c = baseCfg(SyncConfig(maxRecords = 0))
+        assertEquals("queue.maxRecords must be between 1 and 100000", syncInvalidReason(c))
+        val invalidBase = c.copy(id = "")
+        assertEquals("INVALID_CONFIG", validate(invalidBase, 0, false))
+        assertNull(syncInvalidReason(invalidBase))
+        assertNull(syncInvalidReason(invalidBase.copy(sync = SyncConfig())))
+    }
+
+    @Test
+    fun unknownQueueModeIsRejectedOnDecode() {
+        val json = JSONObject(baseCfg().toJson()).apply { getJSONObject("sync").put("mode", "bogus") }.toString()
+        assertTrue(runCatching { SessionConfig.fromJson(json) }.isFailure)
     }
 
     @Test

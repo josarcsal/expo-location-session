@@ -80,6 +80,18 @@ import Testing
         #expect(s.status().pending == 2 && s.claim(sessionId: "X", limit: 10).isEmpty)
     }
 
+    @Test func unknownModeTargetIsUnreadableAndPurged() throws {
+        let (s, path) = try open(); try s.saveTarget(target("A")); try s.saveTarget(target("U", ended: true))
+        _ = try put(s, "A", "a", ts: 100_000); _ = try put(s, "U", "u1", ts: 100_000); _ = try put(s, "U", "u2", ts: 100_000)
+        var raw: OpaquePointer?
+        #expect(sqlite3_open(path, &raw) == SQLITE_OK)
+        #expect(sqlite3_exec(raw, "UPDATE targets SET mode = 'bogus' WHERE session_id = 'U'", nil, nil, nil) == SQLITE_OK)
+        sqlite3_close(raw)
+        #expect(s.target("U") == nil && s.target("A") != nil)
+        #expect(s.purge(nowMs: 120_000) == PurgeResult(rowsDeleted: 2, targetsRemoved: ["U"]))
+        #expect(s.status().pending == 1 && s.nextSession(running: nil) == "A")
+    }
+
     @Test func nextSessionPrefersRunningThenOldest() throws {
         let (s, _) = try open()
         for id in ["e1", "e2", "r"] { try s.saveTarget(target(id, ended: id != "r")); _ = try put(s, id, id + "-1") }

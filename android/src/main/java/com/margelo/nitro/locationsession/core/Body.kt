@@ -1,7 +1,6 @@
 package com.margelo.nitro.locationsession.core
 
 import org.json.JSONObject
-import org.json.JSONTokener
 
 fun buildBody(sessionId: String, fix: Fix, battery: Battery?, extrasJson: String): String {
     val location = JSONObject()
@@ -21,12 +20,7 @@ fun buildBody(sessionId: String, fix: Fix, battery: Battery?, extrasJson: String
     return body.toString()
 }
 
-private fun parseExtras(json: String): JSONObject =
-    try {
-        JSONTokener(json).nextValue() as? JSONObject ?: JSONObject()
-    } catch (e: Exception) {
-        JSONObject()
-    }
+private fun parseExtras(json: String): JSONObject = parseObject(json) ?: JSONObject()
 
 fun batchLimit(s: SyncConfig): Int = s.batch?.maxSize ?: 1
 

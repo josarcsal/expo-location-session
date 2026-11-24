@@ -65,6 +65,7 @@ import Testing
         (200, "not json"), (200, "[]"), (200, "{}"), (200, #"{"headers":{}}"#), (200, #"{"headers":{"A":1}}"#),
         (200, #"{"headers":"x"}"#), (200, #"{"headers":{"A":"b"},"refreshHeaders":{"B":2}}"#),
         (401, #"{"headers":{"A":"b"}}"#), (500, #"{"headers":{"A":"b"}}"#), (204, ""),
+        (200, #"{"headers":{"A":"b"}} junk"#), (200, #"{"headers":{"A":"b"}}{}"#),
     ] as [(Int, String)])
     func rejects(status: Int, body: String) { #expect(parse(status, body) == nil) }
 

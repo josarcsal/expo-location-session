@@ -135,6 +135,8 @@ export function getCurrentPosition(opts: CurrentPositionOptions = {}): Promise<L
 
 export function start(config: SessionConfig): Promise<void> {
   const { queue, batch, body, auth } = config.upload;
+  if (body != null && body.template === undefined)
+    return Promise.reject(new LocationSessionError('INVALID_CONFIG', 'body.template is required'));
   return call((s) =>
     s.start({
       id: config.id,

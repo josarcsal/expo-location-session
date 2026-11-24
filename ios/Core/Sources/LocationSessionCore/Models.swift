@@ -20,6 +20,16 @@ public struct Fix: Codable, Equatable {
     }
 }
 
+public func sanitize(_ f: Fix) -> Fix? {
+    guard f.latitude.isFinite, f.longitude.isFinite, abs(f.latitude) <= 90, abs(f.longitude) <= 180,
+          f.accuracy.isFinite, f.accuracy >= 0 else { return nil }
+    var fix = f
+    if let v = fix.altitude, !v.isFinite { fix.altitude = nil }
+    if let v = fix.speed, !(v.isFinite && v >= 0) { fix.speed = nil }
+    if let v = fix.heading, !(v.isFinite && v >= 0) { fix.heading = nil }
+    return fix
+}
+
 public struct Destination: Codable, Equatable {
     public var latitude: Double
     public var longitude: Double

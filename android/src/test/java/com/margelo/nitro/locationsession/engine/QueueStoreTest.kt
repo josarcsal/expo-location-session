@@ -123,6 +123,25 @@ class QueueStoreTest {
     }
 
     @Test
+    fun unknownModeTargetIsUnreadableAndPurged() {
+        val file = newFile()
+        val s = open(file)
+        s.saveTarget(target("A"))
+        s.saveTarget(target("U", ended = true))
+        put(s, "A", "a", ts = 100_000)
+        put(s, "U", "u1", ts = 100_000)
+        put(s, "U", "u2", ts = 100_000)
+        val raw = SQLiteDatabase.openDatabase(file.absolutePath, null, SQLiteDatabase.OPEN_READWRITE)
+        raw.execSQL("UPDATE targets SET mode = 'bogus' WHERE session_id = 'U'")
+        raw.close()
+        assertNull(s.target("U"))
+        assertNotNull(s.target("A"))
+        assertEquals(PurgeResult(2, listOf("U")), s.purge(120_000))
+        assertEquals(1, s.status().pending)
+        assertEquals("A", s.nextSession(null))
+    }
+
+    @Test
     fun nextSessionPrefersRunningThenOldest() {
         val s = open()
         for (id in listOf("e1", "e2", "r")) {

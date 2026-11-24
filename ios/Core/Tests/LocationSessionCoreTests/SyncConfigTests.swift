@@ -20,6 +20,7 @@ import Testing
         (SyncConfig(refresh: RefreshConfig(url: "http://x.dev/r")), "auth.refresh.url must be an https URL"),
         (SyncConfig(refresh: RefreshConfig(url: "nope")), "auth.refresh.url must be an https URL"),
         (SyncConfig(refresh: RefreshConfig(url: "https://x.dev/r", bodyJson: "[1]")), "auth.refresh.body must be a JSON object"),
+        (SyncConfig(refresh: RefreshConfig(url: "https://x.dev/r", bodyJson: #"{"k":"v"} junk"#)), "auth.refresh.body must be a JSON object"),
     ])
     func rejects(sync: SyncConfig, reason: String) {
         #expect(validateSync(sync, extrasJson: "{}") == reason)
@@ -39,6 +40,21 @@ import Testing
         #expect(validate(c, nowMs: 0, running: false) == nil)
         c.sync = SyncConfig(maxRecords: 0)
         #expect(validate(c, nowMs: 0, running: false) == "INVALID_CONFIG")
+    }
+
+    @Test func baseConfigReasonComesBeforeSyncReason() {
+        var c = SessionConfig(id: "s1", expiresAtMs: 10_000, destination: nil, accuracy: "high", distanceFilterMeters: 10, uploadUrl: "https://x.dev/l", uploadHeaders: [:], uploadExtrasJson: "{}", uploadMinIntervalMs: 15_000, sync: SyncConfig(maxRecords: 0))
+        #expect(syncInvalidReason(c) == "queue.maxRecords must be between 1 and 100000")
+        c.id = ""
+        #expect(validate(c, nowMs: 0, running: false) == "INVALID_CONFIG")
+        #expect(syncInvalidReason(c) == nil)
+        c.sync = .default
+        #expect(syncInvalidReason(c) == nil)
+    }
+
+    @Test func unknownQueueModeIsRejectedOnDecode() {
+        let json = #"{"id":"s1","expiresAtMs":10000,"accuracy":"high","distanceFilterMeters":10,"uploadUrl":"https://x.dev/l","uploadHeaders":{},"uploadExtrasJson":"{}","uploadMinIntervalMs":15000,"sync":{"mode":"bogus","maxRecords":5,"maxAgeMs":60000}}"#
+        #expect(throws: DecodingError.self) { try JSONDecoder().decode(SessionConfig.self, from: Data(json.utf8)) }
     }
 
     @Test func decodesV01PersistedConfigWithDefaultSync() throws {
