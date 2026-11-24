@@ -61,7 +61,7 @@ class Uploader(
     private val appContext = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
     private val connectivity = ConnectivityMonitor(context)
-    private val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "expo-location-session.upload") }
+    private val requests = RequestExecutor("expo-location-session.upload")
     private val watchdog = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "expo-location-session.upload-watchdog") }
 
     private var config: SessionConfig? = null
@@ -92,6 +92,7 @@ class Uploader(
     private var healthProbe: Runnable? = null
     @Volatile private var connection: HttpURLConnection? = null
     private var timer: Runnable? = null
+    private var backingOff = false
     private var flushDeadline: Runnable? = null
     private var sendWatchdog: Runnable? = null
     @Volatile private var epoch = 0
@@ -132,6 +133,7 @@ class Uploader(
 
     private fun clearState() {
         epoch += 1
+        if (inFlight) requests.abandon()
         if (inFlightRows.isNotEmpty()) {
             val t = inFlightTarget
             if (t != null) giveBack(inFlightRows, t) else queue.release(inFlightRows)
@@ -296,6 +298,7 @@ class Uploader(
     private fun abandonDrainRequest(release: Boolean) {
         if (inFlightTarget?.ended != true) return
         epoch += 1
+        if (inFlight) requests.abandon()
         if (release) {
             connection?.let { conn -> watchdog.execute { runCatching { conn.disconnect() } } }
             queue.release(inFlightRows)
@@ -476,7 +479,7 @@ class Uploader(
     fun pump() {
         assertMain()
         val c = config ?: return
-        if (inFlight || flushCompletion != null || refreshHold || !hasPending(c)) return
+        if (inFlight || flushCompletion != null || refreshHold || (backingOff && timer != null) || !hasPending(c)) return
         refreshed.clear()
         val now = nowMs()
         if (shouldUploadNow(lastSuccessMs, now, c.uploadMinIntervalMs, false)) {
@@ -622,6 +625,7 @@ class Uploader(
 
     private fun startTimer(delayMs: Long, fire: () -> Unit) {
         cancelTimer()
+        backingOff = false
         val r = Runnable {
             timer = null
             fire()
@@ -783,7 +787,7 @@ class Uploader(
         ElsLog.debug("upload", "attempt", data, t.id)
         startSendWatchdog(sentEpoch, startedAt)
         val url = t.url
-        executor.execute {
+        requests.execute {
             val status = post(url, headers, body, sentEpoch, t.id, "upload")?.status
             main.post { finish(sentEpoch, status, nowMs() - startedAt) }
         }
@@ -816,6 +820,7 @@ class Uploader(
 
     private fun abandonInFlight(durationMs: Long) {
         epoch += 1
+        requests.abandon()
         connection?.let { conn -> watchdog.execute { runCatching { conn.disconnect() } } }
         if (refreshing) {
             ElsLog.info("auth", "refresh watchdog fired", mapOf("durationMs" to durationMs), inFlightTarget?.id ?: config?.id, level = "warn")
@@ -1005,6 +1010,7 @@ class Uploader(
                 refreshHold = false
                 pump()
             }
+            backingOff = true
         }
     }
 
@@ -1040,7 +1046,7 @@ class Uploader(
         val startedAt = nowMs()
         ElsLog.debug("auth", "refresh attempt", mapOf("headers" to headers.keys.sorted()), t.id)
         startSendWatchdog(sentEpoch, startedAt)
-        executor.execute {
+        requests.execute {
             val response = post(r.url, headers, body, sentEpoch, t.id, "auth")
             main.post {
                 if (sentEpoch != epoch) {

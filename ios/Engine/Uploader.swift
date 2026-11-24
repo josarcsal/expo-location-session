@@ -70,6 +70,7 @@ final class Uploader {
     private var healthProbe: Timer?
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var timer: Timer?
+    private var backingOff = false
     private var watchdog: Timer?
     private var flushDeadline: Timer?
     private var flushCompletion: (() -> Void)?
@@ -441,7 +442,7 @@ final class Uploader {
 
     func pump() {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard let c = config, inFlight == nil, flushCompletion == nil, !refreshHold, hasPending(c) else { return }
+        guard let c = config, inFlight == nil, flushCompletion == nil, !refreshHold, !(backingOff && timer != nil), hasPending(c) else { return }
         refreshed = []
         let now = nowMs()
         if shouldUploadNow(lastSuccessMs: lastSuccessMs, nowMs: now, minIntervalMs: c.uploadMinIntervalMs, bypass: false) {
@@ -576,6 +577,7 @@ final class Uploader {
 
     private func startTimer(afterMs delay: Int64, _ fire: @escaping () -> Void) {
         timer?.invalidate()
+        backingOff = false
         let t = Timer(timeInterval: max(0, Double(delay)) / 1000, repeats: false) { [weak self] _ in
             self?.timer = nil
             fire()
@@ -891,6 +893,7 @@ final class Uploader {
                 self?.refreshHold = false
                 self?.pump()
             }
+            backingOff = true
         }
     }
 
