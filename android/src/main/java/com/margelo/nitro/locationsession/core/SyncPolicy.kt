@@ -1,5 +1,8 @@
 package com.margelo.nitro.locationsession.core
 
+import org.json.JSONException
+import org.json.JSONObject
+
 sealed class SyncAction {
     object DeleteSent : SyncAction()
     object RefreshAndRetry : SyncAction()
@@ -29,3 +32,27 @@ fun syncAction(status: Int?, ended: Boolean, refreshConfigured: Boolean, already
 fun isExpired(fixTs: Long, nowMs: Long, maxAgeMs: Long): Boolean = nowMs - fixTs > maxAgeMs
 
 fun trimCount(rows: Int, maxRecords: Int): Int = maxOf(0, rows - maxRecords)
+
+data class RefreshResult(val headers: Map<String, String>, val refreshHeaders: Map<String, String>?)
+
+private fun stringMap(o: JSONObject): Map<String, String>? {
+    val out = LinkedHashMap<String, String>()
+    for (key in o.keys()) {
+        val v = o.opt(key) as? String ?: return null
+        out[key] = v
+    }
+    return out
+}
+
+fun parseRefreshResponse(status: Int?, body: String): RefreshResult? {
+    if (status == null || status !in 200..299) return null
+    val obj = try { JSONObject(body) } catch (e: JSONException) { return null }
+    val headers = (obj.opt("headers") as? JSONObject)?.let(::stringMap)?.takeIf { it.isNotEmpty() } ?: return null
+    val refreshHeaders = if (obj.has("refreshHeaders")) {
+        (obj.opt("refreshHeaders") as? JSONObject)?.let(::stringMap) ?: return null
+    } else null
+    return RefreshResult(headers, refreshHeaders)
+}
+
+fun refreshRequestBody(bodyJson: String?, sessionId: String): String =
+    bodyJson ?: JSONObject().put("sessionId", sessionId).toString()

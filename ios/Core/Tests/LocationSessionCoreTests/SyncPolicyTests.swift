@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import LocationSessionCore
 
@@ -48,5 +49,30 @@ import Testing
         #expect(trimCount(rows: 10_001, maxRecords: 10_000) == 1)
         #expect(trimCount(rows: 10_000, maxRecords: 10_000) == 0)
         #expect(trimCount(rows: 0, maxRecords: 1) == 0)
+    }
+}
+
+@Suite struct RefreshContractTests {
+    private func parse(_ s: Int?, _ b: String) -> RefreshResult? { parseRefreshResponse(status: s, body: Data(b.utf8)) }
+
+    @Test func parsesHeadersAndRotation() {
+        #expect(parse(200, #"{"headers":{"Authorization":"Bearer n"},"refreshHeaders":{"X-Refresh":"r2"},"expiresIn":60}"#)
+            == RefreshResult(headers: ["Authorization": "Bearer n"], refreshHeaders: ["X-Refresh": "r2"]))
+        #expect(parse(201, #"{"headers":{"Authorization":"Bearer n"}}"#) == RefreshResult(headers: ["Authorization": "Bearer n"], refreshHeaders: nil))
+    }
+
+    @Test(arguments: [
+        (200, "not json"), (200, "[]"), (200, "{}"), (200, #"{"headers":{}}"#), (200, #"{"headers":{"A":1}}"#),
+        (200, #"{"headers":"x"}"#), (200, #"{"headers":{"A":"b"},"refreshHeaders":{"B":2}}"#),
+        (401, #"{"headers":{"A":"b"}}"#), (500, #"{"headers":{"A":"b"}}"#), (204, ""),
+    ] as [(Int, String)])
+    func rejects(status: Int, body: String) { #expect(parse(status, body) == nil) }
+
+    @Test func rejectsNoResponse() { #expect(parse(nil, #"{"headers":{"A":"b"}}"#) == nil) }
+
+    @Test func requestBody() throws {
+        let d = try #require(JSONSerialization.jsonObject(with: refreshRequestBody(bodyJson: nil, sessionId: "s1")) as? [String: String])
+        #expect(d == ["sessionId": "s1"])
+        #expect(refreshRequestBody(bodyJson: #"{"k":"v"}"#, sessionId: "s1") == Data(#"{"k":"v"}"#.utf8))
     }
 }

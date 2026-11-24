@@ -60,3 +60,40 @@ class SyncPolicyTest {
         assertEquals(0, trimCount(0, 1))
     }
 }
+
+class RefreshContractTest {
+    private fun parse(s: Int?, b: String) = parseRefreshResponse(s, b)
+
+    @Test
+    fun parsesHeadersAndRotation() {
+        assertEquals(
+            RefreshResult(mapOf("Authorization" to "Bearer n"), mapOf("X-Refresh" to "r2")),
+            parse(200, """{"headers":{"Authorization":"Bearer n"},"refreshHeaders":{"X-Refresh":"r2"},"expiresIn":60}"""),
+        )
+        assertEquals(
+            RefreshResult(mapOf("Authorization" to "Bearer n"), null),
+            parse(201, """{"headers":{"Authorization":"Bearer n"}}"""),
+        )
+    }
+
+    @Test
+    fun rejects() {
+        val cases = listOf(
+            200 to "not json", 200 to "[]", 200 to "{}", 200 to """{"headers":{}}""", 200 to """{"headers":{"A":1}}""",
+            200 to """{"headers":"x"}""", 200 to """{"headers":{"A":"b"},"refreshHeaders":{"B":2}}""",
+            401 to """{"headers":{"A":"b"}}""", 500 to """{"headers":{"A":"b"}}""", 204 to "",
+        )
+        for ((status, body) in cases) assertEquals("$status $body", null, parse(status, body))
+    }
+
+    @Test
+    fun rejectsNoResponse() {
+        assertEquals(null, parse(null, """{"headers":{"A":"b"}}"""))
+    }
+
+    @Test
+    fun requestBody() {
+        assertEquals("""{"sessionId":"s1"}""", refreshRequestBody(null, "s1"))
+        assertEquals("""{"k":"v"}""", refreshRequestBody("""{"k":"v"}""", "s1"))
+    }
+}
