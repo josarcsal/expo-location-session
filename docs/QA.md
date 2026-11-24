@@ -5,7 +5,7 @@ v0.1 is done when every row passes on three physical devices: an iPhone (iOS 17+
 ## Setup
 
 - The example app (`example/`) as a development build, driven by hand or with Maestro flows.
-- A reachable HTTPS upload endpoint, for example `example/scripts/echo-server.mjs` with TLS (see the README). It answers `?status=<code>` and `/fail?n=<count>`, and takes debug batches at `/logs` (`?status=<code>`, `?delayMs=<ms>`).
+- A reachable HTTPS upload endpoint, for example `example/scripts/echo-server.mjs` with TLS (see the README). It answers `?status=<code>` and `/fail?n=<count>`, and takes debug batches at `/logs` (`?status=<code>`, `?delayMs=<ms>`). For the queue rows below: `?auth=1` answers `401` until the request carries `Authorization: Bearer fresh` (`?auth=never` always answers `401`), and `POST /refresh` returns that token (`?fail=1` answers `500`); set `upload.auth.refresh.url` to it.
 - A session that expires well after the test unless the row says otherwise.
 - iOS: watch the device console for the `expo-location-session` subsystem.
 - Android: `adb logcat -s ELS ExpoLocationSession`. Every service promotion logs `service promoted via <route>` under the `ELS` tag.
@@ -86,3 +86,15 @@ The Android logger is in 0.1.0-beta.2 and later. Use the example's debug toggle 
 | [ ] | 37 | Debug on → watch the device console / logcat during a session | No coordinates in `os_log` or logcat | | | |
 | [ ] | 38 | Debug on, then `configureDebug({ enabled: false })` → move | No new lines and no requests; the files are still there | | | |
 | [ ] | 39 | Debug on → compare the install id the example logs with `install.id` in a batch | They are equal | | | |
+
+### Queue and sync (v0.2)
+
+Every v0.1 row above is re-run once with the default config (no `upload.queue`); that is the regression gate for v0.2.
+
+| Done | # | Check | Expected | iPhone | Pixel | Samsung / Xiaomi |
+|------|---|-------|----------|--------|-------|------------------|
+| [ ] | 48 | `queue: { mode: 'all' }` with `batch: { maxSize: 50 }` → `start` → airplane mode for 10 min while moving → online | `getQueueStatus().pending` grows while offline; when the network returns the backlog is delivered in order in batches of at most 50, each element with a unique `id`, and `pending` goes to 0 | | | |
+| [ ] | 49 | Mode `all` → `start` → go offline → move → `stop()` with rows pending → kill the app → reconnect (with `backgroundSync: true`, do not open the app) | The rows of the ended session are delivered by the OS job (iOS: may take hours or never, device only); with the app opened instead, they are delivered at launch; `pending` ends at 0 | | | |
+| [ ] | 50 | Mode `all` with `auth.refresh` → URL `?auth=1` (the echo server wants `Bearer fresh`) | One `401`, one `POST /refresh`, the same rows sent again with `Bearer fresh` and accepted; the session keeps running. Then `?auth=never`: after the refresh the second `401` stops the session with `unauthorized`, `AUTH_REFRESH_FAILED` is not emitted, and no row stays in flight | | | |
+| [ ] | 51 | Mode `all` → URL `?status=422` | `error` with `UPLOAD_DROPPED` for each dropped batch, the session keeps running, the dropped batch does not block the batches after it (switch the URL back to `?status=204` mid-session and the rest is delivered) | | | |
+| [ ] | 52 | Mode `all` with `maxRecords: 20` and `maxAgeMs: 60000` → go offline → move for 5 min | `QUEUE_TRIMMED` errors name the dropped count, `pending` never passes 20, and after the age limit old pending rows are purged | | | |

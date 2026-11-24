@@ -2,7 +2,7 @@
 
 Background location sessions for React Native. A session sends the device position to your server from native code (Swift on iOS, Kotlin on Android). It keeps working when the app is in the background, when the screen is locked and, with the right permission, after the app has been killed. It stops itself on arrival at a destination or at an expiry time, even if JavaScript never runs.
 
-Built with [Nitro Modules](https://nitro.margelo.com). Status: v0.1 beta. One session at a time, latest position only.
+Built with [Nitro Modules](https://nitro.margelo.com). Status: v0.2 beta. One session at a time. By default only the latest position is kept and sent; opt in to a persistent queue that keeps every location, batches them, shapes the request body with a template, refreshes credentials natively and delivers after the session ends (see [Upload contract](#upload-contract)).
 
 ## Requirements
 
@@ -44,8 +44,9 @@ Add the config plugin to `app.json` and run `npx expo prebuild`:
 | `locationAlwaysText` | existing value, else `Allow $(PRODUCT_NAME) to access your location in the background` | iOS `NSLocationAlwaysAndWhenInUseUsageDescription` |
 | `enableBackgroundLocationPermission` | `true` | Adds `ACCESS_BACKGROUND_LOCATION` to the Android manifest. Set it to `false` if you do not want to file the Google Play background-location declaration; Android sessions then pause when the process dies (see [Survival](#survival)). |
 | `androidNotificationIcon` | none | Path to a white-on-transparent PNG used as the small icon of the Android foreground-service notification. Without it the notification uses a system location icon. |
+| `backgroundSync` | `false` | Lets the OS deliver queued locations of ended sessions while the app is closed (see [Background delivery](#background-delivery)). Android: adds the `expo-location-session.backgroundSync` meta-data. iOS: adds `processing` to `UIBackgroundModes` and `<bundle id>.els.queue-sync` to `BGTaskSchedulerPermittedIdentifiers`. |
 
-The plugin always adds `location` to iOS `UIBackgroundModes`, keeping any modes already there.
+The plugin always adds `location` to iOS `UIBackgroundModes`, keeping any modes already there (and `processing` with `backgroundSync`).
 
 On Android the plugin also keeps the session, its headers, the upload queue and the debug log out of Auto Backup and device transfer (see [Backup](#backup)). When neither `android:fullBackupContent` nor `android:dataExtractionRules` is set, it points them at the library's rules. When the app already references its own rules files, it adds the library's excludes to those files, or prints a warning when it cannot.
 
@@ -75,6 +76,28 @@ Android: the library manifest already declares fine and coarse location, `FOREGR
 ```
 
 For a custom notification icon, add a drawable named `expo_location_session_notification_icon`.
+
+For [background delivery](#background-delivery) in a bare app, on iOS add `processing` to `UIBackgroundModes` and the identifier to the permitted list, replacing `<bundle id>` with your bundle identifier:
+
+```xml
+<key>UIBackgroundModes</key>
+<array>
+  <string>location</string>
+  <string>processing</string>
+</array>
+<key>BGTaskSchedulerPermittedIdentifiers</key>
+<array>
+  <string><bundle id>.els.queue-sync</string>
+</array>
+```
+
+and on Android add this inside `<application>`:
+
+```xml
+<meta-data android:name="expo-location-session.backgroundSync" android:value="true" />
+```
+
+The library depends on `androidx.work`. WorkManager's default initializer runs at app start in every app that includes the library, whether or not `backgroundSync` is on.
 
 To keep the session out of Auto Backup, add the library's rules to `<application>` (see [Backup](#backup)):
 
@@ -145,9 +168,12 @@ getDebugLog(opts?: { limit?: number }): Promise<DebugLogLine[]>
 clearDebugLog(): Promise<void>
 flushDebugLog(): Promise<{ sent: number }>
 getDebugInstallId(): Promise<string>
+getQueueStatus(): Promise<QueueStatus>
+syncQueue(): Promise<{ sent: number }>
+clearQueue(): Promise<void>
 ```
 
-The last five are described in [Debug logging](#debug-logging).
+The five debug functions are described in [Debug logging](#debug-logging), the last three in [Queue functions](#queue-functions).
 
 ### Types
 
@@ -183,6 +209,14 @@ type SessionConfig = {
     headers?: Record<string, string>;
     extras?: Record<string, string | number | boolean>;
     minIntervalMs?: number; // default 15000
+    queue?: {
+      mode: 'latest' | 'all'; // default 'latest'
+      maxRecords?: number; // default 10000, 1 to 100000
+      maxAgeMs?: number; // default 86400000, 60000 to 2592000000
+    };
+    batch?: { maxSize: number; rootProperty?: string }; // maxSize 1 to 500, rootProperty default 'locations'; mode 'all' only
+    body?: { template: Record<string, unknown> }; // up to 8 KB, see Templates
+    auth?: { refresh: { url: string; headers?: Record<string, string>; body?: Record<string, unknown> } }; // url https only
   };
   android: { notification: { title: string; text: string; channelName: string } };
 };
@@ -200,6 +234,15 @@ type SessionState =
       lastUploadAt?: number;
       survivesProcessDeath: boolean; // iOS: Always granted; Android: background location granted
     };
+
+type QueueStatus = {
+  pending: number; // rows not yet delivered, in-flight rows included
+  oldestAt?: number; // epoch ms of the oldest pending fix
+  sessions: number; // distinct sessions with pending rows
+};
+
+type UploadResult = { ok: boolean; status?: number; at: number; sessionId?: string; count?: number };
+type ErrorEvent = { code: string; message: string; sessionId?: string };
 ```
 
 `accuracy` maps to `kCLLocationAccuracyBest` / `kCLLocationAccuracyHundredMeters` / `kCLLocationAccuracyKilometer` on iOS and to `PRIORITY_HIGH_ACCURACY` / `PRIORITY_BALANCED_POWER_ACCURACY` / `PRIORITY_LOW_POWER` on Android. On Android the session requests updates every 10 s, filtered by `distanceFilterMeters`. On iOS a filter of `0` means no filter.
@@ -210,6 +253,18 @@ type SessionState =
 
 `stop()` stops the running session with reason `stopped` and resolves; it does nothing when no session is running.
 
+### Queue functions
+
+```ts
+const { pending, oldestAt, sessions } = await getQueueStatus();
+const { sent } = await syncQueue();
+await clearQueue();
+```
+
+- `getQueueStatus()` counts every row that is not delivered yet, including rows that are in flight right now. In `latest` mode it is at most one row per session. It rejects with `INTERNAL` when the queue storage is not available.
+- `syncQueue()` delivers the rows of ended sessions now and resolves with `{ sent }`, the number of rows delivered by that pass. It is not "the queue is empty": it stops at the first failure (a retry is then scheduled with backoff), and it can resolve early, possibly with `0`, when a running session is blocked on its own backlog or is sending it. Read `getQueueStatus()` for what remains. Call it, for example, when the app opens.
+- `clearQueue()` cancels any delivery in progress and deletes every queued row, the running session's included, together with the stored credentials of ended sessions. The running session keeps running.
+
 ### Errors
 
 Rejected promises carry a `LocationSessionError` with `code` and `message`.
@@ -219,7 +274,7 @@ Rejected promises carry a `LocationSessionError` with `code` and `message`.
 | `NOT_FOREGROUND` | `start` called while the app is not in the foreground |
 | `PERMISSION_DENIED` | `start` or `getCurrentPosition` without location permission; on iOS also `getCurrentPosition` with location services off (iOS reports that as denied) |
 | `ALREADY_RUNNING` | `start` while a session is running; call `stop` first |
-| `INVALID_CONFIG` | empty `id`, non-https or host-less `url`, `radiusMeters <= 0`, negative `distanceFilterMeters` or `minIntervalMs`, non-finite numbers, invalid destination coordinates, an `accuracy` other than `high`, `balanced` or `low`; on iOS also a missing `UIBackgroundModes` `location` |
+| `INVALID_CONFIG` | empty `id`, non-https or host-less `url`, `radiusMeters <= 0`, negative `distanceFilterMeters` or `minIntervalMs`, non-finite numbers, invalid destination coordinates, an `accuracy` other than `high`, `balanced` or `low`; on iOS also a missing `UIBackgroundModes` `location`. Queue options, with the reason after the code: `batch requires queue.mode 'all'`, `batch.maxSize must be between 1 and 500`, `batch.rootProperty must not be empty`, `queue.maxRecords must be between 1 and 100000`, `queue.maxAgeMs must be between 60000 and 2592000000`, `auth.refresh.url must be an https URL`, `auth.refresh.body must be a JSON object`, and `template: <reason>` for a body template that is not a JSON object, is larger than 8 KB, has a malformed `{{` placeholder, an unknown field, or an `extras.` key that is not in `upload.extras` |
 | `NOTIFICATION_PERMISSION_DENIED` | Android 13+: `start` without notification permission |
 | `EXPIRED` | `expiresAt` is not in the future |
 | `INTERNAL` | the session could not be persisted or started |
@@ -230,22 +285,24 @@ Rejected promises carry a `LocationSessionError` with `code` and `message`.
 
 ```ts
 addListener('location', (l: Location) => {});
-addListener('upload', (r: { ok: boolean; status?: number; at: number }) => {});
+addListener('upload', (r: { ok: boolean; status?: number; at: number; sessionId?: string; count?: number }) => {});
 addListener('stop', (s: { reason: StopReason; sessionId: string }) => {});
-addListener('error', (e: { code: string; message: string }) => {});
+addListener('error', (e: { code: string; message: string; sessionId?: string }) => {});
 addListener('log', (line: DebugLogLine) => {});
 ```
 
-`log` events are emitted only while debug logging is on. `addListener` returns an unsubscribe function. Events reach JS only while the JS runtime is alive; the native session does not depend on them. `upload.status` is missing when the request failed without a response (timeout, no network).
+`log` events are emitted only while debug logging is on. `addListener` returns an unsubscribe function. Events reach JS only while the JS runtime is alive; the native session does not depend on them. `upload.status` is missing when the request failed without a response (timeout, no network). `upload.sessionId` is the session the request belonged to, which can be an ended session being delivered after its stop. `upload.count` is the number of locations in the request and is present only in queue mode `all`. Error events carry `sessionId` when they belong to a session, except the sticky ones below.
 
 Error event codes:
 
-- `UPLOAD_DROPPED`: the server answered a 4xx other than 401, 403 or 410 (or, on Android, the body could not be encoded). That location is dropped and the session keeps running.
+- `UPLOAD_DROPPED`: the server answered a 4xx other than 401, 403 or 410 (or, on Android, the body could not be encoded). That location, or that whole batch, is dropped and the session keeps running. It is also emitted for ended sessions (see the status table) and when a queued row is unreadable.
+- `QUEUE_TRIMMED` (queue mode `all`): the queue reached `maxRecords` and the oldest pending rows were dropped to make room. The message says how many. The session keeps running.
+- `AUTH_REFRESH_FAILED`: a token refresh did not succeed (see [Token refresh](#token-refresh)). Whether the session stops depends on the failure.
 - `CONFIG_MISSING_BACKGROUND_MODE` (iOS): a session resumed, or was upgraded to Always, in a build whose `UIBackgroundModes` has no `location`. Background updates are not enabled; the session keeps running and only updates in the foreground. Sticky, see below.
 - `ACCURACY_REDUCED` (iOS): precise location is off for this app, either when the session starts or resumes, or because the user turned it off while it runs. Emitted once per change and sticky (see below); the session keeps running. Fixes are then approximate (often 1–5 km), so arrival cannot trigger (it needs an accuracy within `max(radiusMeters, 100)` m) and region monitoring does not relaunch the app; the session runs to `expiresAt`. Check `getPermissionStatus().precise` before `start` to warn the user earlier. iOS only: on Android, switching an app to approximate location revokes `ACCESS_FINE_LOCATION`, which kills the process, so there is no running session to notify; `precise` reports it.
 - `FGS_PROMOTION_FAILED` (Android): Android refused to restart the foreground service for 10 minutes. The session then stops with reason `stopped`. See [Android](#android).
 
-`CONFIG_MISSING_BACKGROUND_MODE` and `ACCURACY_REDUCED` are sticky on iOS, because they are often raised during a resume at launch, before JS has added a listener. The latest event of each is kept while its condition holds and the session runs, and is emitted again to each `error` listener when it is added. It is dropped when the condition clears (precise location turned back on) or the session stops.
+Sticky errors carry no `sessionId`. `CONFIG_MISSING_BACKGROUND_MODE` and `ACCURACY_REDUCED` are sticky on iOS, because they are often raised during a resume at launch, before JS has added a listener. The latest event of each is kept while its condition holds and the session runs, and is emitted again to each `error` listener when it is added. It is dropped when the condition clears (precise location turned back on) or the session stops.
 
 ## Debug logging
 
@@ -296,12 +353,27 @@ type DebugLogLine = {
   t: number;
   pid: number;
   level: 'debug' | 'info' | 'warn' | 'error';
-  tag: 'lifecycle' | 'permission' | 'location' | 'upload' | 'stop' | 'service' | 'gate' | 'region' | 'store' | 'debug';
+  tag:
+    | 'lifecycle'
+    | 'permission'
+    | 'location'
+    | 'upload'
+    | 'stop'
+    | 'service'
+    | 'gate'
+    | 'region'
+    | 'store'
+    | 'debug'
+    | 'queue'
+    | 'auth'
+    | 'sync';
   msg: string;
   sessionId?: string;
   data?: Record<string, unknown>;
 };
 ```
+
+`queue`, `auth` and `sync` are new in 0.2. Adding them widens the `DebugLogTag` type, so an exhaustive `switch` over it in your code needs the three new cases to keep compiling.
 
 `seq` increases by one for every line and survives relaunches. `t` is epoch milliseconds. `pid` is the process id, so a new `pid` marks a relaunch; the first line of a process has tag `lifecycle` and records how it was launched. Coordinates appear only in these lines.
 
@@ -321,7 +393,7 @@ Each batch is a `POST` to `url` with `Content-Type: application/json`, your head
     "model": "iPhone15,2",
     "os": "iOS 17.5.0",
     "appVersion": "1.4.0 (212)",
-    "libVersion": "0.1.1"
+    "libVersion": "0.2.0-beta.1"
   },
   "lines": []
 }
@@ -345,6 +417,10 @@ A batch is sent when the process starts, every `flushIntervalMs` while the proce
 With debug logging on, the app makes a network request every `flushIntervalMs` while the process is alive, plus one after each location upload and one when a session stops. The file can grow to `2 × maxFileBytes`. Use a longer `flushIntervalMs` when measuring battery.
 
 ## Upload contract
+
+Uploads run in one of two queue modes, chosen by `upload.queue.mode`. `latest` is the default and behaves as in v0.1. `all` is opt-in.
+
+### Default (latest)
 
 Each accepted location is sent as:
 
@@ -378,7 +454,7 @@ Only the latest position matters. There is one pending slot: a newer location re
 | Response | Effect |
 | --- | --- |
 | `2xx` | Success. The pending location is cleared and `lastUploadAt` is recorded. |
-| `401`, `403` | Stop with `unauthorized`. There is no token refresh in v0.1; use a short-lived, session-scoped token. |
+| `401`, `403` | Stop with `unauthorized`. Without `upload.auth.refresh` there is no token refresh; use a short-lived, session-scoped token, or configure [Token refresh](#token-refresh). |
 | `410` | Stop with `rejected` (the server ended the session). |
 | Other `4xx` | The location is dropped, an `error` event with `UPLOAD_DROPPED` is emitted, the session keeps running. |
 | `3xx` | Redirects are never followed. Treated like a `5xx`: the location stays pending and is retried with backoff. Point `upload.url` at the final address. |
@@ -391,6 +467,153 @@ Final uploads bypass the throttle:
 - Arrival: the arrival location is sent and retried with the same backoff for at most 30 seconds (and never past `expiresAt`). Then the session stops with `arrived` (or `unauthorized` / `rejected` if the server answered 401/403/410). If it was not delivered in that time, for example with no network, it is dropped: the session does not stay running to deliver it.
 - Expiry: any pending location gets a single attempt, also capped at 30 seconds, then the session stops with `expired`.
 
+### Queue mode all
+
+```ts
+upload: {
+  url: 'https://api.example.com/sessions/plan-123/locations',
+  headers: { Authorization: 'Bearer <token>' },
+  queue: { mode: 'all', maxRecords: 10000, maxAgeMs: 24 * 60 * 60 * 1000 },
+  batch: { maxSize: 50, rootProperty: 'locations' },
+  auth: { refresh: { url: 'https://api.example.com/auth/refresh', headers: { Authorization: 'Bearer <refresh token>' } } },
+}
+```
+
+Every accepted location is written to a SQLite queue in app-private storage and sent in order. Nothing is replaced by a newer fix.
+
+- Persistence: the queue survives process death, app updates and reboots. On iOS it is in `Application Support/expo-location-session/queue.sqlite`, excluded from backup, with file protection `completeUntilFirstUserAuthentication`. On Android it is `filesDir/expo-location-session/queue.sqlite` (see [Backup](#backup)). Rows being sent when the process dies are made pending again at the next launch. On iOS, locations that arrive before the first unlock after a reboot, while the database cannot be opened, are kept in memory (up to 500) and written once it opens.
+- Retention: `maxRecords` (default 10000, at most 100000) counts every row in the database. When it is exceeded the globally oldest pending rows are dropped and a `QUEUE_TRIMMED` error event names how many. `maxAgeMs` (default 24 h, from 1 minute to 30 days) drops pending rows whose fix timestamp is older than that, checked when the queue is opened and before each delivery pass; it applies to `all` sessions, and pending rows that belong to no session are always dropped. Sessions that ended and have no rows left are forgotten, together with their stored credentials.
+- Delivery is at-least-once. A new `start()` while a delivery of an ended session is in flight, a request watchdog (25 s) or an expiry can send a batch again. Each element carries a stable `id` (a UUID made when the fix was queued) so the server can dedupe on it.
+- Throttle: `minIntervalMs` still spaces the sends that a new location triggers. Once a send succeeds, a backlog drains back to back, one request after another, `batch.maxSize` locations at a time.
+- Connectivity: when the network comes back the queue is delivered without waiting for the backoff timer or for the next location.
+- Request timeout: 20 s, as in `latest`. Redirects are never followed.
+
+#### Request body
+
+Without `batch` and `body`, each request holds one location, the v0.1 body plus an `id`:
+
+```json
+{
+  "id": "6f1c0a52-0d0e-4a43-9d44-7a1d2f6a9b10",
+  "sessionId": "plan-123",
+  "location": { "latitude": 19.4326, "longitude": -99.1332, "accuracy": 12.3, "timestamp": 1763480000000 },
+  "battery": { "level": 0.72, "charging": false },
+  "extras": { "userId": 42 }
+}
+```
+
+With `batch: { maxSize }` (1 to 500, only with mode `all`) and a `maxSize` above 1, each request holds up to `maxSize` locations in an envelope. `rootProperty` is the array name, `locations` by default. `extras` is sent once, in the envelope:
+
+```json
+{
+  "sessionId": "plan-123",
+  "locations": [
+    {
+      "id": "6f1c0a52-0d0e-4a43-9d44-7a1d2f6a9b10",
+      "location": { "latitude": 19.4326, "longitude": -99.1332, "accuracy": 12.3, "timestamp": 1763480000000 },
+      "battery": { "level": 0.72, "charging": false }
+    }
+  ],
+  "extras": { "userId": 42 }
+}
+```
+
+Elements keep the order in which the locations were taken. `altitude`, `speed`, `heading` and `battery` are left out when unknown, as in `latest`. With `maxSize: 1` there is no envelope: the request is the single-location body shown above.
+
+#### Templates
+
+`upload.body.template` replaces the shape of each element with your own JSON object. Strings in it can hold `{{placeholders}}`:
+
+```ts
+body: {
+  template: {
+    device: '{{extras.deviceId}}',
+    point: { lat: '{{latitude}}', lng: '{{longitude}}', accuracy: '{{accuracy}}' },
+    at: '{{timestampIso}}',
+    label: 'fix {{id}} at {{timestamp}}',
+  },
+},
+```
+
+| Placeholder | Value |
+| --- | --- |
+| `{{id}}` | the row's stable UUID |
+| `{{sessionId}}` | `SessionConfig.id` |
+| `{{latitude}}`, `{{longitude}}`, `{{accuracy}}` | numbers |
+| `{{altitude}}`, `{{speed}}`, `{{heading}}` | numbers, missing when the platform does not report them |
+| `{{timestamp}}` | epoch ms of the fix |
+| `{{timestampIso}}` | the same instant as an ISO 8601 UTC string with milliseconds |
+| `{{batteryLevel}}`, `{{batteryCharging}}` | `0..1` and a boolean, missing when the level is unknown |
+| `{{extras.<key>}}` | a value of `upload.extras`; the key must exist there |
+
+- A string that is exactly one placeholder keeps the value's JSON type: `'{{latitude}}'` becomes a number. A string with other text around the placeholder, or with several, becomes text (numbers and booleans written as `12.3` and `true`).
+- A missing value omits the key from an object, becomes `null` in an array, and is an empty string inside longer text. A non-finite number becomes `null`.
+- Placeholders are replaced in every string value, at any depth, in objects and arrays; keys are not rewritten.
+- The template must be a JSON object of at most 8 KB. An unknown field, an unknown `extras.` key or an unclosed `{{` rejects `start` with `INVALID_CONFIG: template: <reason>`.
+- Without `batch` (or with `maxSize: 1`), the request body is the rendered object itself: `sessionId` and `extras` are not added, and `id` is there only when you use `{{id}}`. With `batch.maxSize` above 1, the rendered objects are the elements of the envelope above, which keeps its `sessionId` and `extras`. Put `{{id}}` in the template so the server can dedupe.
+- A template also applies in mode `latest`.
+
+#### Responses
+
+| Response | Running session | Ended session (rows kept after the stop) |
+| --- | --- | --- |
+| `2xx` | The sent rows are deleted and `lastUploadAt` is recorded. | The sent rows are deleted. |
+| `401` with `auth.refresh` | Refresh the credentials, then send the same rows again, once per attempt. A second `401` stops the session with `unauthorized`. | The same refresh and retry. A second `401` leaves the rows in place and retries with backoff. |
+| `401` without `auth.refresh`, `403` | Stop with `unauthorized`. | The sent rows are dropped with `UPLOAD_DROPPED`. |
+| `410` | Stop with `rejected`; the session's rows are deleted. | All rows of the session are deleted, with one `UPLOAD_DROPPED`. |
+| Other `4xx` (for example `413`, `422`) | That batch is dropped with `UPLOAD_DROPPED`; the session keeps running, so one poison batch does not block the rest. | The same. |
+| `3xx`, `5xx`, timeout, no network | The rows stay pending and are retried with backoff 5 s, 10 s, 20 s, 40 s, then every 60 s. Redirects are never followed. | The same. |
+
+`413` is an ordinary 4xx: the batch is dropped, not split. Size `batch.maxSize` to the server's limit.
+
+When a session stops in mode `all`, the rows it still has are kept, marked as ended, and tried again later, with the exceptions in the table (`410`, and `stop` with reason `rejected`, delete them). A stop caused by `401` or `403` keeps the rows too; their next attempt follows the ended column. In mode `latest` a stop deletes the pending location, as in v0.1.
+
+Final uploads still run on arrival, expiry and `stop()`, with the same 30 s budget as in `latest`. What they do not deliver stays queued. Ended sessions are then delivered when the stop completes, when connectivity returns, when the process starts, on `syncQueue()` and from the OS job (see [Background delivery](#background-delivery)), one session at a time, oldest first, while a running session's own rows go first.
+
+Server contract: the credentials of an ended session stay stored, and the server must keep accepting them, until its rows are delivered or dropped: up to `maxAgeMs` after the end. A `401` after the end is not recoverable unless `auth.refresh` is set.
+
+### Token refresh
+
+With `upload.auth.refresh`, a `401` from the upload endpoint makes the library fetch new credentials natively, with no JS, and send the same rows again:
+
+```
+POST <auth.refresh.url>
+Content-Type: application/json
+<auth.refresh.headers>
+
+{ "sessionId": "plan-123" }
+```
+
+The body is `auth.refresh.body` as given when you set it, otherwise `{ "sessionId": "<id>" }`. `auth.refresh.url` must be https, and redirects are never followed. The request times out after 20 s.
+
+A `2xx` answer must be a JSON object:
+
+```json
+{
+  "headers": { "Authorization": "Bearer <new token>" },
+  "refreshHeaders": { "Authorization": "Bearer <new refresh token>" }
+}
+```
+
+- `headers` is required, non-empty, and holds string values. It replaces all the upload headers of this session, so send every header the upload endpoint needs. It is stored for the session, also for after the process restarts.
+- `refreshHeaders` is optional, string values. It replaces the headers of the next refresh request (token rotation). When absent the previous ones are kept.
+- After a successful refresh the same rows are sent again. If that attempt answers `401` again, the session stops with `unauthorized` (or, for an ended session, retries later); the library does not refresh twice in a row.
+
+Failures emit `AUTH_REFRESH_FAILED` and are told apart:
+
+- Transport failure (network error, timeout, a `3xx`): the upload is retried with backoff, and so is the refresh. The session keeps running.
+- Rejected by the server (a non-2xx, non-3xx status, or a `2xx` whose body is not the object above): the running session stops with `unauthorized`. For an ended session the rows stay and are retried later.
+
+The refresh also applies in queue mode `latest`.
+
+### Background delivery
+
+Rows of an ended session are delivered while the process is alive, when connectivity returns and on `syncQueue()`. To also deliver while the app is closed, set the plugin option `backgroundSync: true` (or the bare setup in [Install](#bare-react-native)). The library then schedules an OS job when a session ends with rows left, and while no session runs.
+
+- Android: a WorkManager job that requires a network connection. The system decides when it runs and retries it with backoff.
+- iOS: a `BGProcessingTask` with the identifier `<bundle id>.els.queue-sync`. iOS decides when it runs: that can be hours later, or never for an app the user rarely opens. It does not run on the Simulator, so test it on a device. It is scheduled only while no session runs, and again when a session ends.
+- The job reports success when no ended-session rows remain, and is rescheduled otherwise.
+
 ## Stop policy
 
 The session stops itself when:
@@ -401,7 +624,7 @@ The session stops itself when:
 - `permissionRevoked`: location permission was removed. iOS detects it immediately (setting it to Never). Android kills the app on revocation, so it is detected at the next wake or app open.
 - `stopped`: `stop()` was called, or Android could not restart the foreground service for 10 minutes.
 
-Stopping removes location updates, regions, geofences, alarms and the Android notification, wipes the persisted session and pending location, and keeps only `lastStop`.
+Stopping removes location updates, regions, geofences, alarms and the Android notification, wipes the persisted session and pending location, and keeps only `lastStop`. In queue mode `all` the queued rows and the session's upload target stay for delivery (see [Queue mode all](#queue-mode-all)).
 
 ## Survival
 
@@ -459,7 +682,8 @@ In a bare app with its own rules files, add these excludes to them yourself (ins
 - A force stop (Settings › Force stop) cancels Play services requests and alarms. The session resumes when the user opens the app.
 - Android has no boot resume in v0.1: after a reboot the session resumes when the app is opened.
 - Android requires Google Play services.
-- One session at a time; no history, batching or offline queue beyond the single pending location.
+- One session at a time. The default `latest` mode keeps only the single pending location; the offline queue is opt-in (`upload.queue.mode: 'all'`).
+- Queue delivery is at-least-once, and `getQueueStatus().pending` includes rows that are in flight. OS background delivery depends on the system scheduler (see [Background delivery](#background-delivery)).
 - No web support.
 
 ## Store review notes
@@ -489,7 +713,7 @@ yarn install
 yarn ios       # or: yarn android
 ```
 
-Run the local echo server in another terminal. It prints every request body and answers `204`, or the status in `?status=` (for example `?status=401`); a request to `/fail?n=3` makes the next 3 uploads answer 503. `POST /logs` accepts debug batches: it prints one summary line per batch (install id, line count, `seq` range, `Authorization` header), answers `204` or the status in `?status=`, and waits `?delayMs=` before answering. Set `LOG_LINES=1` to print every line.
+Run the local echo server in another terminal. It prints every request body and answers `204`, or the status in `?status=` (for example `?status=401`); a request to `/fail?n=3` makes the next 3 uploads answer 503. `?auth=1` answers `401` unless the request carries `Authorization: Bearer fresh`, and `?auth=never` always answers `401`. `POST /refresh` answers `200` with `{ "headers": { "Authorization": "Bearer fresh" } }`, or `500` with `?fail=1`; point `upload.auth.refresh.url` at it. `POST /logs` accepts debug batches: it prints one summary line per batch (install id, line count, `seq` range, `Authorization` header), answers `204` or the status in `?status=`, and waits `?delayMs=` before answering. Set `LOG_LINES=1` to print every line.
 
 ```sh
 TLS_CERT=cert.pem TLS_KEY=key.pem node example/scripts/echo-server.mjs   # https on :8443
@@ -520,7 +744,7 @@ CI (`.github/workflows/ci.yml`) runs these on every push to `main` and every pul
 | Version | Scope |
 | --- | --- |
 | v0.1 | Permissions, one-shot position, one running session, background survival, relaunch after kill on both platforms (Android: background-start gate with exact-alarm and recovery-geofence fallbacks), native upload of the latest position with retry, auto-stop on arrival / expiry, Expo config plugin, example app |
-| v0.2 | Full persistence and sync: SQLite queue, batching, body templates, native token refresh, upload on connectivity regained |
+| v0.2 (beta) | Full persistence and sync: SQLite queue, batching, body templates, native token refresh, upload on connectivity regained, delivery after the session ends and from OS background jobs |
 | v0.3 | Motion / stationary detection (CoreMotion, Activity Recognition, stop timeout, stationary geofence) for long sessions |
 | v0.4 | Geofencing: circular + polygon, enter/exit/dwell, beyond OS region limits |
 | v0.5 | Scheduling windows, heartbeat, boot resume, native logs, power-save / OEM settings helpers |
