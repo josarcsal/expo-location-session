@@ -36,6 +36,7 @@ extension SessionEngine {
         case .none where protectedData:
             stopWaitingForProtectedData()
             source.releaseLeftovers()
+            queue.store()?.markAllEnded()
         case .none, .unavailable:
             Log.info("store", "persisted session not readable yet protectedData=\(protectedData); waiting")
             waitForProtectedData()

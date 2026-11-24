@@ -190,8 +190,14 @@ object SessionEngine {
     }
 
     fun drainAtProcessStart(ctx: Context) {
-        init(ctx)
-        if (config == null && store.load() != StoredSession.None) return
+        val context = init(ctx)
+        if (config == null) {
+            when (store.load()) {
+                StoredSession.None -> queue.store()?.markAllEnded()
+                StoredSession.Corrupt -> resumeIfNeeded(context)
+                is StoredSession.Session -> return
+            }
+        }
         uploader.drain(null) {}
     }
 
@@ -348,7 +354,7 @@ object SessionEngine {
         val action = if (reason == null) StopQueueAction.DELETE_ROWS else stopQueueAction(c.sync.mode, reason)
         if (action == StopQueueAction.MARK_ENDED) {
             queue.store()?.markEnded(c.id)
-            ElsLog.debug("queue", "session marked ended", mapOf("pending" to (queue.store()?.status()?.pending ?: 0)), c.id)
+            ElsLog.debug("queue", "session marked ended", mapOf("totalPending" to (queue.store()?.status()?.pending ?: 0)), c.id)
         } else {
             val deleted = queue.store()?.deleteSession(c.id) ?: 0
             ElsLog.debug("queue", "session rows deleted", mapOf("rows" to deleted), c.id)

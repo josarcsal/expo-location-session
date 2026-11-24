@@ -486,7 +486,8 @@ final class Uploader {
         request.httpBody = body
         let sentId = flushId
         let startedAt = nowMs()
-        var data: [String: Any] = ["generation": ids.last ?? 0, "attempt": attempt, "bytes": body.count, "flush": flushCompletion != nil, "rows": ids.count, "fixTimestamp": rows.first(where: { ids.contains($0.id) })?.fixTs ?? 0]
+        var data: [String: Any] = ["generation": ids.last ?? 0, "bytes": body.count, "flush": flushCompletion != nil, "rows": ids.count, "fixTimestamp": rows.first(where: { ids.contains($0.id) })?.fixTs ?? 0]
+        if ownsAttempt(t) { data["attempt"] = attempt }
         if t.ended {
             data["ended"] = true
             pass?.requests += 1
@@ -571,14 +572,14 @@ final class Uploader {
         data["generation"] = rows.last ?? 0
         data["outcome"] = uploadOutcomeName(action)
         if let status { data["status"] = status }
-        if action == .retry { data["backoffMs"] = backoffMs(attempt: attempt) }
+        if action == .retry, ownsAttempt(t) { data["backoffMs"] = backoffMs(attempt: attempt) }
         Log.upload(status: status, outcome: action, data: data, sessionId: t.id)
         DebugLogger.shared.onUploadCompleted()
 
         switch action {
         case .deleteSent:
             db.store()?.delete(ids: rows)
-            attempt = 0
+            if ownsAttempt(t) { attempt = 0 }
             if t.ended {
                 drained += rows.count
             } else {
@@ -589,13 +590,13 @@ final class Uploader {
         case .dropSent:
             db.store()?.delete(ids: rows)
             syncPendingFix(t)
-            attempt = 0
+            if ownsAttempt(t) { attempt = 0 }
             let message = rows.count == 1 ? "Server responded \(status ?? 0); location dropped" : "Server responded \(status ?? 0); \(rows.count) locations dropped"
             events.emit(.error, ["code": "UPLOAD_DROPPED", "message": message, "sessionId": t.id])
         case .dropSession:
             let deleted = db.store()?.deleteSession(t.id) ?? 0
             credentials.remove(sessionId: t.id)
-            attempt = 0
+            if ownsAttempt(t) { attempt = 0 }
             Log.debug("queue", "session rows deleted", data: ["rows": deleted, "status": status ?? 0], sessionId: t.id)
             events.emit(.error, ["code": "UPLOAD_DROPPED", "message": "Server responded \(status ?? 0); \(deleted) location\(deleted == 1 ? "" : "s") of the ended session dropped", "sessionId": t.id])
         case .stop(let reason):
@@ -611,15 +612,29 @@ final class Uploader {
             retryLater(t)
             return
         }
+        if !t.ended { resolveDeferredIfBlocked() }
         continueAfterSend(t)
+    }
+
+    private func ownsAttempt(_ t: Target) -> Bool {
+        !t.ended || config == nil
     }
 
     private func retryLater(_ t: Target) {
         if t.ended {
             endPass(.retry)
         } else {
+            resolveDeferredIfBlocked()
             scheduleRetry()
         }
+    }
+
+    private func resolveDeferredIfBlocked() {
+        guard !deferred.isEmpty, let c = config, hasPending(c) else { return }
+        let waiters = deferred
+        deferred = []
+        let total = drained
+        waiters.forEach { $0.done(total - $0.base) }
     }
 
     private func scheduleRetry() {

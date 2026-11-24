@@ -95,7 +95,7 @@ final class SessionEngine {
         let action = stopQueueAction(mode: c.sync.mode, reason: reason)
         if action == .markEnded {
             queue.store()?.markEnded(c.id)
-            Log.debug("queue", "session marked ended", data: ["pending": queue.store()?.status().pending ?? 0], sessionId: c.id)
+            Log.debug("queue", "session marked ended", data: ["totalPending": queue.store()?.status().pending ?? 0], sessionId: c.id)
         } else {
             let deleted = queue.store()?.deleteSession(c.id) ?? 0
             Log.debug("queue", "session rows deleted", data: ["rows": deleted], sessionId: c.id)

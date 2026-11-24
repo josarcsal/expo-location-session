@@ -538,12 +538,12 @@ class Uploader(
         val startedAt = nowMs()
         val data = mutableMapOf<String, Any?>(
             "generation" to ids.last(),
-            "attempt" to attempt,
             "bytes" to body.length,
             "flush" to (flushCompletion != null),
             "rows" to ids.size,
             "fixTimestamp" to sent.first().fixTs
         )
+        if (ownsAttempt(t)) data["attempt"] = attempt
         if (t.ended) {
             data["ended"] = true
             pass?.let { it.requests += 1 }
@@ -666,14 +666,14 @@ class Uploader(
             "status" to status,
             "rows" to rows.size
         )
-        if (action == SyncAction.Retry) detail["backoffMs"] = backoffMs(attempt)
+        if (action == SyncAction.Retry && ownsAttempt(t)) detail["backoffMs"] = backoffMs(attempt)
         ElsLog.info("upload", "upload status=${status ?: "none"} outcome=$outcome", detail, t.id)
         DebugLogger.onUploadCompleted()
 
         when (action) {
             SyncAction.DeleteSent -> {
                 queue.store()?.delete(rows)
-                attempt = 0
+                if (ownsAttempt(t)) attempt = 0
                 if (t.ended) {
                     drained += rows.size
                 } else {
@@ -685,7 +685,7 @@ class Uploader(
             SyncAction.DropSent -> {
                 queue.store()?.delete(rows)
                 syncPendingFix(t)
-                attempt = 0
+                if (ownsAttempt(t)) attempt = 0
                 val message = if (rows.size == 1) {
                     "Server responded ${status ?: 0}; location dropped"
                 } else {
@@ -696,7 +696,7 @@ class Uploader(
             SyncAction.DropSession -> {
                 val deleted = queue.store()?.deleteSession(t.id) ?: 0
                 credentials.remove(t.id)
-                attempt = 0
+                if (ownsAttempt(t)) attempt = 0
                 ElsLog.debug("queue", "session rows deleted", mapOf("rows" to deleted, "status" to status), t.id)
                 events.emit(
                     "error",
@@ -723,12 +723,29 @@ class Uploader(
                 return
             }
         }
+        if (!t.ended) resolveDeferredIfBlocked()
         continueAfterSend(t)
         notifySettled()
     }
 
+    private fun ownsAttempt(t: Target): Boolean = !t.ended || config == null
+
     private fun retryLater(t: Target) {
-        if (t.ended) endPass(PassEnd.RETRY) else scheduleRetry()
+        if (t.ended) {
+            endPass(PassEnd.RETRY)
+        } else {
+            resolveDeferredIfBlocked()
+            scheduleRetry()
+        }
+    }
+
+    private fun resolveDeferredIfBlocked() {
+        val c = config ?: return
+        if (deferred.isEmpty() || !hasPending(c)) return
+        val waiters = deferred.toList()
+        deferred.clear()
+        val total = drained
+        waiters.forEach { it.done(total - it.base) }
     }
 
     private fun scheduleRetry() {
