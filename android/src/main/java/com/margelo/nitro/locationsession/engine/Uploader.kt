@@ -8,23 +8,36 @@ import android.os.Handler
 import android.os.Looper
 import com.margelo.nitro.locationsession.core.Battery
 import com.margelo.nitro.locationsession.core.Fix
-import com.margelo.nitro.locationsession.core.PendingSlot
+import com.margelo.nitro.locationsession.core.FixRecord
+import com.margelo.nitro.locationsession.core.QueueMode
+import com.margelo.nitro.locationsession.core.QueuedRow
 import com.margelo.nitro.locationsession.core.SessionConfig
 import com.margelo.nitro.locationsession.core.StopReason
+import com.margelo.nitro.locationsession.core.SyncAction
 import com.margelo.nitro.locationsession.core.UploadOutcome
 import com.margelo.nitro.locationsession.core.backoffMs
-import com.margelo.nitro.locationsession.core.buildBody
-import com.margelo.nitro.locationsession.core.classify
+import com.margelo.nitro.locationsession.core.batchLimit
+import com.margelo.nitro.locationsession.core.buildElement
+import com.margelo.nitro.locationsession.core.buildRequestBody
 import com.margelo.nitro.locationsession.core.FINAL_UPLOAD_BUDGET_MS
 import com.margelo.nitro.locationsession.core.shouldUploadNow
+import com.margelo.nitro.locationsession.core.syncAction
 import org.json.JSONObject
+import org.json.JSONTokener
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 
-class Uploader(context: Context, private val store: SessionStore, private val events: EventBus) {
+class Uploader(
+    context: Context,
+    private val store: SessionStore,
+    private val queue: QueueStore,
+    private val credentials: TargetCredentials,
+    private val events: EventBus
+) {
     var onStop: ((StopReason) -> Unit)? = null
 
     private val appContext = context.applicationContext
@@ -33,18 +46,17 @@ class Uploader(context: Context, private val store: SessionStore, private val ev
     private val watchdog = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "expo-location-session.upload-watchdog") }
 
     private var config: SessionConfig? = null
-    private var slot = PendingSlot()
-    private var generation = 0
     var lastSuccessMs: Long? = null
         private set
     private var attempt = 0
     private var inFlight = false
+    private var inFlightRows: List<Long> = emptyList()
     @Volatile private var connection: HttpURLConnection? = null
     private var timer: Runnable? = null
     private var flushDeadline: Runnable? = null
+    private var sendWatchdog: Runnable? = null
     @Volatile private var epoch = 0
     private var flushCompletion: (() -> Unit)? = null
-    private var flushTarget = 0
     private val settledWaiters = mutableListOf<() -> Unit>()
 
     val isBusy: Boolean get() = inFlight || flushCompletion != null
@@ -54,59 +66,74 @@ class Uploader(context: Context, private val store: SessionStore, private val ev
         reset()
         config = c
         this.lastSuccessMs = lastSuccessMs
-        pending?.let(::sanitized)?.let { generation = slot.put(it) }
+        if (c.sync.mode != QueueMode.LATEST) return
+        val fix = pending?.let(::sanitized) ?: return
+        if (queue.latestPending(c.id) != null) return
+        enqueue(fix, c)
     }
 
     fun reset() {
         assertMain()
         epoch += 1
+        if (inFlightRows.isNotEmpty()) {
+            val c = config
+            if (c != null) giveBack(inFlightRows, c) else queue.release(inFlightRows)
+        }
+        inFlightRows = emptyList()
         inFlight = false
         connection?.let { conn -> watchdog.execute { runCatching { conn.disconnect() } } }
         connection = null
         cancelTimer()
         cancelFlushDeadline()
+        cancelSendWatchdog()
         config = null
-        slot = PendingSlot()
-        generation = 0
         lastSuccessMs = null
         attempt = 0
         flushCompletion = null
-        flushTarget = 0
         notifySettled()
     }
 
     fun put(fix: Fix) {
         assertMain()
-        if (config == null) return
-        generation = slot.put(fix)
+        val c = config ?: return
+        val trimmed = enqueue(fix, c)
         store.pendingFix = fix
+        if (c.sync.mode == QueueMode.ALL && trimmed > 0) {
+            events.emit(
+                "error",
+                JSONObject()
+                    .put("code", "QUEUE_TRIMMED")
+                    .put("message", "Queue full; $trimmed oldest location${if (trimmed == 1) "" else "s"} dropped")
+                    .put("sessionId", c.id)
+            )
+        }
     }
 
     fun pump() {
         assertMain()
         val c = config ?: return
-        if (inFlight || flushCompletion != null || slot.fix == null) return
+        if (inFlight || flushCompletion != null || !hasPending(c)) return
         val now = nowMs()
         if (shouldUploadNow(lastSuccessMs, now, c.uploadMinIntervalMs, false)) {
             send()
         } else {
             val last = lastSuccessMs ?: return
             val wait = last + c.uploadMinIntervalMs - now
-            ElsLog.debug("upload", "throttled", mapOf("waitMs" to wait, "generation" to generation, "minIntervalMs" to c.uploadMinIntervalMs), c.id)
+            ElsLog.debug("upload", "throttled", mapOf("waitMs" to wait, "generation" to generation(c), "minIntervalMs" to c.uploadMinIntervalMs), c.id)
             startTimer(wait) { pump() }
         }
     }
 
     fun flush(completion: () -> Unit) {
         assertMain()
-        if (config == null || (!inFlight && slot.fix == null)) {
-            ElsLog.debug("upload", "flush skipped, nothing pending", sessionId = config?.id)
+        val c = config
+        if (c == null || (!inFlight && !hasPending(c))) {
+            ElsLog.debug("upload", "flush skipped, nothing pending", sessionId = c?.id)
             completion()
             return
         }
-        ElsLog.debug("upload", "flush start", mapOf("generation" to generation, "inFlight" to inFlight), config?.id)
+        ElsLog.debug("upload", "flush start", mapOf("generation" to generation(c), "inFlight" to inFlight), c.id)
         flushCompletion = completion
-        flushTarget = generation
         cancelTimer()
         val r = Runnable {
             flushDeadline = null
@@ -127,6 +154,50 @@ class Uploader(context: Context, private val store: SessionStore, private val ev
         val waiters = settledWaiters.toList()
         settledWaiters.clear()
         waiters.forEach { it() }
+    }
+
+    private fun enqueue(fix: Fix, c: SessionConfig): Int {
+        val uuid = UUID.randomUUID().toString()
+        val body = try {
+            when (c.sync.mode) {
+                QueueMode.LATEST -> encodeFix(fix)
+                QueueMode.ALL -> buildElement(FixRecord(uuid, c.id, fix, battery()), c.sync, c.uploadExtrasJson)
+            }
+        } catch (e: Exception) {
+            null
+        }
+        if (body == null) {
+            ElsLog.debug("queue", "could not encode location", mapOf("fixTimestamp" to fix.timestampMs), c.id, level = "warn")
+            return 0
+        }
+        return try {
+            val trimmed = queue.insert(c.id, uuid, fix.timestampMs, body, c.sync.mode, c.sync.maxRecords)
+            ElsLog.debug("queue", "inserted", mapOf("mode" to c.sync.mode.wire, "fixTimestamp" to fix.timestampMs, "trimmed" to trimmed), c.id)
+            if (trimmed > 0) {
+                ElsLog.debug("queue", "trimmed", mapOf("rows" to trimmed, "maxRecords" to c.sync.maxRecords), c.id, level = "warn")
+            }
+            trimmed
+        } catch (e: QueueStoreException) {
+            ElsLog.debug("queue", "insert failed", mapOf("error" to e.message), c.id, level = "warn")
+            0
+        }
+    }
+
+    private fun generation(c: SessionConfig): Long = queue.latestPending(c.id)?.id ?: 0L
+
+    private fun hasPending(c: SessionConfig): Boolean = queue.latestPending(c.id) != null
+
+    private fun syncPendingFix(c: SessionConfig) {
+        if (c.sync.mode != QueueMode.LATEST) return
+        store.pendingFix = queue.latestPending(c.id)?.let { decodeFix(it.body) }
+    }
+
+    private fun giveBack(ids: List<Long>, c: SessionConfig) {
+        if (c.sync.mode == QueueMode.LATEST && queue.latestPending(c.id) != null) {
+            queue.delete(ids)
+        } else {
+            queue.release(ids)
+        }
     }
 
     private fun scheduleFlushRetry(delayMs: Long) {
@@ -162,12 +233,17 @@ class Uploader(context: Context, private val store: SessionStore, private val ev
         flushDeadline = null
     }
 
+    private fun cancelSendWatchdog() {
+        sendWatchdog?.let { main.removeCallbacks(it) }
+        sendWatchdog = null
+    }
+
     private fun flushDeadlineReached() {
         if (flushCompletion == null) return
         ElsLog.info(
             "upload",
             "final upload deadline reached",
-            mapOf("pending" to (slot.fix != null), "inFlight" to inFlight),
+            mapOf("pending" to (config?.let(::hasPending) ?: false), "inFlight" to inFlight),
             config?.id,
             level = "warn"
         )
@@ -178,55 +254,136 @@ class Uploader(context: Context, private val store: SessionStore, private val ev
     private fun completeFlush() {
         cancelFlushDeadline()
         val done = flushCompletion
-        if (done != null) ElsLog.debug("upload", "flush end", mapOf("pending" to (slot.fix != null)), config?.id)
+        if (done != null) ElsLog.debug("upload", "flush end", mapOf("pending" to (config?.let(::hasPending) ?: false)), config?.id)
         flushCompletion = null
         done?.invoke()
         notifySettled()
     }
 
+    private fun continueAfterSend(c: SessionConfig) {
+        if (flushCompletion != null) {
+            if (hasPending(c)) send() else completeFlush()
+        } else if (c.sync.mode == QueueMode.ALL && hasPending(c)) {
+            send()
+        } else {
+            pump()
+        }
+    }
+
     private fun send() {
         val c = config
-        val fix = slot.fix
-        if (c == null || fix == null) {
+        if (c == null) {
             completeFlush()
             return
         }
         cancelTimer()
-        val sentGeneration = generation
-        val body = try {
-            buildBody(c.id, fix, battery(), c.uploadExtrasJson)
-        } catch (e: Exception) {
-            null
+        epoch += 1
+        var rows = queue.claim(c.id, if (c.sync.mode == QueueMode.LATEST) 1 else batchLimit(c.sync))
+        if (c.sync.mode == QueueMode.LATEST) {
+            while (rows.isNotEmpty() && queue.latestPending(c.id) != null) {
+                val row = rows.first()
+                queue.delete(listOf(row.id))
+                ElsLog.debug("queue", "superseded row deleted", mapOf("fixTimestamp" to row.fixTs), c.id)
+                rows = queue.claim(c.id, 1)
+            }
         }
-        if (body == null) {
-            ElsLog.info("upload", "could not encode location; dropping it", sessionId = c.id, level = "warn")
-            slot.markSent(sentGeneration)
-            store.pendingFix = slot.fix
-            events.emit("error", JSONObject().put("code", "UPLOAD_DROPPED").put("message", "Location could not be encoded; location dropped"))
-            if (flushCompletion != null) completeFlush() else pump()
+        if (rows.isEmpty()) {
+            completeFlush()
             return
         }
+        val elements = ArrayList<String>()
+        val sent = ArrayList<QueuedRow>()
+        val unreadable = ArrayList<QueuedRow>()
+        for (row in rows) {
+            val element = element(row, c)
+            if (element != null) {
+                elements.add(element)
+                sent.add(row)
+            } else {
+                unreadable.add(row)
+            }
+        }
+        if (unreadable.isNotEmpty()) {
+            queue.delete(unreadable.map { it.id })
+            for (row in unreadable) {
+                ElsLog.debug("queue", "unreadable row deleted", mapOf("fixTimestamp" to row.fixTs, "attempts" to row.attempts), c.id, level = "warn")
+                events.emit(
+                    "error",
+                    JSONObject().put("code", "UPLOAD_DROPPED").put("message", "Queued location unreadable; location dropped").put("sessionId", c.id)
+                )
+            }
+            syncPendingFix(c)
+        }
+        if (sent.isEmpty()) {
+            continueAfterSend(c)
+            return
+        }
+        val ids = sent.map { it.id }
+        val body = buildRequestBody(c.id, elements, c.sync, c.uploadExtrasJson)
+        val headers = credentials.load(c.id)?.headers ?: emptyMap()
         val sentEpoch = epoch
         inFlight = true
+        inFlightRows = ids
         val startedAt = nowMs()
         ElsLog.debug(
             "upload",
             "attempt",
-            mapOf("generation" to sentGeneration, "attempt" to attempt, "bytes" to body.length, "flush" to (flushCompletion != null), "fixTimestamp" to fix.timestampMs),
+            mapOf(
+                "generation" to ids.last(),
+                "attempt" to attempt,
+                "bytes" to body.length,
+                "flush" to (flushCompletion != null),
+                "rows" to ids.size,
+                "fixTimestamp" to sent.first().fixTs
+            ),
             c.id
         )
+        startSendWatchdog(sentEpoch, startedAt)
+        val url = c.uploadUrl
         executor.execute {
-            val status = post(c, body, sentEpoch)
-            main.post { finish(sentGeneration, status, sentEpoch, nowMs() - startedAt) }
+            val status = post(url, headers, body, sentEpoch, c.id)
+            main.post { finish(sentEpoch, status, nowMs() - startedAt) }
         }
     }
 
-    private fun post(c: SessionConfig, body: String, sentEpoch: Int): Int? {
+    private fun element(row: QueuedRow, c: SessionConfig): String? = try {
+        when (c.sync.mode) {
+            QueueMode.LATEST -> decodeFix(row.body)?.let {
+                buildElement(FixRecord(row.uuid, c.id, it, battery()), c.sync, c.uploadExtrasJson)
+            }
+            QueueMode.ALL -> {
+                val tokener = JSONTokener(row.body)
+                tokener.nextValue()
+                if (tokener.more()) null else row.body
+            }
+        }
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun startSendWatchdog(sentEpoch: Int, startedAt: Long) {
+        cancelSendWatchdog()
+        val r = Runnable {
+            sendWatchdog = null
+            if (sentEpoch == epoch) abandonInFlight(nowMs() - startedAt)
+        }
+        sendWatchdog = r
+        main.postDelayed(r, (TIMEOUT_MS + 5_000).toLong())
+    }
+
+    private fun abandonInFlight(durationMs: Long) {
+        epoch += 1
+        connection?.let { conn -> watchdog.execute { runCatching { conn.disconnect() } } }
+        ElsLog.info("upload", "upload watchdog fired", mapOf("durationMs" to durationMs), config?.id, level = "warn")
+        complete(null, durationMs)
+    }
+
+    private fun post(url: String, headers: Map<String, String>, body: String, sentEpoch: Int, sessionId: String): Int? {
         if (sentEpoch != epoch) return null
         var conn: HttpURLConnection? = null
         var deadline: ScheduledFuture<*>? = null
         return try {
-            conn = URL(c.uploadUrl).openConnection() as HttpURLConnection
+            conn = URL(url).openConnection() as HttpURLConnection
             connection = conn
             val watched = conn
             deadline = watchdog.schedule({ runCatching { watched.disconnect() } }, TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
@@ -237,7 +394,7 @@ class Uploader(context: Context, private val store: SessionStore, private val ev
             conn.useCaches = false
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json")
-            c.uploadHeaders.forEach { (name, value) -> conn.setRequestProperty(name, value) }
+            headers.forEach { (name, value) -> conn.setRequestProperty(name, value) }
             val bytes = body.toByteArray(Charsets.UTF_8)
             conn.setFixedLengthStreamingMode(bytes.size)
             if (sentEpoch != epoch) return null
@@ -246,7 +403,7 @@ class Uploader(context: Context, private val store: SessionStore, private val ev
             runCatching { (if (status >= 400) conn.errorStream else conn.inputStream)?.use { it.readBytes() } }
             status
         } catch (e: Exception) {
-            ElsLog.info("upload", "upload failed: ${e.javaClass.simpleName}", sessionId = c.id, level = "warn")
+            ElsLog.info("upload", "upload failed: ${e.javaClass.simpleName}", sessionId = sessionId, level = "warn")
             null
         } finally {
             deadline?.cancel(false)
@@ -255,49 +412,70 @@ class Uploader(context: Context, private val store: SessionStore, private val ev
         }
     }
 
-    private fun finish(sent: Int, status: Int?, sentEpoch: Int, durationMs: Long) {
+    private fun finish(sentEpoch: Int, status: Int?, durationMs: Long) {
         if (sentEpoch != epoch) {
             ElsLog.debug("upload", "stale response ignored", mapOf("status" to status))
             return
         }
+        complete(status, durationMs)
+    }
+
+    private fun complete(status: Int?, durationMs: Long) {
+        val rows = inFlightRows
         inFlight = false
+        inFlightRows = emptyList()
+        cancelSendWatchdog()
+        val c = config
+        if (c == null) {
+            if (rows.isNotEmpty()) queue.release(rows)
+            notifySettled()
+            return
+        }
         val at = nowMs()
-        val outcome = classify(status)
-        val payload = JSONObject().put("ok", outcome == UploadOutcome.Success).put("at", at)
+        val action = syncAction(status, ended = false, refreshConfigured = false, alreadyRefreshed = false)
+        val payload = JSONObject().put("ok", action == SyncAction.DeleteSent).put("at", at).put("sessionId", c.id)
         status?.let { payload.put("status", it) }
+        if (c.sync.mode == QueueMode.ALL) payload.put("count", rows.size)
         events.emit("upload", payload)
+        val outcome = outcomeName(action)
+        val retrying = action == SyncAction.Retry || action == SyncAction.RefreshAndRetry || action == SyncAction.DropSession
         val detail = mutableMapOf<String, Any?>(
-            "generation" to sent,
-            "outcome" to outcome.javaClass.simpleName,
+            "generation" to (rows.lastOrNull() ?: 0L),
+            "outcome" to outcome,
             "durationMs" to durationMs,
-            "status" to status
+            "status" to status,
+            "rows" to rows.size
         )
-        if (outcome == UploadOutcome.Retry) detail["backoffMs"] = backoffMs(attempt)
-        ElsLog.info("upload", "upload status=${status ?: "none"} outcome=${outcome.javaClass.simpleName}", detail, config?.id)
+        if (retrying) detail["backoffMs"] = backoffMs(attempt)
+        ElsLog.info("upload", "upload status=${status ?: "none"} outcome=$outcome", detail, c.id)
         DebugLogger.onUploadCompleted()
 
-        when (outcome) {
-            UploadOutcome.Success -> {
-                slot.markSent(sent)
-                store.pendingFix = slot.fix
+        when (action) {
+            SyncAction.DeleteSent -> {
+                queue.delete(rows)
+                syncPendingFix(c)
                 lastSuccessMs = at
                 store.lastUploadAtMs = at
                 attempt = 0
             }
-            is UploadOutcome.Stop -> {
-                onStop?.invoke(outcome.reason)
+            SyncAction.DropSent -> {
+                queue.delete(rows)
+                syncPendingFix(c)
+                attempt = 0
+                val message = if (rows.size == 1) {
+                    "Server responded ${status ?: 0}; location dropped"
+                } else {
+                    "Server responded ${status ?: 0}; ${rows.size} locations dropped"
+                }
+                events.emit("error", JSONObject().put("code", "UPLOAD_DROPPED").put("message", message).put("sessionId", c.id))
+            }
+            is SyncAction.Stop -> {
+                giveBack(rows, c)
+                onStop?.invoke(action.reason)
                 return
             }
-            UploadOutcome.Drop -> {
-                slot.markSent(sent)
-                store.pendingFix = slot.fix
-                attempt = 0
-                events.emit(
-                    "error",
-                    JSONObject().put("code", "UPLOAD_DROPPED").put("message", "Server responded ${status ?: 0}; location dropped")
-                )
-            }
-            UploadOutcome.Retry -> {
+            SyncAction.Retry, SyncAction.RefreshAndRetry, SyncAction.DropSession -> {
+                giveBack(rows, c)
                 val delay = backoffMs(attempt)
                 attempt += 1
                 if (flushCompletion != null) scheduleFlushRetry(delay) else startTimer(delay) { pump() }
@@ -305,13 +483,16 @@ class Uploader(context: Context, private val store: SessionStore, private val ev
                 return
             }
         }
-
-        if (flushCompletion != null) {
-            if (sent >= flushTarget || slot.fix == null) completeFlush() else send()
-        } else {
-            pump()
-        }
+        continueAfterSend(c)
         notifySettled()
+    }
+
+    private fun outcomeName(action: SyncAction): String = when (action) {
+        SyncAction.DeleteSent -> UploadOutcome.Success.javaClass.simpleName
+        SyncAction.DropSent -> UploadOutcome.Drop.javaClass.simpleName
+        SyncAction.Retry -> UploadOutcome.Retry.javaClass.simpleName
+        is SyncAction.Stop -> UploadOutcome.Stop::class.java.simpleName
+        else -> action.javaClass.simpleName
     }
 
     private fun battery(): Battery? {

@@ -2,5 +2,6 @@
 <full-backup-content>
   <exclude domain="sharedpref" path="expo_location_session.xml" />
   <exclude domain="sharedpref" path="expo_location_session_debug.xml" />
+  <exclude domain="sharedpref" path="expo_location_session_targets.xml" />
   <exclude domain="file" path="expo-location-session/" />
 </full-backup-content>

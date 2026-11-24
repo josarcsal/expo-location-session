@@ -144,7 +144,7 @@ class SessionStore(context: Context) {
     }
 }
 
-private fun encodeFix(f: Fix): String? = try {
+internal fun encodeFix(f: Fix): String? = try {
     val o = JSONObject()
         .put("latitude", f.latitude)
         .put("longitude", f.longitude)
@@ -158,7 +158,7 @@ private fun encodeFix(f: Fix): String? = try {
     null
 }
 
-private fun decodeFix(json: String): Fix? = try {
+internal fun decodeFix(json: String): Fix? = try {
     val o = JSONObject(json)
     sanitized(
         Fix(

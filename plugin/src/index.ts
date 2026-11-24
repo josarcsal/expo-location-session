@@ -50,6 +50,7 @@ const BACKUP_RULES: [attribute: string, value: string][] = [
 const BACKUP_EXCLUDES: [domain: string, path: string][] = [
   ['sharedpref', 'expo_location_session.xml'],
   ['sharedpref', 'expo_location_session_debug.xml'],
+  ['sharedpref', 'expo_location_session_targets.xml'],
   ['file', 'expo-location-session/'],
 ];
 

@@ -15,6 +15,7 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.margelo.nitro.locationsession.core.Fix
+import com.margelo.nitro.locationsession.core.QueueTarget
 import com.margelo.nitro.locationsession.core.SessionConfig
 import com.margelo.nitro.locationsession.core.StopReason
 import com.margelo.nitro.locationsession.core.acceptFix
@@ -22,6 +23,8 @@ import com.margelo.nitro.locationsession.core.isDuplicateFix
 import com.margelo.nitro.locationsession.core.stopDecision
 import com.margelo.nitro.locationsession.core.validate
 import org.json.JSONObject
+import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 
 class LocationSessionException(val code: String, message: String) : RuntimeException("$code: $message")
 
@@ -42,7 +45,10 @@ object SessionEngine {
     private val main = Handler(Looper.getMainLooper())
     private var app: Context? = null
     private lateinit var store: SessionStore
+    private lateinit var queue: QueueStore
+    private lateinit var credentials: TargetCredentials
     private lateinit var uploader: Uploader
+    private val queueRecovered = AtomicBoolean(false)
 
     private var config: SessionConfig? = null
     private var startedAtMs = 0L
@@ -85,10 +91,33 @@ object SessionEngine {
         val context = ctx.applicationContext
         DebugLogger.init(context)
         attach(context)
+        val opened = openQueue(context)
         app = context
         store = SessionStore(context)
-        uploader = Uploader(context, store, events)
+        queue = opened
+        credentials = TargetCredentials(context)
+        uploader = Uploader(context, store, queue, credentials, events)
         return context
+    }
+
+    private fun openQueue(context: Context): QueueStore {
+        val file = File(context.filesDir, "expo-location-session/queue.sqlite")
+        val q = try {
+            file.parentFile?.mkdirs()
+            QueueStore(context, file)
+        } catch (e: Exception) {
+            ElsLog.info("queue", "database unavailable: ${e.javaClass.simpleName}", mapOf("error" to e.message), level = "error")
+            throw LocationSessionException("INTERNAL", "Could not open the location queue")
+        }
+        if (queueRecovered.compareAndSet(false, true)) {
+            val rows = q.recoverInFlight()
+            ElsLog.debug("queue", "recovered in-flight rows", mapOf("rows" to rows))
+        }
+        val purged = q.purge(nowMs())
+        if (purged.rowsDeleted > 0 || purged.targetsRemoved.isNotEmpty()) {
+            ElsLog.debug("queue", "purged", mapOf("rows" to purged.rowsDeleted, "targets" to purged.targetsRemoved.size))
+        }
+        return q
     }
 
     fun start(ctx: Context, c: SessionConfig) {
@@ -108,6 +137,7 @@ object SessionEngine {
             store.wipe()
             throw LocationSessionException("INTERNAL", "Could not persist the session")
         }
+        credentials.save(c.id, c.uploadHeaders, c.sync.refresh?.headers ?: emptyMap())
         try {
             activate(context, c, now, null, null)
         } catch (e: Exception) {
@@ -263,11 +293,31 @@ object SessionEngine {
         lastFix = pending?.let(::sanitized)
         stopping = false
         uploader.onStop = { reason -> stop(ctx, reason) }
+        saveTarget(c)
         uploader.begin(c, lastFix, lastUploadAt)
         startService(ctx)
         requestUpdates(ctx, c)
         updatesRequestedForServiceStart = LaunchGate.startPending
         scheduleExpiry(ctx, c)
+    }
+
+    private fun saveTarget(c: SessionConfig) {
+        val target = QueueTarget(
+            sessionId = c.id,
+            url = c.uploadUrl,
+            mode = c.sync.mode,
+            batch = c.sync.batch,
+            extrasJson = c.uploadExtrasJson,
+            maxAgeMs = c.sync.maxAgeMs,
+            refreshUrl = c.sync.refresh?.url,
+            refreshBodyJson = c.sync.refresh?.bodyJson,
+            ended = false
+        )
+        try {
+            queue.saveTarget(target)
+        } catch (e: QueueStoreException) {
+            ElsLog.debug("queue", "target save failed", mapOf("error" to e.message), c.id, level = "warn")
+        }
     }
 
     private fun teardown(ctx: Context, c: SessionConfig, reason: StopReason?) {
@@ -279,6 +329,9 @@ object SessionEngine {
         removeUpdates(ctx)
         stopService(ctx)
         uploader.reset()
+        val deleted = queue.deleteSession(c.id)
+        ElsLog.debug("queue", "session rows deleted", mapOf("rows" to deleted), c.id)
+        credentials.remove(c.id)
         store.wipe()
         config = null
         lastFix = null
