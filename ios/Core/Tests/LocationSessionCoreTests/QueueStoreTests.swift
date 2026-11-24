@@ -52,11 +52,24 @@ import Testing
         #expect(s.target("A") == nil && s.target("L") != nil)
     }
 
-    @Test func markAllEndedLetsPurgeRemoveTargets() throws {
-        let (s, _) = try open(); try s.saveTarget(target("A")); try s.saveTarget(target("B", ended: true))
-        s.markAllEnded()
-        #expect(s.target("A")?.ended == true && s.target("B")?.ended == true)
-        #expect(s.purge(nowMs: 0) == PurgeResult(rowsDeleted: 0, targetsRemoved: ["A", "B"]))
+    @Test func endLeftoversDeletesLatestAndEndsAll() throws {
+        let (s, _) = try open()
+        try s.saveTarget(target("A")); try s.saveTarget(target("B", ended: true)); try s.saveTarget(target("L", .latest)); try s.saveTarget(target("M", .latest, ended: true))
+        _ = try put(s, "A", "a"); _ = try put(s, "L", "l", mode: .latest); _ = try put(s, "M", "m", mode: .latest)
+        #expect(s.endLeftovers() == ["L"])
+        #expect(s.target("L") == nil && s.latestPending(sessionId: "L") == nil)
+        #expect(s.target("A")?.ended == true && s.target("B")?.ended == true && s.target("M")?.ended == true)
+        #expect(s.status().pending == 2)
+        #expect(s.purge(nowMs: 0) == PurgeResult(rowsDeleted: 0, targetsRemoved: ["B"]))
+    }
+
+    @Test func garbageFileIsReportedCorrupt() throws {
+        let path = NSTemporaryDirectory() + UUID().uuidString + ".sqlite"
+        try Data(repeating: 0x5A, count: 4096).write(to: URL(fileURLWithPath: path))
+        let error = #expect(throws: QueueStoreError.self) { try QueueStore(path: path) }
+        #expect(error?.isCorrupt == true)
+        try FileManager.default.removeItem(atPath: path)
+        #expect(try QueueStore(path: path).status().pending == 0)
     }
 
     @Test func purgeDropsOrphanRows() throws {

@@ -9,6 +9,8 @@ class QueueDatabase(context: Context, private val file: File) {
     private val credentials = TargetCredentials(appContext)
     private var opened: QueueStore? = null
     private var loggedUnavailable = false
+    @Volatile var unavailable = false
+        private set
 
     @Synchronized
     fun store(): QueueStore? {
@@ -17,6 +19,7 @@ class QueueDatabase(context: Context, private val file: File) {
             file.parentFile?.mkdirs()
             QueueStore(appContext, file)
         } catch (e: Exception) {
+            unavailable = true
             if (!loggedUnavailable) {
                 loggedUnavailable = true
                 ElsLog.info("queue", "database unavailable: ${e.javaClass.simpleName}", mapOf("error" to e.message), level = "warn")
@@ -25,6 +28,7 @@ class QueueDatabase(context: Context, private val file: File) {
         }
         opened = s
         loggedUnavailable = false
+        unavailable = false
         if (recovered.compareAndSet(false, true)) {
             val rows = s.recoverInFlight()
             ElsLog.debug("queue", "recovered in-flight rows", mapOf("rows" to rows))

@@ -92,13 +92,21 @@ class QueueStoreTest {
     }
 
     @Test
-    fun markAllEndedLetsPurgeRemoveTargets() {
+    fun endLeftoversDeletesLatestAndEndsAll() {
         val s = open()
         s.saveTarget(target("A"))
         s.saveTarget(target("B", ended = true))
-        s.markAllEnded()
-        assertTrue(s.target("A")!!.ended && s.target("B")!!.ended)
-        assertEquals(PurgeResult(0, listOf("A", "B")), s.purge(0))
+        s.saveTarget(target("L", QueueMode.LATEST))
+        s.saveTarget(target("M", QueueMode.LATEST, ended = true))
+        put(s, "A", "a")
+        put(s, "L", "l", mode = QueueMode.LATEST)
+        put(s, "M", "m", mode = QueueMode.LATEST)
+        assertEquals(listOf("L"), s.endLeftovers())
+        assertNull(s.target("L"))
+        assertNull(s.latestPending("L"))
+        assertTrue(s.target("A")!!.ended && s.target("B")!!.ended && s.target("M")!!.ended)
+        assertEquals(2, s.status().pending)
+        assertEquals(PurgeResult(0, listOf("B")), s.purge(0))
     }
 
     @Test

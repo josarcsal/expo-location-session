@@ -54,6 +54,9 @@ final class Uploader {
     private var refreshing = false
     private var refreshStartedAt: Int64 = 0
     private var refreshed: Set<String> = []
+    private var refreshHold = false
+    private var runningCredentials: (headers: [String: String], refreshHeaders: [String: String])?
+    private var queueUnavailableReported = false
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var timer: Timer?
     private var watchdog: Timer?
@@ -101,6 +104,9 @@ final class Uploader {
         drainBudget = nil
         refreshing = false
         refreshed = []
+        refreshHold = false
+        runningCredentials = nil
+        queueUnavailableReported = false
         timer?.invalidate()
         timer = nil
         watchdog?.invalidate()
@@ -135,6 +141,7 @@ final class Uploader {
         }
         Log.debug("sync", "connectivity regained", data: ["running": config != nil, "inFlight": inFlight != nil, "flush": flushCompletion != nil, "attempt": attempt], sessionId: config?.id)
         attempt = 0
+        refreshHold = false
         guard let c = config else {
             drain(budgetMs: nil) { _ in }
             return
@@ -282,6 +289,11 @@ final class Uploader {
         guard let c = config else { return }
         let trimmed = enqueue(fix, c)
         store.pendingFix = fix
+        if db.unavailable, !queueUnavailableReported {
+            queueUnavailableReported = true
+            Log.debug("queue", "database unavailable; locations are not stored or uploaded", sessionId: c.id, level: "warn")
+            events.emitStickyError(code: "QUEUE_UNAVAILABLE", message: "Location queue storage is unavailable; locations are not uploaded")
+        }
         if c.sync.mode == .all, trimmed > 0 {
             events.emit(.error, ["code": "QUEUE_TRIMMED", "message": "Queue full; \(trimmed) oldest location\(trimmed == 1 ? "" : "s") dropped", "sessionId": c.id])
         }
@@ -289,7 +301,7 @@ final class Uploader {
 
     func pump() {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard let c = config, inFlight == nil, flushCompletion == nil, hasPending(c) else { return }
+        guard let c = config, inFlight == nil, flushCompletion == nil, !refreshHold, hasPending(c) else { return }
         refreshed = []
         let now = nowMs()
         if shouldUploadNow(lastSuccessMs: lastSuccessMs, nowMs: now, minIntervalMs: c.uploadMinIntervalMs, bypass: false) {
@@ -482,7 +494,7 @@ final class Uploader {
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        for (name, value) in credentials.load(sessionId: t.id)?.headers ?? [:] {
+        for (name, value) in credentials(for: t)?.headers ?? [:] {
             request.setValue(value, forHTTPHeaderField: name)
         }
         let body = buildRequestBody(sessionId: t.id, elements: elements, sync: t.sync, extrasJson: t.extrasJson)
@@ -583,6 +595,7 @@ final class Uploader {
         case .deleteSent:
             db.store()?.delete(ids: rows)
             if ownsAttempt(t) { attempt = 0 }
+            if !t.ended { refreshHold = false }
             if t.ended {
                 drained += rows.count
             } else {
@@ -646,8 +659,23 @@ final class Uploader {
         if flushCompletion != nil {
             scheduleFlushRetry(afterMs: delay)
         } else {
-            schedule(afterMs: delay)
+            startTimer(afterMs: delay) { [weak self] in
+                self?.refreshHold = false
+                self?.pump()
+            }
         }
+    }
+
+    private func credentials(for t: Target) -> (headers: [String: String], refreshHeaders: [String: String])? {
+        if t.ended { return credentials.load(sessionId: t.id) }
+        if let runningCredentials { return runningCredentials }
+        if let loaded = credentials.load(sessionId: t.id) {
+            runningCredentials = loaded
+            return loaded
+        }
+        guard let c = config else { return nil }
+        Log.debug("auth", "stored credentials missing; using session config headers", sessionId: t.id, level: "warn")
+        return (c.uploadHeaders, c.sync.refresh?.headers ?? [:])
     }
 
     private func refresh(_ t: Target) {
@@ -658,7 +686,7 @@ final class Uploader {
             completeRefresh(status: nil, body: Data(), error: "invalid refresh url")
             return
         }
-        let headers = credentials.load(sessionId: t.id)?.refreshHeaders ?? r.headers
+        let headers = credentials(for: t)?.refreshHeaders ?? r.headers
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -699,9 +727,10 @@ final class Uploader {
         endBackgroundTask()
         guard let t = target, t.ended || t.id == config?.id else { return }
         if let result = parseRefreshResponse(status: status, body: body) {
-            let refreshHeaders = result.refreshHeaders ?? credentials.load(sessionId: t.id)?.refreshHeaders ?? t.sync.refresh?.headers ?? [:]
+            let refreshHeaders = result.refreshHeaders ?? credentials(for: t)?.refreshHeaders ?? t.sync.refresh?.headers ?? [:]
             do {
                 try credentials.save(sessionId: t.id, headers: result.headers, refreshHeaders: refreshHeaders)
+                if !t.ended { runningCredentials = (result.headers, refreshHeaders) }
             } catch {
                 refreshFailed(t, rejected: false, message: "Could not store refreshed credentials", data: ["error": "\(error)"])
                 return
@@ -731,7 +760,10 @@ final class Uploader {
             onStop?(reason)
             return
         }
-        if !rejected { refreshed.remove(t.id) }
+        if !rejected {
+            refreshed.remove(t.id)
+            if !t.ended { refreshHold = true }
+        }
         retryLater(t)
     }
 

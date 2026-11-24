@@ -171,8 +171,17 @@ class QueueStore(context: Context, file: File) {
     }
 
     @Synchronized
-    fun markAllEnded() {
-        attempt(0) { run("UPDATE targets SET ended = 1 WHERE ended = 0") }
+    fun endLeftovers(): List<String> {
+        var removed: List<String> = emptyList()
+        val failure = transaction {
+            removed = query("SELECT session_id FROM targets WHERE ended = 0 AND mode = 'latest' ORDER BY session_id") { it.getString(0) }
+            for (id in removed) {
+                run("DELETE FROM fixes WHERE session_id = ?", id)
+                run("DELETE FROM targets WHERE session_id = ?", id)
+            }
+            run("UPDATE targets SET ended = 1 WHERE ended = 0")
+        }
+        return if (failure == null) removed else emptyList()
     }
 
     @Synchronized

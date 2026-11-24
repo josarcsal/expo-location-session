@@ -12,10 +12,7 @@ enum BackgroundSync {
     }()
 
     static func register() {
-        guard isPermitted, let identifier else {
-            Log.debug("sync", "background sync not enabled", data: ["identifier": identifier ?? NSNull()])
-            return
-        }
+        guard isPermitted, let identifier else { return }
         let registered = BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: .main) { task in
             run(task)
         }

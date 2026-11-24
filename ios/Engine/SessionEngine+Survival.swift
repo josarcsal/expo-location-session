@@ -40,7 +40,7 @@ extension SessionEngine {
         case .none where protectedData:
             stopWaitingForProtectedData()
             source.releaseLeftovers()
-            queue.store()?.markAllEnded()
+            endLeftoverTargets()
         case .none, .unavailable:
             Log.info("store", "persisted session not readable yet protectedData=\(protectedData); waiting")
             waitForProtectedData()
@@ -48,7 +48,7 @@ extension SessionEngine {
             stopWaitingForProtectedData()
             Log.info("store", "discarding unreadable persisted session")
             store.wipe()
-            queue.store()?.markAllEnded()
+            endLeftoverTargets()
             source.stop()
         case let .session(c, startedAt):
             stopWaitingForProtectedData()
@@ -65,6 +65,14 @@ extension SessionEngine {
             }
         }
         uploader.drain(budgetMs: nil) { _ in }
+    }
+
+    private func endLeftoverTargets() {
+        guard let removed = queue.store()?.endLeftovers() else { return }
+        removed.forEach { credentials.remove(sessionId: $0) }
+        if !removed.isEmpty {
+            Log.debug("queue", "leftover latest-mode sessions deleted", data: ["targets": removed.count])
+        }
     }
 
     private func waitForProtectedData() {

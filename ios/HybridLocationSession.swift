@@ -191,8 +191,13 @@ private func syncConfig(_ c: NativeSessionConfig) throws -> SyncConfig {
     let refresh = c.uploadRefreshUrl.map {
         RefreshConfig(url: $0, headers: c.uploadRefreshHeaders ?? [:], bodyJson: c.uploadRefreshBodyJson)
     }
+    let mode: QueueMode
+    switch c.uploadQueueMode {
+    case .latest: mode = .latest
+    case .all: mode = .all
+    }
     return SyncConfig(
-        mode: QueueMode(rawValue: c.uploadQueueMode.stringValue) ?? .latest,
+        mode: mode,
         maxRecords: Int(maxRecords),
         maxAgeMs: maxAgeMs,
         batch: batch,

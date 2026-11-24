@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import java.io.File
 import java.util.UUID
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
@@ -28,6 +29,17 @@ class QueueDatabaseTest {
         val opened = db.store()
         assertNotNull(opened)
         assertSame(opened, db.store())
+        opened?.close()
+    }
+
+    @Test
+    fun corruptFileIsRecreated() {
+        val file = File(ctx.filesDir, "${UUID.randomUUID()}/queue.sqlite")
+        file.parentFile?.mkdirs()
+        file.writeBytes(ByteArray(4096) { 0x5A })
+        val opened = QueueDatabase(ctx, file).store()
+        assertNotNull(opened)
+        assertEquals(0, opened?.status()?.pending)
         opened?.close()
     }
 }

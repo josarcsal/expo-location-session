@@ -60,6 +60,11 @@ public struct PurgeResult: Equatable {
 
 public struct QueueStoreError: Error, Equatable {
     public var message: String
+    public var code: Int32 = SQLITE_ERROR
+
+    public var isCorrupt: Bool {
+        code & 0xFF == SQLITE_NOTADB || code & 0xFF == SQLITE_CORRUPT
+    }
 }
 
 public final class QueueStore {
@@ -68,11 +73,12 @@ public final class QueueStore {
     private var transactionError = ""
 
     public init(path: String) throws {
-        guard sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK else {
+        let opened = sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil)
+        guard opened == SQLITE_OK else {
             let message = db.map { String(cString: sqlite3_errmsg($0)) } ?? "open failed"
             sqlite3_close(db)
             db = nil
-            throw QueueStoreError(message: message)
+            throw QueueStoreError(message: message, code: opened)
         }
         sqlite3_busy_timeout(db, 5_000)
         do {
@@ -220,8 +226,18 @@ public final class QueueStore {
         locked { _ = run("UPDATE targets SET ended = 1 WHERE session_id = ?", [.text(sessionId)]) }
     }
 
-    public func markAllEnded() {
-        locked { _ = run("UPDATE targets SET ended = 1 WHERE ended = 0", []) }
+    public func endLeftovers() -> [String] {
+        locked {
+            var removed: [String] = []
+            let committed = transaction {
+                removed = query("SELECT session_id FROM targets WHERE ended = 0 AND mode = 'latest' ORDER BY session_id", []) { Self.column($0, 0) ?? "" }
+                for id in removed {
+                    if run("DELETE FROM fixes WHERE session_id = ?", [.text(id)]) < 0 || run("DELETE FROM targets WHERE session_id = ?", [.text(id)]) < 0 { return false }
+                }
+                return run("UPDATE targets SET ended = 1 WHERE ended = 0", []) >= 0
+            }
+            return committed ? removed : []
+        }
     }
 
     public func purge(nowMs: Int64) -> PurgeResult {
@@ -299,10 +315,11 @@ public final class QueueStore {
 
     private func exec(_ sql: String) throws {
         var err: UnsafeMutablePointer<CChar>?
-        guard sqlite3_exec(db, sql, nil, nil, &err) == SQLITE_OK else {
+        let result = sqlite3_exec(db, sql, nil, nil, &err)
+        guard result == SQLITE_OK else {
             let message = err.map { String(cString: $0) } ?? "exec failed"
             sqlite3_free(err)
-            throw QueueStoreError(message: message)
+            throw QueueStoreError(message: message, code: result)
         }
     }
 

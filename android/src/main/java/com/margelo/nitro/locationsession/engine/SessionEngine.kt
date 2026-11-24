@@ -199,12 +199,18 @@ object SessionEngine {
         val context = init(ctx)
         if (config == null) {
             when (store.load()) {
-                StoredSession.None -> queue.store()?.markAllEnded()
+                StoredSession.None -> endLeftoverTargets()
                 StoredSession.Corrupt -> resumeIfNeeded(context)
                 is StoredSession.Session -> return
             }
         }
         uploader.drain(null) {}
+    }
+
+    private fun endLeftoverTargets() {
+        val removed = queue.store()?.endLeftovers() ?: return
+        removed.forEach(credentials::remove)
+        if (removed.isNotEmpty()) ElsLog.debug("queue", "leftover latest-mode sessions deleted", mapOf("targets" to removed.size))
     }
 
     fun onFixes(ctx: Context, fixes: List<Fix>) = onFixes(ctx, fixes) {}
@@ -279,7 +285,7 @@ object SessionEngine {
             StoredSession.Corrupt -> {
                 ElsLog.info("store", "discarding unreadable persisted session", level = "warn")
                 store.wipe()
-                queue.store()?.markAllEnded()
+                endLeftoverTargets()
                 removeUpdates(context)
                 cancelAlarm(context)
                 LaunchGate.clear(context)

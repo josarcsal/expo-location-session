@@ -75,6 +75,9 @@ class Uploader(
     private var drainBudget: Runnable? = null
     private var refreshing = false
     private val refreshed = mutableSetOf<String>()
+    private var refreshHold = false
+    private var runningCredentials: Credentials? = null
+    private var queueUnavailableReported = false
     @Volatile private var connection: HttpURLConnection? = null
     private var timer: Runnable? = null
     private var flushDeadline: Runnable? = null
@@ -115,6 +118,9 @@ class Uploader(
         cancelDrainBudget()
         refreshing = false
         refreshed.clear()
+        refreshHold = false
+        runningCredentials = null
+        queueUnavailableReported = false
         connection?.let { conn -> watchdog.execute { runCatching { conn.disconnect() } } }
         connection = null
         cancelTimer()
@@ -149,6 +155,7 @@ class Uploader(
             config?.id
         )
         attempt = 0
+        refreshHold = false
         val c = config
         if (c == null) {
             drain(null) {}
@@ -288,6 +295,17 @@ class Uploader(
         val c = config ?: return
         val trimmed = enqueue(fix, c)
         store.pendingFix = fix
+        if (queue.unavailable && !queueUnavailableReported) {
+            queueUnavailableReported = true
+            ElsLog.debug("queue", "database unavailable; locations are not stored or uploaded", sessionId = c.id, level = "warn")
+            events.emit(
+                "error",
+                JSONObject()
+                    .put("code", "QUEUE_UNAVAILABLE")
+                    .put("message", "Location queue storage is unavailable; locations are not uploaded")
+                    .put("sessionId", c.id)
+            )
+        }
         if (c.sync.mode == QueueMode.ALL && trimmed > 0) {
             events.emit(
                 "error",
@@ -302,7 +320,7 @@ class Uploader(
     fun pump() {
         assertMain()
         val c = config ?: return
-        if (inFlight || flushCompletion != null || !hasPending(c)) return
+        if (inFlight || flushCompletion != null || refreshHold || !hasPending(c)) return
         refreshed.clear()
         val now = nowMs()
         if (shouldUploadNow(lastSuccessMs, now, c.uploadMinIntervalMs, false)) {
@@ -531,7 +549,7 @@ class Uploader(
         }
         val ids = sent.map { it.id }
         val body = buildRequestBody(t.id, elements, t.sync, t.extrasJson)
-        val headers = credentials.load(t.id)?.headers ?: emptyMap()
+        val headers = credentialsFor(t)?.headers ?: emptyMap()
         val sentEpoch = epoch
         inFlight = true
         inFlightRows = ids
@@ -675,6 +693,7 @@ class Uploader(
             SyncAction.DeleteSent -> {
                 queue.store()?.delete(rows)
                 if (ownsAttempt(t)) attempt = 0
+                if (!t.ended) refreshHold = false
                 if (t.ended) {
                     drained += rows.size
                 } else {
@@ -752,7 +771,26 @@ class Uploader(
     private fun scheduleRetry() {
         val delay = backoffMs(attempt)
         attempt += 1
-        if (flushCompletion != null) scheduleFlushRetry(delay) else startTimer(delay) { pump() }
+        if (flushCompletion != null) {
+            scheduleFlushRetry(delay)
+        } else {
+            startTimer(delay) {
+                refreshHold = false
+                pump()
+            }
+        }
+    }
+
+    private fun credentialsFor(t: Target): Credentials? {
+        if (t.ended) return credentials.load(t.id)
+        runningCredentials?.let { return it }
+        credentials.load(t.id)?.let {
+            runningCredentials = it
+            return it
+        }
+        val c = config ?: return null
+        ElsLog.debug("auth", "stored credentials missing; using session config headers", sessionId = t.id, level = "warn")
+        return Credentials(c.uploadHeaders, c.sync.refresh?.headers ?: emptyMap())
     }
 
     private fun refresh(t: Target) {
@@ -764,7 +802,7 @@ class Uploader(
             completeRefresh(null, "", 0L)
             return
         }
-        val headers = credentials.load(t.id)?.refreshHeaders ?: r.headers
+        val headers = credentialsFor(t)?.refreshHeaders ?: r.headers
         val body = refreshRequestBody(r.bodyJson, t.id)
         val sentEpoch = epoch
         inFlight = true
@@ -805,11 +843,12 @@ class Uploader(
             refreshFailed(t, rejected, message, mapOf("status" to status, "durationMs" to durationMs))
             return
         }
-        val refreshHeaders = result.refreshHeaders ?: credentials.load(t.id)?.refreshHeaders ?: t.sync.refresh?.headers ?: emptyMap()
+        val refreshHeaders = result.refreshHeaders ?: credentialsFor(t)?.refreshHeaders ?: t.sync.refresh?.headers ?: emptyMap()
         if (!credentials.save(t.id, result.headers, refreshHeaders)) {
             refreshFailed(t, false, "Could not store refreshed credentials", mapOf("status" to status, "durationMs" to durationMs))
             return
         }
+        if (!t.ended) runningCredentials = Credentials(result.headers, refreshHeaders)
         val data = mutableMapOf<String, Any?>("status" to status, "durationMs" to durationMs, "headers" to result.headers.keys.sorted())
         result.refreshHeaders?.let { data["refreshHeaders"] = it.keys.sorted() }
         ElsLog.debug("auth", "refresh succeeded", data, t.id)
@@ -828,6 +867,7 @@ class Uploader(
             }
         } else {
             refreshed.remove(t.id)
+            if (!t.ended) refreshHold = true
         }
         retryLater(t)
         notifySettled()

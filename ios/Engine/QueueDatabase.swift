@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 struct PendingInsert {
     let sessionId: String
@@ -13,11 +14,13 @@ final class QueueDatabase {
     static let shared = QueueDatabase()
 
     private static var recovered = false
+    private static var rebuilt = false
 
     private let credentials = TargetCredentials()
     private var opened: QueueStore?
     private var buffer = BoundedBuffer<PendingInsert>(capacity: 500)
     private var loggedUnavailable = false
+    private(set) var unavailable = false
 
     private init() {}
 
@@ -27,6 +30,7 @@ final class QueueDatabase {
         guard let s = open() else { return nil }
         opened = s
         loggedUnavailable = false
+        unavailable = false
         if !Self.recovered {
             Self.recovered = true
             let count = s.recoverInFlight()
@@ -98,6 +102,7 @@ final class QueueDatabase {
         let fm = FileManager.default
         let dir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("expo-location-session", isDirectory: true)
+        let path = dir.appendingPathComponent("queue.sqlite").path
         do {
             if !fm.fileExists(atPath: dir.path) {
                 try fm.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
@@ -106,8 +111,18 @@ final class QueueDatabase {
             var values = URLResourceValues()
             values.isExcludedFromBackup = true
             try excluded.setResourceValues(values)
-            return try QueueStore(path: dir.appendingPathComponent("queue.sqlite").path)
+            do {
+                return try QueueStore(path: path)
+            } catch let error as QueueStoreError where error.isCorrupt && !Self.rebuilt && UIApplication.shared.isProtectedDataAvailable {
+                Self.rebuilt = true
+                for suffix in ["", "-wal", "-shm"] where fm.fileExists(atPath: path + suffix) {
+                    try fm.removeItem(atPath: path + suffix)
+                }
+                Log.debug("queue", "corrupt database deleted and recreated", data: ["error": error.message, "code": Int(error.code)], level: "warn")
+                return try QueueStore(path: path)
+            }
         } catch {
+            unavailable = UIApplication.shared.isProtectedDataAvailable
             if !loggedUnavailable {
                 loggedUnavailable = true
                 Log.debug("queue", "database unavailable", data: ["error": "\(error)"], level: "warn")
