@@ -171,7 +171,7 @@ final class SessionEngine {
     func activate(_ c: SessionConfig, startedAtMs: Int64, pending: Fix?, lastUploadAtMs: Int64?) {
         config = c
         self.startedAtMs = startedAtMs
-        lastFix = pending.flatMap(sanitized)
+        lastFix = pending.flatMap(sanitize)
         stopping = false
         uploader.onStop = { [weak self] in self?.stop($0) }
         uploader.processKeptAlive = { [weak self] in self?.source.backgroundUpdatesActive ?? false }
@@ -297,7 +297,7 @@ final class SessionEngine {
     }
 
     private func validationMessage(_ code: String, _ c: SessionConfig) -> String {
-        if code == "INVALID_CONFIG", let reason = validateSync(c.sync, extrasJson: c.uploadExtrasJson) { return reason }
+        if code == "INVALID_CONFIG", let reason = syncInvalidReason(c) { return reason }
         switch code {
         case "ALREADY_RUNNING": return "A session is already running; call stop() first"
         case "EXPIRED": return "expiresAt is in the past"

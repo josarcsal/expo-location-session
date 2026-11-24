@@ -26,6 +26,7 @@ import com.margelo.nitro.locationsession.core.FINAL_UPLOAD_BUDGET_MS
 import com.margelo.nitro.locationsession.core.shouldUploadNow
 import com.margelo.nitro.locationsession.core.parseRefreshResponse
 import com.margelo.nitro.locationsession.core.refreshRequestBody
+import com.margelo.nitro.locationsession.core.sanitize
 import com.margelo.nitro.locationsession.core.syncAction
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -78,6 +79,10 @@ class Uploader(
     private var refreshHold = false
     private var runningCredentials: Credentials? = null
     private var queueUnavailableReported = false
+    private var credentialsFallbackLogged = false
+    private var syncScheduled = false
+    private var endedAttempt = 0
+    private var endedRetryAtMs = 0L
     @Volatile private var connection: HttpURLConnection? = null
     private var timer: Runnable? = null
     private var flushDeadline: Runnable? = null
@@ -94,7 +99,7 @@ class Uploader(
         config = c
         this.lastSuccessMs = lastSuccessMs
         evaluateConnectivity()
-        val fix = pending?.let(::sanitized)
+        val fix = pending?.let(::sanitize)
         val q = queue.store()
         if (c.sync.mode == QueueMode.LATEST && fix != null && q != null && q.latestPending(c.id) == null) enqueue(fix, c)
         if (dirty) startPass(null, emptyList())
@@ -121,6 +126,9 @@ class Uploader(
         refreshHold = false
         runningCredentials = null
         queueUnavailableReported = false
+        credentialsFallbackLogged = false
+        endedAttempt = 0
+        endedRetryAtMs = 0L
         connection?.let { conn -> watchdog.execute { runCatching { conn.disconnect() } } }
         connection = null
         cancelTimer()
@@ -155,6 +163,8 @@ class Uploader(
             config?.id
         )
         attempt = 0
+        endedAttempt = 0
+        endedRetryAtMs = 0L
         refreshHold = false
         val c = config
         if (c == null) {
@@ -253,7 +263,17 @@ class Uploader(
             attempt += 1
             ElsLog.debug("sync", "drain retry scheduled", mapOf("backoffMs" to delay))
             startTimer(delay) { drain(null) {} }
-            if (QueueSync.isEnabled(appContext)) QueueSync.scheduleIfNeeded(appContext, queue.store()?.status()?.pending ?: 0, false)
+            if (QueueSync.isEnabled(appContext) && !syncScheduled) {
+                syncScheduled = true
+                QueueSync.scheduleIfNeeded(appContext, queue.store()?.status()?.pending ?: 0, false)
+            }
+        } else if (end == PassEnd.RETRY) {
+            val delay = backoffMs(endedAttempt)
+            endedAttempt += 1
+            endedRetryAtMs = nowMs() + delay
+            ElsLog.debug("sync", "drain retry deferred", mapOf("backoffMs" to delay), config?.id)
+        } else if (end == PassEnd.DONE) {
+            syncScheduled = false
         }
         if (p.requests > 0) resumeRunning()
         if (dirty && !inFlight && flushCompletion == null) {
@@ -279,7 +299,7 @@ class Uploader(
     private fun drainIfIdle() {
         val c = config ?: return
         if (inFlight || flushCompletion != null || pass != null || hasPending(c)) return
-        if (!dirty && queue.store()?.nextSession(null) == null) return
+        if (!dirty && (nowMs() < endedRetryAtMs || queue.store()?.nextSession(null) == null)) return
         startPass(null, emptyList())
     }
 
@@ -290,21 +310,24 @@ class Uploader(
         return Target(t.sessionId, t.url, SyncConfig(mode = t.mode, maxAgeMs = t.maxAgeMs, batch = t.batch, refresh = refresh), t.extrasJson, true)
     }
 
-    fun put(fix: Fix) {
+    fun put(raw: Fix) {
         assertMain()
         val c = config ?: return
+        val fix = sanitize(raw)
+        if (fix == null) {
+            ElsLog.debug("queue", "invalid location dropped", mapOf("fixTimestamp" to raw.timestampMs), c.id, level = "warn")
+            return
+        }
         val trimmed = enqueue(fix, c)
         store.pendingFix = fix
         if (queue.unavailable && !queueUnavailableReported) {
             queueUnavailableReported = true
             ElsLog.debug("queue", "database unavailable; locations are not stored or uploaded", sessionId = c.id, level = "warn")
-            events.emit(
-                "error",
-                JSONObject()
-                    .put("code", "QUEUE_UNAVAILABLE")
-                    .put("message", "Location queue storage is unavailable; locations are not uploaded")
-                    .put("sessionId", c.id)
-            )
+            events.emitStickyError("QUEUE_UNAVAILABLE", "Location queue storage is unavailable; locations are not uploaded", c.id)
+        } else if (queueUnavailableReported && queue.isOpen) {
+            queueUnavailableReported = false
+            ElsLog.debug("queue", "database available again", sessionId = c.id)
+            events.clearStickyError("QUEUE_UNAVAILABLE")
         }
         if (c.sync.mode == QueueMode.ALL && trimmed > 0) {
             events.emit(
@@ -696,6 +719,8 @@ class Uploader(
                 if (!t.ended) refreshHold = false
                 if (t.ended) {
                     drained += rows.size
+                    endedAttempt = 0
+                    endedRetryAtMs = 0L
                 } else {
                     syncPendingFix(t)
                     lastSuccessMs = at
@@ -789,7 +814,10 @@ class Uploader(
             return it
         }
         val c = config ?: return null
-        ElsLog.debug("auth", "stored credentials missing; using session config headers", sessionId = t.id, level = "warn")
+        if (!credentialsFallbackLogged) {
+            credentialsFallbackLogged = true
+            ElsLog.debug("auth", "stored credentials missing; using session config headers", sessionId = t.id, level = "warn")
+        }
         return Credentials(c.uploadHeaders, c.sync.refresh?.headers ?: emptyMap())
     }
 

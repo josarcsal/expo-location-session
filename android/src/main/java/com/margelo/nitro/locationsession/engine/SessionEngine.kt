@@ -23,10 +23,11 @@ import com.margelo.nitro.locationsession.core.StopQueueAction
 import com.margelo.nitro.locationsession.core.StopReason
 import com.margelo.nitro.locationsession.core.acceptFix
 import com.margelo.nitro.locationsession.core.isDuplicateFix
+import com.margelo.nitro.locationsession.core.sanitize
 import com.margelo.nitro.locationsession.core.stopDecision
 import com.margelo.nitro.locationsession.core.stopQueueAction
+import com.margelo.nitro.locationsession.core.syncInvalidReason
 import com.margelo.nitro.locationsession.core.validate
-import com.margelo.nitro.locationsession.core.validateSync
 import org.json.JSONObject
 
 class LocationSessionException(val code: String, message: String) : RuntimeException("$code: $message")
@@ -230,7 +231,7 @@ object SessionEngine {
                 logFix(raw, "dropped", if (c == null) "no session" else "stopping", c?.id)
                 break
             }
-            val fix = sanitized(raw)
+            val fix = sanitize(raw)
             if (fix == null) {
                 logFix(raw, "dropped", "invalid", c.id)
                 continue
@@ -323,7 +324,7 @@ object SessionEngine {
     private fun activate(ctx: Context, c: SessionConfig, startedAt: Long, pending: Fix?, lastUploadAt: Long?) {
         config = c
         startedAtMs = startedAt
-        lastFix = pending?.let(::sanitized)
+        lastFix = pending?.let(::sanitize)
         stopping = false
         uploader.onStop = { reason -> stop(ctx, reason) }
         saveTarget(c)
@@ -362,6 +363,7 @@ object SessionEngine {
         LaunchGate.clear(ctx)
         removeUpdates(ctx)
         stopService(ctx)
+        events.clearStickyErrors()
         uploader.reset()
         val action = if (reason == null) StopQueueAction.DELETE_ROWS else stopQueueAction(c.sync.mode, reason)
         if (action == StopQueueAction.MARK_ENDED) {
@@ -529,7 +531,7 @@ object SessionEngine {
     }
 
     private fun validationMessage(code: String, c: SessionConfig): String {
-        if (code == "INVALID_CONFIG") validateSync(c.sync, c.uploadExtrasJson)?.let { return it }
+        if (code == "INVALID_CONFIG") syncInvalidReason(c)?.let { return it }
         return when (code) {
             "ALREADY_RUNNING" -> "A session is already running; call stop() first"
             "EXPIRED" -> "expiresAt is in the past"
@@ -539,19 +541,9 @@ object SessionEngine {
     }
 }
 
-fun sanitized(f: Fix): Fix? {
-    if (!f.latitude.isFinite() || !f.longitude.isFinite() || !f.accuracy.isFinite()) return null
-    if (f.accuracy < 0 || kotlin.math.abs(f.latitude) > 90 || kotlin.math.abs(f.longitude) > 180) return null
-    return f.copy(
-        altitude = f.altitude?.takeIf { it.isFinite() },
-        speed = f.speed?.takeIf { it.isFinite() && it >= 0 },
-        heading = f.heading?.takeIf { it.isFinite() && it >= 0 }
-    )
-}
-
 fun fixFrom(location: Location): Fix? {
     if (!location.hasAccuracy()) return null
-    return sanitized(
+    return sanitize(
         Fix(
             latitude = location.latitude,
             longitude = location.longitude,

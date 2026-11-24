@@ -50,6 +50,28 @@ final class TargetCredentials {
         SecItemDelete(query(sessionId) as CFDictionary)
     }
 
+    func removeAll(except sessionId: String?) -> Int {
+        let q: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+        ]
+        var items: CFTypeRef?
+        guard SecItemCopyMatching(q as CFDictionary, &items) == errSecSuccess, let found = items as? [[String: Any]] else { return 0 }
+        let keep = sessionId.map { "target.\($0)" }
+        var removed = 0
+        for account in found.compactMap({ $0[kSecAttrAccount as String] as? String }) where account.hasPrefix("target.") && account != keep {
+            let delete: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: account,
+            ]
+            if SecItemDelete(delete as CFDictionary) == errSecSuccess { removed += 1 }
+        }
+        return removed
+    }
+
     private func query(_ sessionId: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,

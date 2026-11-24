@@ -4,6 +4,7 @@ import android.content.Context
 import com.margelo.nitro.locationsession.core.Fix
 import com.margelo.nitro.locationsession.core.SessionConfig
 import com.margelo.nitro.locationsession.core.StopReason
+import com.margelo.nitro.locationsession.core.sanitize
 import org.json.JSONObject
 
 data class LastStop(val reason: StopReason, val atMs: Long, val sessionId: String)
@@ -160,7 +161,7 @@ internal fun encodeFix(f: Fix): String? = try {
 
 internal fun decodeFix(json: String): Fix? = try {
     val o = JSONObject(json)
-    sanitized(
+    sanitize(
         Fix(
             latitude = o.getDouble("latitude"),
             longitude = o.getDouble("longitude"),

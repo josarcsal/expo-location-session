@@ -1,20 +1,10 @@
 import CoreLocation
 import Foundation
 
-func sanitized(_ f: Fix) -> Fix? {
-    guard f.latitude.isFinite, f.longitude.isFinite, abs(f.latitude) <= 90, abs(f.longitude) <= 180,
-          f.accuracy.isFinite, f.accuracy >= 0 else { return nil }
-    var fix = f
-    if let v = fix.altitude, !v.isFinite { fix.altitude = nil }
-    if let v = fix.speed, !(v.isFinite && v >= 0) { fix.speed = nil }
-    if let v = fix.heading, !(v.isFinite && v >= 0) { fix.heading = nil }
-    return fix
-}
-
 func makeFix(_ location: CLLocation) -> Fix? {
     let ms = location.timestamp.timeIntervalSince1970 * 1000
     guard ms.isFinite else { return nil }
-    return sanitized(Fix(
+    return sanitize(Fix(
         latitude: location.coordinate.latitude,
         longitude: location.coordinate.longitude,
         accuracy: location.horizontalAccuracy,

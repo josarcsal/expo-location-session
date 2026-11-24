@@ -5,9 +5,11 @@ import androidx.test.core.app.ApplicationProvider
 import java.io.File
 import java.util.UUID
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -22,12 +24,19 @@ class QueueDatabaseTest {
     fun unopenableReturnsNullThenRecoversOnceOpenable() {
         val blocker = File(ctx.filesDir, UUID.randomUUID().toString())
         blocker.writeText("not a directory")
-        val db = QueueDatabase(ctx, File(blocker, "queue.sqlite"))
+        var now = 0L
+        val db = QueueDatabase(ctx, File(blocker, "queue.sqlite")) { now }
         assertNull(db.store())
-        assertNull(db.store())
+        assertTrue(db.unavailable)
+        assertFalse(db.isOpen)
         blocker.delete()
+        now = 4_999
+        assertNull(db.store())
+        now = 5_000
         val opened = db.store()
         assertNotNull(opened)
+        assertTrue(db.isOpen)
+        assertFalse(db.unavailable)
         assertSame(opened, db.store())
         opened?.close()
     }

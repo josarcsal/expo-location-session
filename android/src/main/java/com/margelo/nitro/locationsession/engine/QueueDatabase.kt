@@ -4,21 +4,27 @@ import android.content.Context
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
-class QueueDatabase(context: Context, private val file: File) {
+class QueueDatabase(context: Context, private val file: File, private val clock: () -> Long = ::nowMs) {
     private val appContext = context.applicationContext
     private val credentials = TargetCredentials(appContext)
     private var opened: QueueStore? = null
+    private var failedAtMs: Long? = null
     private var loggedUnavailable = false
     @Volatile var unavailable = false
         private set
 
+    val isOpen: Boolean
+        @Synchronized get() = opened != null
+
     @Synchronized
     fun store(): QueueStore? {
         opened?.let { return it }
+        failedAtMs?.let { if (clock() - it < REOPEN_COOLDOWN_MS) return null }
         val s = try {
             file.parentFile?.mkdirs()
             QueueStore(appContext, file)
         } catch (e: Exception) {
+            failedAtMs = clock()
             unavailable = true
             if (!loggedUnavailable) {
                 loggedUnavailable = true
@@ -27,6 +33,7 @@ class QueueDatabase(context: Context, private val file: File) {
             return null
         }
         opened = s
+        failedAtMs = null
         loggedUnavailable = false
         unavailable = false
         if (recovered.compareAndSet(false, true)) {
@@ -50,6 +57,7 @@ class QueueDatabase(context: Context, private val file: File) {
     }
 
     companion object {
+        private const val REOPEN_COOLDOWN_MS = 5_000L
         private val recovered = AtomicBoolean(false)
         private var shared: QueueDatabase? = null
 

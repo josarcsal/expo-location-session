@@ -57,6 +57,10 @@ final class Uploader {
     private var refreshHold = false
     private var runningCredentials: (headers: [String: String], refreshHeaders: [String: String])?
     private var queueUnavailableReported = false
+    private var credentialsFallbackLogged = false
+    private var syncSubmitted = false
+    private var endedAttempt = 0
+    private var endedRetryAtMs: Int64 = 0
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var timer: Timer?
     private var watchdog: Timer?
@@ -81,7 +85,7 @@ final class Uploader {
             ownsBatteryMonitoring = true
         }
         evaluateConnectivity()
-        if c.sync.mode == .latest, let fix = pending.flatMap(sanitized), db.store()?.latestPending(sessionId: c.id) == nil {
+        if c.sync.mode == .latest, let fix = pending.flatMap(sanitize), db.store()?.latestPending(sessionId: c.id) == nil {
             enqueue(fix, c)
         }
         if dirty { startPass(budgetMs: nil, waiters: []) }
@@ -107,6 +111,9 @@ final class Uploader {
         refreshHold = false
         runningCredentials = nil
         queueUnavailableReported = false
+        credentialsFallbackLogged = false
+        endedAttempt = 0
+        endedRetryAtMs = 0
         timer?.invalidate()
         timer = nil
         watchdog?.invalidate()
@@ -141,6 +148,8 @@ final class Uploader {
         }
         Log.debug("sync", "connectivity regained", data: ["running": config != nil, "inFlight": inFlight != nil, "flush": flushCompletion != nil, "attempt": attempt], sessionId: config?.id)
         attempt = 0
+        endedAttempt = 0
+        endedRetryAtMs = 0
         refreshHold = false
         guard let c = config else {
             drain(budgetMs: nil) { _ in }
@@ -252,9 +261,17 @@ final class Uploader {
             attempt += 1
             Log.debug("sync", "drain retry scheduled", data: ["backoffMs": delay])
             startTimer(afterMs: delay) { [weak self] in self?.drain(budgetMs: nil) { _ in } }
-            if BackgroundSync.isPermitted {
+            if BackgroundSync.isPermitted, !syncSubmitted {
+                syncSubmitted = true
                 BackgroundSync.submitIfNeeded(pending: db.store()?.status().pending ?? 0, sessionRunning: false)
             }
+        } else if end == .retry {
+            let delay = backoffMs(attempt: endedAttempt)
+            endedAttempt += 1
+            endedRetryAtMs = nowMs() + delay
+            Log.debug("sync", "drain retry deferred", data: ["backoffMs": delay], sessionId: config?.id)
+        } else if end == .done {
+            syncSubmitted = false
         }
         if p.requests > 0 { resumeRunning() }
         if dirty, inFlight == nil, flushCompletion == nil {
@@ -276,7 +293,7 @@ final class Uploader {
 
     private func drainIfIdle() {
         guard let c = config, inFlight == nil, flushCompletion == nil, pass == nil, !hasPending(c) else { return }
-        guard dirty || db.store()?.nextSession(running: nil) != nil else { return }
+        guard dirty || (nowMs() >= endedRetryAtMs && db.store()?.nextSession(running: nil) != nil) else { return }
         startPass(budgetMs: nil, waiters: [])
     }
 
@@ -284,15 +301,23 @@ final class Uploader {
         Target(id: c.id, url: c.uploadUrl, sync: c.sync, extrasJson: c.uploadExtrasJson, ended: false)
     }
 
-    func put(_ fix: Fix) {
+    func put(_ raw: Fix) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let c = config else { return }
+        guard let fix = sanitize(raw) else {
+            Log.debug("queue", "invalid location dropped", data: ["fixTimestamp": raw.timestampMs], sessionId: c.id, level: "warn")
+            return
+        }
         let trimmed = enqueue(fix, c)
         store.pendingFix = fix
         if db.unavailable, !queueUnavailableReported {
             queueUnavailableReported = true
             Log.debug("queue", "database unavailable; locations are not stored or uploaded", sessionId: c.id, level: "warn")
             events.emitStickyError(code: "QUEUE_UNAVAILABLE", message: "Location queue storage is unavailable; locations are not uploaded")
+        } else if queueUnavailableReported, db.isOpen {
+            queueUnavailableReported = false
+            Log.debug("queue", "database available again", sessionId: c.id)
+            events.clearStickyError("QUEUE_UNAVAILABLE")
         }
         if c.sync.mode == .all, trimmed > 0 {
             events.emit(.error, ["code": "QUEUE_TRIMMED", "message": "Queue full; \(trimmed) oldest location\(trimmed == 1 ? "" : "s") dropped", "sessionId": c.id])
@@ -598,6 +623,8 @@ final class Uploader {
             if !t.ended { refreshHold = false }
             if t.ended {
                 drained += rows.count
+                endedAttempt = 0
+                endedRetryAtMs = 0
             } else {
                 syncPendingFix(t)
                 lastSuccessMs = at
@@ -674,7 +701,10 @@ final class Uploader {
             return loaded
         }
         guard let c = config else { return nil }
-        Log.debug("auth", "stored credentials missing; using session config headers", sessionId: t.id, level: "warn")
+        if !credentialsFallbackLogged {
+            credentialsFallbackLogged = true
+            Log.debug("auth", "stored credentials missing; using session config headers", sessionId: t.id, level: "warn")
+        }
         return (c.uploadHeaders, c.sync.refresh?.headers ?? [:])
     }
 

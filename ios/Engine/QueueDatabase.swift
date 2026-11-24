@@ -15,20 +15,29 @@ final class QueueDatabase {
 
     private static var recovered = false
     private static var rebuilt = false
+    private static let reopenCooldownMs: Int64 = 5_000
 
     private let credentials = TargetCredentials()
     private var opened: QueueStore?
+    private var failedAtMs: Int64?
     private var buffer = BoundedBuffer<PendingInsert>(capacity: 500)
     private var loggedUnavailable = false
     private(set) var unavailable = false
+
+    var isOpen: Bool { opened != nil }
 
     private init() {}
 
     func store() -> QueueStore? {
         dispatchPrecondition(condition: .onQueue(.main))
         if let opened { return opened }
-        guard let s = open() else { return nil }
+        if let failedAtMs, nowMs() - failedAtMs < Self.reopenCooldownMs { return nil }
+        guard let s = open() else {
+            failedAtMs = nowMs()
+            return nil
+        }
         opened = s
+        failedAtMs = nil
         loggedUnavailable = false
         unavailable = false
         if !Self.recovered {
@@ -73,6 +82,7 @@ final class QueueDatabase {
 
     func onProtectedDataAvailable() {
         dispatchPrecondition(condition: .onQueue(.main))
+        failedAtMs = nil
         guard buffer.count > 0, let s = store() else { return }
         drainBuffer(into: s)
     }
@@ -98,6 +108,19 @@ final class QueueDatabase {
         Log.debug("queue", "buffer drained", data: ["rows": pending.count, "trimmed": trimmed, "failed": failed], level: failed > 0 ? "warn" : "debug")
     }
 
+    private func removeOrphanCredentials() {
+        let running: String?
+        switch SessionStore().load(protectedDataAvailable: true) {
+        case .none: running = nil
+        case let .session(c, _): running = c.id
+        case .unavailable, .corrupt: return
+        }
+        let removed = credentials.removeAll(except: running)
+        if removed > 0 {
+            Log.debug("queue", "credentials of lost sessions removed", data: ["targets": removed])
+        }
+    }
+
     private func open() -> QueueStore? {
         let fm = FileManager.default
         let dir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -119,7 +142,9 @@ final class QueueDatabase {
                     try fm.removeItem(atPath: path + suffix)
                 }
                 Log.debug("queue", "corrupt database deleted and recreated", data: ["error": error.message, "code": Int(error.code)], level: "warn")
-                return try QueueStore(path: path)
+                let rebuiltStore = try QueueStore(path: path)
+                removeOrphanCredentials()
+                return rebuiltStore
             }
         } catch {
             unavailable = UIApplication.shared.isProtectedDataAvailable
