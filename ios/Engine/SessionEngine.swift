@@ -25,7 +25,9 @@ final class SessionEngine {
     let store = SessionStore()
     private(set) lazy var permissions = Permissions(store: store)
     let source = LocationSource()
-    private(set) lazy var uploader = Uploader(store: store, events: events)
+    let queue = QueueDatabase.shared
+    let credentials = TargetCredentials()
+    private(set) lazy var uploader = Uploader(store: store, events: events, db: queue, credentials: credentials)
 
     let launchAtMs = nowMs()
     private(set) var config: SessionConfig?
@@ -41,6 +43,10 @@ final class SessionEngine {
         source.onFixes = { [weak self] in self?.handle($0) }
         source.onAuthorizationChange = { [weak self] in self?.authorizationChanged($0) }
         source.onAccuracyChange = { [weak self] in self?.accuracyChanged($0) }
+        _ = NotificationCenter.default.addObserver(forName: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.queue.onProtectedDataAvailable()
+            self?.uploader.pump()
+        }
     }
 
     func start(_ c: SessionConfig) throws {
@@ -60,8 +66,10 @@ final class SessionEngine {
         }
         do {
             try store.save(c, startedAtMs: now)
+            try credentials.save(sessionId: c.id, headers: c.uploadHeaders, refreshHeaders: c.sync.refresh?.headers ?? [:])
         } catch {
             store.wipe()
+            credentials.remove(sessionId: c.id)
             throw LocationSessionError(code: "INTERNAL", message: "Could not persist the session: \(error)")
         }
         activate(c, startedAtMs: now, pending: nil, lastUploadAtMs: nil)
@@ -81,6 +89,9 @@ final class SessionEngine {
         source.stop()
         events.clearStickyErrors()
         uploader.reset()
+        let deleted = queue.store()?.deleteSession(c.id) ?? 0
+        Log.debug("queue", "session rows deleted", data: ["rows": deleted], sessionId: c.id)
+        credentials.remove(sessionId: c.id)
         store.wipe()
         store.lastStop = LastStop(reason: reason, atMs: nowMs(), sessionId: c.id)
         config = nil
@@ -115,11 +126,22 @@ final class SessionEngine {
         stopping = false
         uploader.onStop = { [weak self] in self?.stop($0) }
         uploader.processKeptAlive = { [weak self] in self?.source.backgroundUpdatesActive ?? false }
+        saveTarget(c)
         uploader.begin(c, pending: lastFix, lastSuccessMs: lastUploadAtMs)
         startSource(c)
         if source.accuracyAuthorization == .reducedAccuracy { reportReducedAccuracy(c) }
         observeTermination()
         scheduleExpiry(c)
+    }
+
+    private func saveTarget(_ c: SessionConfig) {
+        let target = QueueTarget(sessionId: c.id, url: c.uploadUrl, mode: c.sync.mode, batch: c.sync.batch, extrasJson: c.uploadExtrasJson, maxAgeMs: c.sync.maxAgeMs, refreshUrl: c.sync.refresh?.url, refreshBodyJson: c.sync.refresh?.bodyJson, ended: false)
+        do {
+            guard let q = queue.store() else { return }
+            try q.saveTarget(target)
+        } catch {
+            Log.debug("queue", "target save failed", data: ["error": "\(error)"], sessionId: c.id, level: "warn")
+        }
     }
 
     private func startSource(_ c: SessionConfig) {

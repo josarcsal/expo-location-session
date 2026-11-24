@@ -95,7 +95,7 @@ enum Log {
         DebugLogger.shared.log(level, tag, message, data: data, sessionId: sessionId)
     }
 
-    static func upload(status: Int?, outcome: UploadOutcome, data: [String: Any], sessionId: String?) {
+    static func upload(status: Int?, outcome: SyncAction, data: [String: Any], sessionId: String?) {
         info("upload", "upload status=\(status.map(String.init) ?? "none") outcome=\(outcome)", data: data, sessionId: sessionId)
     }
 }
