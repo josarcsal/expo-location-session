@@ -53,6 +53,8 @@ class QueueDatabase(context: Context, private val file: File, private val clock:
     fun store(): QueueStore? {
         opened?.let { return it }
         failedAtMs?.let { if (clock() - it < REOPEN_COOLDOWN_MS) return null }
+        val openedAt = System.nanoTime()
+        val recovering = !recovered.get()
         val s = try {
             file.parentFile?.mkdirs()
             QueueStore(appContext, file)
@@ -65,7 +67,7 @@ class QueueDatabase(context: Context, private val file: File, private val clock:
             }
             return null
         }
-        if (!recovered.get()) {
+        if (recovering) {
             val rows = s.recoverInFlight()
             if (rows < 0) {
                 s.close()
@@ -86,6 +88,10 @@ class QueueDatabase(context: Context, private val file: File, private val clock:
         unavailable = false
         retrySessionDeletes(s)
         purge(s)
+        if (recovering) {
+            val durationMs = (System.nanoTime() - openedAt) / 1_000_000
+            ElsLog.debug("queue", "queue opened in ${durationMs}ms", mapOf("durationMs" to durationMs))
+        }
         return s
     }
 
@@ -140,9 +146,7 @@ class QueueDatabase(context: Context, private val file: File, private val clock:
         if (!failing) return 0
         val s = store() ?: return 0
         settle(s)
-        if (!buffer.isEmpty) return flushBuffer(s).second
-        if (insertFailing && saveTargets(s) && s.probeWrite()) insertFailing = false
-        return 0
+        return if (buffer.isEmpty) 0 else flushBuffer(s).second
     }
 
     @Synchronized

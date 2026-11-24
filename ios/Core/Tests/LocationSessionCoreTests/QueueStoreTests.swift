@@ -66,6 +66,18 @@ import Testing
         #expect(reopened.claim(sessionId: "s1", limit: 10).map(\.attempts) == [2, 2])
     }
 
+    @Test func recoverInFlightReportsFailureAndCanBeRetried() throws {
+        let (s, path) = try open(); try s.saveTarget(target("s1"))
+        _ = try put(s, "s1", "a")
+        #expect(s.claim(sessionId: "s1", limit: 10).count == 1)
+        raw(path, "CREATE TRIGGER boom BEFORE UPDATE ON fixes BEGIN SELECT RAISE(ABORT, 'boom'); END")
+        #expect(s.recoverInFlight() == -1)
+        #expect(s.claim(sessionId: "s1", limit: 10).isEmpty)
+        raw(path, "DROP TRIGGER boom")
+        #expect(s.recoverInFlight() == 1)
+        #expect(s.claim(sessionId: "s1", limit: 10).map(\.uuid) == ["a"])
+    }
+
     @Test func purgeAgesOnlyAllModeAndDropsEmptyEndedTargets() throws {
         let (s, _) = try open()
         try s.saveTarget(target("A", .all, maxAgeMs: 60_000)); try s.saveTarget(target("L", .latest, maxAgeMs: 60_000))
@@ -291,17 +303,6 @@ import Testing
         raw(path, "CREATE TRIGGER boom BEFORE DELETE ON fixes BEGIN SELECT RAISE(ABORT, 'boom'); END")
         #expect(s.deleteSession("s1") == -1)
         #expect(s.target("s1") != nil && s.status().pending == 1)
-    }
-
-    @Test func probeWriteLeavesNoRowAndReportsFailure() throws {
-        let (s, path) = try open(); try s.saveTarget(target("s1"))
-        #expect(s.probeWrite())
-        #expect(s.status().pending == 0)
-        raw(path, "CREATE TRIGGER boom BEFORE INSERT ON fixes BEGIN SELECT RAISE(ABORT, 'full'); END")
-        #expect(!s.probeWrite())
-        raw(path, "DROP TRIGGER boom")
-        _ = try put(s, "s1", "a")
-        #expect(s.status().pending == 1)
     }
 
     @Test func trimFailureUndoesTheInsert() throws {

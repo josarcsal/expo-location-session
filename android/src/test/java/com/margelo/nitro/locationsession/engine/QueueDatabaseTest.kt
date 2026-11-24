@@ -8,6 +8,7 @@ import com.margelo.nitro.locationsession.core.QueueStatus
 import com.margelo.nitro.locationsession.core.QueueTarget
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -49,6 +50,33 @@ class QueueDatabaseTest {
         assertTrue(db.isOpen)
         assertFalse(db.unavailable)
         assertSame(opened, db.store())
+        opened?.close()
+    }
+
+    @Test
+    fun failedRecoveryLeavesTheStoreUnavailableAndTheNextOpenRetriesIt() {
+        val recovered = QueueDatabase::class.java.getDeclaredField("recovered").apply { isAccessible = true }.get(null) as AtomicBoolean
+        recovered.set(false)
+        val file = File(ctx.filesDir, "${UUID.randomUUID()}/queue.sqlite").also { dirs.add(it.parentFile!!) }
+        file.parentFile?.mkdirs()
+        val seeded = QueueStore(ctx, file)
+        seeded.saveTarget(target("s1"))
+        seeded.insert("s1", "a", System.currentTimeMillis(), "{}", QueueMode.ALL, 10_000)
+        assertEquals(1, seeded.claim("s1", 10).size)
+        seeded.close()
+        withRaw(file) { it.execSQL("CREATE TRIGGER boom BEFORE UPDATE ON fixes BEGIN SELECT RAISE(ABORT, 'boom'); END") }
+        var now = 0L
+        val db = QueueDatabase(ctx, file) { now }
+        assertNull(db.store())
+        assertTrue(db.unavailable)
+        assertFalse(recovered.get())
+        withRaw(file) { it.execSQL("DROP TRIGGER boom") }
+        now = 5_000
+        val opened = db.store()
+        assertNotNull(opened)
+        assertFalse(db.unavailable)
+        assertTrue(recovered.get())
+        assertEquals(listOf("a"), opened?.claim("s1", 10)?.map { it.uuid })
         opened?.close()
     }
 
@@ -221,18 +249,21 @@ class QueueDatabaseTest {
     }
 
     @Test
-    fun probeClearsTheInsertFailureOnceWritesSucceed() {
+    fun probeKeepsTheInsertFailureUntilARealInsertSucceeds() {
         val (db, file) = newDb()
         db.saveTarget(target("s1", QueueMode.LATEST))
-        withRaw(file) { it.execSQL("CREATE TRIGGER boom BEFORE INSERT ON fixes BEGIN SELECT RAISE(ABORT, 'full'); END") }
+        withRaw(file) { it.execSQL("CREATE TRIGGER boom BEFORE INSERT ON fixes WHEN NEW.body <> '' BEGIN SELECT RAISE(ABORT, 'full'); END") }
         assertEquals(EnqueueResult.Failed, db.enqueue(insert("s1", "a", QueueMode.LATEST)))
         assertTrue(db.failing)
         assertEquals(0, db.probe())
         assertTrue(db.failing)
+        assertEquals(EnqueueResult.Failed, db.enqueue(insert("s1", "b", QueueMode.LATEST)))
         withRaw(file) { it.execSQL("DROP TRIGGER boom") }
         assertEquals(0, db.probe())
+        assertTrue(db.failing)
+        assertEquals(EnqueueResult.Stored(0), db.enqueue(insert("s1", "c", QueueMode.LATEST)))
         assertFalse(db.failing)
-        assertEquals(0, db.status()?.pending)
+        assertEquals(1, db.status()?.pending)
         db.store()?.close()
     }
 

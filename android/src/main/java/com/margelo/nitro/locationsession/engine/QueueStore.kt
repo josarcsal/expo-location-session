@@ -188,12 +188,6 @@ class QueueStore(context: Context, file: File) {
     }
 
     @Synchronized
-    fun probeWrite(): Boolean = transaction {
-        run("INSERT INTO fixes (uuid, session_id, fix_ts, body, state, attempts) VALUES ('', '', 0, '', 1, 0)")
-        run("DELETE FROM fixes WHERE id = last_insert_rowid()")
-    } == null
-
-    @Synchronized
     fun markEnded(sessionId: String) {
         attempt(0) { run("UPDATE targets SET ended = 1 WHERE session_id = ?", sessionId) }
     }

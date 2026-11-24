@@ -46,11 +46,13 @@ final class QueueDatabase {
         dispatchPrecondition(condition: .onQueue(.main))
         if let opened { return opened }
         if let failedAtMs, nowMs() - failedAtMs < Self.reopenCooldownMs { return nil }
+        let openedAt = DispatchTime.now().uptimeNanoseconds
+        let recovering = !Self.recovered
         guard let s = open() else {
             failedAtMs = nowMs()
             return nil
         }
-        if !Self.recovered {
+        if recovering {
             let count = s.recoverInFlight()
             guard count >= 0 else {
                 failedAtMs = nowMs()
@@ -70,6 +72,10 @@ final class QueueDatabase {
         unavailable = false
         retrySessionDeletes(s)
         purge(s)
+        if recovering {
+            let durationMs = Int64((DispatchTime.now().uptimeNanoseconds - openedAt) / 1_000_000)
+            Log.debug("queue", "queue opened in \(durationMs)ms", data: ["durationMs": durationMs])
+        }
         return s
     }
 
@@ -132,11 +138,7 @@ final class QueueDatabase {
         dispatchPrecondition(condition: .onQueue(.main))
         guard failing, let s = store() else { return 0 }
         settle(s)
-        guard buffer.isEmpty else { return flushBuffer(into: s).trimmed }
-        if insertFailing, saveTargets(s), s.probeWrite() {
-            insertFailing = false
-        }
-        return 0
+        return buffer.isEmpty ? 0 : flushBuffer(into: s).trimmed
     }
 
     func status(hiding hidden: Set<Int64> = []) -> QueueStatus? {

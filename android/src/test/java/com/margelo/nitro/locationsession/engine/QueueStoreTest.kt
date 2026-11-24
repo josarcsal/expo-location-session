@@ -97,6 +97,21 @@ class QueueStoreTest {
     }
 
     @Test
+    fun recoverInFlightReportsFailureAndCanBeRetried() {
+        val file = newFile()
+        val s = open(file)
+        s.saveTarget(target("s1"))
+        put(s, "s1", "a")
+        assertEquals(1, s.claim("s1", 10).size)
+        raw(file, "CREATE TRIGGER boom BEFORE UPDATE ON fixes BEGIN SELECT RAISE(ABORT, 'boom'); END")
+        assertEquals(-1, s.recoverInFlight())
+        assertTrue(s.claim("s1", 10).isEmpty())
+        raw(file, "DROP TRIGGER boom")
+        assertEquals(1, s.recoverInFlight())
+        assertEquals(listOf("a"), s.claim("s1", 10).map { it.uuid })
+    }
+
+    @Test
     fun purgeAgesOnlyAllModeAndDropsEmptyEndedTargets() {
         val s = open()
         s.saveTarget(target("A", QueueMode.ALL, 60_000))
@@ -454,20 +469,6 @@ class QueueStoreTest {
         raw(file, "CREATE TRIGGER boom BEFORE DELETE ON fixes BEGIN SELECT RAISE(ABORT, 'boom'); END")
         assertEquals(-1, s.deleteSession("s1"))
         assertNotNull(s.target("s1"))
-        assertEquals(1, s.status().pending)
-    }
-
-    @Test
-    fun probeWriteLeavesNoRowAndReportsFailure() {
-        val file = newFile()
-        val s = open(file)
-        s.saveTarget(target("s1"))
-        assertTrue(s.probeWrite())
-        assertEquals(0, s.status().pending)
-        raw(file, "CREATE TRIGGER boom BEFORE INSERT ON fixes BEGIN SELECT RAISE(ABORT, 'full'); END")
-        assertFalse(s.probeWrite())
-        raw(file, "DROP TRIGGER boom")
-        put(s, "s1", "a")
         assertEquals(1, s.status().pending)
     }
 

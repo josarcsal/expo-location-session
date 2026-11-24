@@ -257,15 +257,6 @@ public final class QueueStore {
         }
     }
 
-    public func probeWrite() -> Bool {
-        locked {
-            transaction {
-                run("INSERT INTO fixes (uuid, session_id, fix_ts, body, state, attempts) VALUES ('', '', 0, '', 1, 0)", []) >= 0
-                    && run("DELETE FROM fixes WHERE id = last_insert_rowid()", []) >= 0
-            }
-        }
-    }
-
     public func markEnded(_ sessionId: String) {
         locked { _ = run("UPDATE targets SET ended = 1 WHERE session_id = ?", [.text(sessionId)]) }
     }
