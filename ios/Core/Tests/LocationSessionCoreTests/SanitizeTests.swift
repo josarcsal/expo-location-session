@@ -17,6 +17,7 @@ import Testing
         Fix(latitude: 0, longitude: .infinity, accuracy: 5, timestampMs: 1),
         Fix(latitude: -.infinity, longitude: 0, accuracy: 5, timestampMs: 1),
         Fix(latitude: 0, longitude: 0, accuracy: .nan, timestampMs: 1),
+        Fix(latitude: 0, longitude: 0, accuracy: .infinity, timestampMs: 1),
         Fix(latitude: 0, longitude: 0, accuracy: -1, timestampMs: 1),
         Fix(latitude: 90.5, longitude: 0, accuracy: 5, timestampMs: 1),
         Fix(latitude: 0, longitude: -180.5, accuracy: 5, timestampMs: 1),

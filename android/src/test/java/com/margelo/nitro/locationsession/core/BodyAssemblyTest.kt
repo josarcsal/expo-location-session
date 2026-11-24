@@ -13,7 +13,7 @@ class BodyAssemblyTest {
     private fun keys(o: JSONObject) = o.keys().asSequence().toSet()
 
     @Test
-    fun defaultConfigRendersByteIdenticalV01Body() {
+    fun defaultConfigMatchesV01Body() {
         for (extras in listOf("""{"orderId":"o1"}""", "{}", "not json")) {
             for (battery in listOf(Battery(0.5, true), null)) {
                 val element = buildElement(rec(battery = battery), SyncConfig(), extras)
@@ -42,6 +42,22 @@ class BodyAssemblyTest {
         assertEquals(1, o.getJSONObject("extras").length())
         assertEquals(0.5, o.getJSONObject("battery").getDouble("level"), 0.0)
         assertEquals(true, o.getJSONObject("battery").getBoolean("charging"))
+    }
+
+    @Test
+    fun batchLimitFollowsMaxSize() {
+        assertEquals(1, batchLimit(SyncConfig()))
+        assertEquals(1, batchLimit(SyncConfig(mode = QueueMode.ALL)))
+        assertEquals(1, batchLimit(SyncConfig(mode = QueueMode.ALL, batch = BatchConfig(1))))
+        assertEquals(20, batchLimit(SyncConfig(mode = QueueMode.ALL, batch = BatchConfig(20))))
+    }
+
+    @Test
+    fun maxSizeOneSendsOneElementWithId() {
+        val sync = SyncConfig(mode = QueueMode.ALL, batch = BatchConfig(1))
+        val body = JSONObject(buildRequestBody("s1", listOf(buildElement(rec(), sync, "{}")), sync, "{}"))
+        assertEquals(setOf("id", "sessionId", "location", "battery", "extras"), keys(body))
+        assertEquals("u-1", body.getString("id"))
     }
 
     @Test

@@ -24,6 +24,7 @@ class SanitizeTest {
             Fix(latitude = 0.0, longitude = Double.POSITIVE_INFINITY, accuracy = 5.0, timestampMs = 1),
             Fix(latitude = Double.NEGATIVE_INFINITY, longitude = 0.0, accuracy = 5.0, timestampMs = 1),
             Fix(latitude = 0.0, longitude = 0.0, accuracy = Double.NaN, timestampMs = 1),
+            Fix(latitude = 0.0, longitude = 0.0, accuracy = Double.POSITIVE_INFINITY, timestampMs = 1),
             Fix(latitude = 0.0, longitude = 0.0, accuracy = -1.0, timestampMs = 1),
             Fix(latitude = 90.5, longitude = 0.0, accuracy = 5.0, timestampMs = 1),
             Fix(latitude = 0.0, longitude = -180.5, accuracy = 5.0, timestampMs = 1)

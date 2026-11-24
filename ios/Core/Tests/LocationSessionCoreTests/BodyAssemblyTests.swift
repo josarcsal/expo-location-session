@@ -10,7 +10,7 @@ import Testing
     private func obj(_ d: Data) throws -> [String: Any] { try #require(JSONSerialization.jsonObject(with: d) as? [String: Any]) }
 
     @Test(arguments: [#"{"orderId":"o1"}"#, "{}", "not json"])
-    func defaultConfigRendersByteIdenticalV01Body(extras: String) throws {
+    func defaultConfigMatchesV01Body(extras: String) throws {
         for battery in [Battery(level: 0.5, charging: true), nil] {
             let element = buildElement(record: rec(battery: battery), sync: .default, extrasJson: extras)
             let v01 = buildBody(sessionId: "s1", fix: full, battery: battery.map { ($0.level, $0.charging) }, extrasJson: extras)
@@ -22,6 +22,20 @@ import Testing
 
     @Test func allModeSingleFixIsV01BodyPlusId() throws {
         let sync = SyncConfig(mode: .all)
+        let body = try obj(buildRequestBody(sessionId: "s1", elements: [buildElement(record: rec(), sync: sync, extrasJson: "{}")], sync: sync, extrasJson: "{}"))
+        #expect(Set(body.keys) == ["id", "sessionId", "location", "battery", "extras"])
+        #expect(body["id"] as? String == "u-1")
+    }
+
+    @Test func batchLimitFollowsMaxSize() {
+        #expect(batchLimit(.default) == 1)
+        #expect(batchLimit(SyncConfig(mode: .all)) == 1)
+        #expect(batchLimit(SyncConfig(mode: .all, batch: BatchConfig(maxSize: 1))) == 1)
+        #expect(batchLimit(SyncConfig(mode: .all, batch: BatchConfig(maxSize: 20))) == 20)
+    }
+
+    @Test func maxSizeOneSendsOneElementWithId() throws {
+        let sync = SyncConfig(mode: .all, batch: BatchConfig(maxSize: 1))
         let body = try obj(buildRequestBody(sessionId: "s1", elements: [buildElement(record: rec(), sync: sync, extrasJson: "{}")], sync: sync, extrasJson: "{}"))
         #expect(Set(body.keys) == ["id", "sessionId", "location", "battery", "extras"])
         #expect(body["id"] as? String == "u-1")

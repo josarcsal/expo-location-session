@@ -2,6 +2,7 @@ package com.margelo.nitro.locationsession.core
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -41,6 +42,13 @@ class SyncPolicyTest {
         assertEquals(SyncAction.DropSent, a(422))
         assertEquals(SyncAction.Retry, a(503))
         assertEquals(SyncAction.Retry, a(null))
+    }
+
+    @Test
+    fun endedColumnWithRefresh() {
+        fun a(s: Int?) = syncAction(s, ended = true, refreshConfigured = true, alreadyRefreshed = false)
+        assertEquals(SyncAction.DropSent, a(403))
+        assertEquals(SyncAction.DropSession, a(410))
     }
 
     @Test
@@ -90,6 +98,17 @@ class RefreshContractTest {
     @Test
     fun rejectsNoResponse() {
         assertEquals(null, parse(null, """{"headers":{"A":"b"}}"""))
+    }
+
+    @Test
+    fun acceptsOnly2xx() {
+        val body = """{"headers":{"A":"b"}}"""
+        assertEquals(null, parse(199, body))
+        assertNotNull(parse(200, body))
+        assertNotNull(parse(299, body))
+        assertEquals(null, parse(300, body))
+        assertEquals(null, parse(302, body))
+        assertEquals(null, parse(308, body))
     }
 
     @Test

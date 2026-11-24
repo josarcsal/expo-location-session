@@ -37,6 +37,12 @@ import Testing
         #expect(a(nil) == .retry)
     }
 
+    @Test func endedColumnWithRefresh() {
+        let a = { (s: Int?) in syncAction(status: s, ended: true, refreshConfigured: true, alreadyRefreshed: false) }
+        #expect(a(403) == .dropSent)
+        #expect(a(410) == .dropSession)
+    }
+
     @Test(arguments: [300, 301, 302, 303, 304, 307, 308])
     func redirectsRetryInBothColumns(status: Int) {
         #expect(syncAction(status: status, ended: false, refreshConfigured: true, alreadyRefreshed: false) == .retry)
@@ -70,6 +76,16 @@ import Testing
     func rejects(status: Int, body: String) { #expect(parse(status, body) == nil) }
 
     @Test func rejectsNoResponse() { #expect(parse(nil, #"{"headers":{"A":"b"}}"#) == nil) }
+
+    @Test func acceptsOnly2xx() {
+        let body = #"{"headers":{"A":"b"}}"#
+        #expect(parse(199, body) == nil)
+        #expect(parse(200, body) != nil)
+        #expect(parse(299, body) != nil)
+        #expect(parse(300, body) == nil)
+        #expect(parse(302, body) == nil)
+        #expect(parse(308, body) == nil)
+    }
 
     @Test func requestBody() throws {
         let d = try #require(JSONSerialization.jsonObject(with: refreshRequestBody(bodyJson: nil, sessionId: "s1")) as? [String: String])
