@@ -456,7 +456,7 @@ final class Uploader {
             do {
                 try credentials.save(sessionId: c.id, headers: result.headers, refreshHeaders: refreshHeaders)
             } catch {
-                refreshFailed(c, message: "Could not store refreshed credentials", data: ["error": "\(error)"])
+                refreshFailed(c, rejected: false, message: "Could not store refreshed credentials", data: ["error": "\(error)"])
                 return
             }
             var data: [String: Any] = ["headers": result.headers.keys.sorted()]
@@ -467,19 +467,19 @@ final class Uploader {
             send()
             return
         }
-        let message = status.map { "Refresh responded \($0) without usable headers" } ?? "Refresh request failed"
-        refreshFailed(c, message: message, data: ["status": status ?? NSNull(), "latencyMs": latencyMs ?? NSNull(), "error": error ?? NSNull()])
+        let message = status.map { "Refresh rejected: server responded \($0) without usable headers" } ?? "Refresh transport failure: \(error ?? "no response")"
+        refreshFailed(c, rejected: status != nil, message: message, data: ["status": status ?? NSNull(), "latencyMs": latencyMs ?? NSNull(), "error": error ?? NSNull()])
     }
 
-    private func refreshFailed(_ c: SessionConfig, message: String, data: [String: Any]) {
-        Log.debug("auth", "refresh failed", data: data, sessionId: c.id, level: "warn")
+    private func refreshFailed(_ c: SessionConfig, rejected: Bool, message: String, data: [String: Any]) {
+        Log.debug("auth", rejected ? "refresh rejected" : "refresh failed", data: data, sessionId: c.id, level: "warn")
         events.emit(.error, ["code": "AUTH_REFRESH_FAILED", "message": message, "sessionId": c.id])
-        switch syncAction(status: 401, ended: false, refreshConfigured: true, alreadyRefreshed: true) {
-        case .stop(let reason):
+        if rejected, case .stop(let reason) = syncAction(status: 401, ended: false, refreshConfigured: true, alreadyRefreshed: true) {
             onStop?(reason)
-        default:
-            scheduleRetry()
+            return
         }
+        if !rejected { refreshed.remove(c.id) }
+        scheduleRetry()
     }
 
     private func battery() -> Battery? {

@@ -563,13 +563,13 @@ class Uploader(
         }
         val result = parseRefreshResponse(status, body)
         if (result == null) {
-            val message = if (status != null) "Refresh responded $status without usable headers" else "Refresh request failed"
-            refreshFailed(c, message, mapOf("status" to status, "durationMs" to durationMs))
+            val message = if (status != null) "Refresh rejected: server responded $status without usable headers" else "Refresh transport failure: no response"
+            refreshFailed(c, status != null, message, mapOf("status" to status, "durationMs" to durationMs))
             return
         }
         val refreshHeaders = result.refreshHeaders ?: credentials.load(c.id)?.refreshHeaders ?: c.sync.refresh?.headers ?: emptyMap()
         if (!credentials.save(c.id, result.headers, refreshHeaders)) {
-            refreshFailed(c, "Could not store refreshed credentials", mapOf("status" to status, "durationMs" to durationMs))
+            refreshFailed(c, false, "Could not store refreshed credentials", mapOf("status" to status, "durationMs" to durationMs))
             return
         }
         val data = mutableMapOf<String, Any?>("status" to status, "durationMs" to durationMs, "headers" to result.headers.keys.sorted())
@@ -579,13 +579,17 @@ class Uploader(
         notifySettled()
     }
 
-    private fun refreshFailed(c: SessionConfig, message: String, data: Map<String, Any?>) {
-        ElsLog.debug("auth", "refresh failed", data, c.id, level = "warn")
+    private fun refreshFailed(c: SessionConfig, rejected: Boolean, message: String, data: Map<String, Any?>) {
+        ElsLog.debug("auth", if (rejected) "refresh rejected" else "refresh failed", data, c.id, level = "warn")
         events.emit("error", JSONObject().put("code", "AUTH_REFRESH_FAILED").put("message", message).put("sessionId", c.id))
-        val action = syncAction(401, ended = false, refreshConfigured = true, alreadyRefreshed = true)
-        if (action is SyncAction.Stop) {
-            onStop?.invoke(action.reason)
-            return
+        if (rejected) {
+            val action = syncAction(401, ended = false, refreshConfigured = true, alreadyRefreshed = true)
+            if (action is SyncAction.Stop) {
+                onStop?.invoke(action.reason)
+                return
+            }
+        } else {
+            refreshed.remove(c.id)
         }
         scheduleRetry()
         notifySettled()
