@@ -100,7 +100,7 @@ final class Uploader {
             send()
         } else if let last = lastSuccessMs {
             let wait = last + c.uploadMinIntervalMs - now
-            Log.debug("upload", "throttled", data: ["waitMs": wait, "minIntervalMs": c.uploadMinIntervalMs], sessionId: c.id)
+            Log.debug("upload", "throttled", data: ["waitMs": wait, "generation": generation(c), "minIntervalMs": c.uploadMinIntervalMs], sessionId: c.id)
             schedule(afterMs: wait)
         }
     }
@@ -112,7 +112,7 @@ final class Uploader {
             completion()
             return
         }
-        Log.debug("upload", "flush start", data: ["inFlight": inFlight != nil], sessionId: c.id)
+        Log.debug("upload", "flush start", data: ["generation": generation(c), "inFlight": inFlight != nil], sessionId: c.id)
         flushCompletion = completion
         timer?.invalidate()
         timer = nil
@@ -136,6 +136,10 @@ final class Uploader {
             body = buildElement(record: FixRecord(uuid: uuid, sessionId: c.id, fix: fix, battery: battery()), sync: c.sync, extrasJson: c.uploadExtrasJson)
         }
         return db.enqueue(PendingInsert(sessionId: c.id, uuid: uuid, fixTs: fix.timestampMs, body: body, mode: c.sync.mode, maxRecords: c.sync.maxRecords))
+    }
+
+    private func generation(_ c: SessionConfig) -> Int64 {
+        db.store()?.latestPending(sessionId: c.id)?.id ?? 0
     }
 
     private func hasPending(_ c: SessionConfig) -> Bool {
@@ -270,7 +274,7 @@ final class Uploader {
         request.httpBody = body
         let sentId = flushId
         let startedAt = nowMs()
-        Log.debug("upload", "attempt", data: ["attempt": attempt, "bytes": body.count, "flush": flushCompletion != nil, "rows": ids.count, "fixTimestamp": rows.first(where: { ids.contains($0.id) })?.fixTs ?? 0], sessionId: c.id)
+        Log.debug("upload", "attempt", data: ["generation": ids.last ?? 0, "attempt": attempt, "bytes": body.count, "flush": flushCompletion != nil, "rows": ids.count, "fixTimestamp": rows.first(where: { ids.contains($0.id) })?.fixTs ?? 0], sessionId: c.id)
         beginBackgroundTask()
         let task = session.dataTask(with: request) { [weak self] _, response, error in
             let status = error == nil ? (response as? HTTPURLResponse)?.statusCode : nil
@@ -328,7 +332,10 @@ final class Uploader {
         watchdog?.invalidate()
         watchdog = nil
         endBackgroundTask()
-        guard let c = config else { return }
+        guard let c = config else {
+            if !rows.isEmpty { db.store()?.release(ids: rows) }
+            return
+        }
         let at = nowMs()
         let action = syncAction(status: status, ended: false, refreshConfigured: false, alreadyRefreshed: false)
         var payload: [String: Any] = ["ok": action == .deleteSent, "at": at, "sessionId": c.id]
@@ -337,7 +344,8 @@ final class Uploader {
         events.emit(.upload, payload)
         var data = detail
         data["rows"] = rows.count
-        data["outcome"] = "\(action)"
+        data["generation"] = rows.last ?? 0
+        data["outcome"] = uploadOutcomeName(action)
         if let status { data["status"] = status }
         let retrying: Bool
         switch action {

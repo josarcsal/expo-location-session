@@ -96,6 +96,16 @@ enum Log {
     }
 
     static func upload(status: Int?, outcome: SyncAction, data: [String: Any], sessionId: String?) {
-        info("upload", "upload status=\(status.map(String.init) ?? "none") outcome=\(outcome)", data: data, sessionId: sessionId)
+        info("upload", "upload status=\(status.map(String.init) ?? "none") outcome=\(uploadOutcomeName(outcome))", data: data, sessionId: sessionId)
+    }
+}
+
+func uploadOutcomeName(_ action: SyncAction) -> String {
+    switch action {
+    case .deleteSent: return "\(UploadOutcome.success)"
+    case .dropSent: return "\(UploadOutcome.drop)"
+    case .retry: return "\(UploadOutcome.retry)"
+    case .stop(let reason): return "\(UploadOutcome.stop(reason))"
+    case .refreshAndRetry, .dropSession: return "\(action)"
     }
 }
