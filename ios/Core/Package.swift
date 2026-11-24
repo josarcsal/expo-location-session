@@ -6,7 +6,7 @@ let package = Package(
     platforms: [.macOS(.v12), .iOS(.v15)],
     products: [.library(name: "LocationSessionCore", targets: ["LocationSessionCore"])],
     targets: [
-        .target(name: "LocationSessionCore"),
+        .target(name: "LocationSessionCore", linkerSettings: [.linkedLibrary("sqlite3")]),
         .testTarget(name: "LocationSessionCoreTests", dependencies: ["LocationSessionCore"]),
     ]
 )
