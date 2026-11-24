@@ -6,6 +6,8 @@ func nowMs() -> Int64 {
 }
 
 final class Uploader {
+    private static let healthProbeMs: Int64 = 30_000
+
     private struct Target {
         let id: String
         let url: String
@@ -64,6 +66,8 @@ final class Uploader {
     private var syncSubmitted = false
     private var endedAttempt = 0
     private var endedRetryAtMs: Int64 = 0
+    private var endedRetryTimer: Timer?
+    private var healthProbe: Timer?
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var timer: Timer?
     private var watchdog: Timer?
@@ -76,11 +80,15 @@ final class Uploader {
         self.events = events
         self.db = db
         self.credentials = credentials
+        db.onDeletesSettled = { [weak self] in
+            guard let self, let c = self.config else { return }
+            self.syncPendingFix(self.running(c))
+        }
     }
 
     func begin(_ c: SessionConfig, pending: Fix?, lastSuccessMs: Int64?) {
         dispatchPrecondition(condition: .onQueue(.main))
-        reset()
+        clearState()
         fallback.keep(sessionId: c.id)
         config = c
         self.lastSuccessMs = lastSuccessMs
@@ -98,6 +106,11 @@ final class Uploader {
 
     func reset() {
         dispatchPrecondition(condition: .onQueue(.main))
+        clearState()
+        evaluateConnectivity()
+    }
+
+    private func clearState() {
         flushId += 1
         if !inFlightRows.isEmpty, let t = inFlightTarget { giveBack(inFlightRows, t) }
         inFlightRows = []
@@ -120,6 +133,9 @@ final class Uploader {
         credentialsFallbackLogged = false
         endedAttempt = 0
         endedRetryAtMs = 0
+        cancelEndedRetry()
+        healthProbe?.invalidate()
+        healthProbe = nil
         timer?.invalidate()
         timer = nil
         watchdog?.invalidate()
@@ -135,7 +151,6 @@ final class Uploader {
             UIDevice.current.isBatteryMonitoringEnabled = false
             ownsBatteryMonitoring = false
         }
-        evaluateConnectivity()
     }
 
     func discardFallback() {
@@ -161,6 +176,7 @@ final class Uploader {
         attempt = 0
         endedAttempt = 0
         endedRetryAtMs = 0
+        cancelEndedRetry()
         refreshHold = false
         guard let c = config else {
             drain(budgetMs: nil) { _ in }
@@ -204,6 +220,7 @@ final class Uploader {
         dirty = false
         pass = (waiters + deferred, 0)
         deferred = []
+        cancelEndedRetry()
         if config == nil {
             timer?.invalidate()
             timer = nil
@@ -223,13 +240,39 @@ final class Uploader {
 
     private func drainNext() {
         guard pass != nil else { return }
-        guard flushCompletion == nil, let q = db.store(), let id = q.nextSession(running: config?.id), id != config?.id,
-              let t = q.target(id), t.ended else {
+        guard flushCompletion == nil, let q = db.store(), let id = q.nextSession(running: config?.id), id != config?.id else {
+            endPass(.done)
+            return
+        }
+        let target: QueueTarget?
+        do {
+            target = try q.readTarget(id)
+        } catch {
+            endPass(.done)
+            return
+        }
+        guard let t = target else {
+            dropUnreadableSession(id)
+            return
+        }
+        guard t.ended else {
             endPass(.done)
             return
         }
         let refresh = t.refreshUrl.map { RefreshConfig(url: $0, bodyJson: t.refreshBodyJson) }
         send(Target(id: id, url: t.url, sync: SyncConfig(mode: t.mode, maxAgeMs: t.maxAgeMs, batch: t.batch, refresh: refresh), extrasJson: t.extrasJson, ended: true))
+    }
+
+    private func dropUnreadableSession(_ id: String) {
+        let deleted = db.deleteSession(id)
+        guard deleted > 0 else {
+            endPass(.done)
+            return
+        }
+        credentials.remove(sessionId: id)
+        Log.debug("queue", "unreadable session dropped", data: ["rows": deleted], sessionId: id, level: "warn")
+        events.emit(.error, ["code": "UPLOAD_DROPPED", "message": "Queued session unreadable; \(deleted) location\(deleted == 1 ? "" : "s") dropped", "sessionId": id])
+        drainNext()
     }
 
     private func drainBudgetReached() {
@@ -283,6 +326,7 @@ final class Uploader {
             endedAttempt += 1
             endedRetryAtMs = nowMs() + delay
             Log.debug("sync", "drain retry deferred", data: ["backoffMs": delay], sessionId: config?.id)
+            armEndedRetry(afterMs: delay)
         } else if end == .done {
             syncSubmitted = false
         }
@@ -293,6 +337,23 @@ final class Uploader {
             evaluateConnectivity()
         }
         waiters.forEach { $0.done(total - $0.base) }
+    }
+
+    private func armEndedRetry(afterMs delay: Int64) {
+        cancelEndedRetry()
+        let t = Timer(timeInterval: Double(max(0, delay)) / 1000, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            self.endedRetryTimer = nil
+            self.endedRetryAtMs = 0
+            self.drainIfIdle()
+        }
+        RunLoop.main.add(t, forMode: .common)
+        endedRetryTimer = t
+    }
+
+    private func cancelEndedRetry() {
+        endedRetryTimer?.invalidate()
+        endedRetryTimer = nil
     }
 
     private func resumeRunning() {
@@ -331,14 +392,44 @@ final class Uploader {
         if let c = config { reportQueueHealth(c, trimmed: trimmed) }
     }
 
+    func protectedDataAvailable() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        let trimmed = db.onProtectedDataAvailable()
+        if let c = config { reportQueueHealth(c, trimmed: trimmed) }
+        pump()
+    }
+
+    func hiddenRows() -> Set<Int64> {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let c = config, c.sync.mode == .latest, let row = db.store()?.latestPending(sessionId: c.id),
+              fallback.supersedes(sessionId: c.id, fixTs: row.fixTs) else { return [] }
+        return [row.id]
+    }
+
+    private func armHealthProbe() {
+        healthProbe?.invalidate()
+        let t = Timer(timeInterval: Double(Self.healthProbeMs) / 1000, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            self.healthProbe = nil
+            guard let c = self.config, self.queueUnavailableReported else { return }
+            self.reportQueueHealth(c, trimmed: self.db.probe())
+            if self.queueUnavailableReported { self.armHealthProbe() }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        healthProbe = t
+    }
+
     private func reportQueueHealth(_ c: SessionConfig, trimmed: Int) {
         if db.failing, !queueUnavailableReported {
             queueUnavailableReported = true
             let latest = c.sync.mode == .latest
             Log.debug("queue", latest ? "database unavailable; newest location kept in memory" : "database unavailable; locations buffered in memory", data: ["buffered": db.buffered], sessionId: c.id, level: "warn")
             events.emitStickyError(code: "QUEUE_UNAVAILABLE", message: latest ? "Location queue storage is unavailable; the newest location is uploaded from memory" : "Location queue storage is unavailable; up to 500 locations are kept in memory until it recovers")
+            armHealthProbe()
         } else if queueUnavailableReported, !db.failing, db.isOpen {
             queueUnavailableReported = false
+            healthProbe?.invalidate()
+            healthProbe = nil
             Log.debug("queue", "database available again", sessionId: c.id)
             events.clearStickyError("QUEUE_UNAVAILABLE")
         }
@@ -391,7 +482,11 @@ final class Uploader {
         let body: String
         switch c.sync.mode {
         case .latest:
-            guard let data = try? JSONEncoder().encode(fix) else { return 0 }
+            guard let data = try? JSONEncoder().encode(fix) else {
+                Log.debug("queue", "could not encode location", data: ["fixTimestamp": fix.timestampMs], sessionId: c.id, level: "warn")
+                events.emit(.error, ["code": "UPLOAD_DROPPED", "message": "Location could not be encoded; location dropped", "sessionId": c.id])
+                return 0
+            }
             body = String(decoding: data, as: UTF8.self)
         case .all:
             body = buildElement(record: FixRecord(uuid: uuid, sessionId: c.id, fix: fix, battery: battery()), sync: c.sync, extrasJson: c.uploadExtrasJson)
@@ -435,10 +530,19 @@ final class Uploader {
 
     private func syncPendingFix(_ t: Target) {
         guard !t.ended, t.sync.mode == .latest else { return }
-        let q = db.store()
-        let row = q?.latestPending(sessionId: t.id)
+        var row: QueuedRow?
+        var readable = false
+        if let q = db.store() {
+            do {
+                row = try q.newestPending(sessionId: t.id)
+                readable = true
+            } catch {}
+        }
         let queuedFix = row.flatMap { try? JSONDecoder().decode(Fix.self, from: Data($0.body.utf8)) }
-        store.pendingFix = fallback.pendingFix(sessionId: t.id, queuedFixTs: row?.fixTs, queuedFix: queuedFix, queueReadable: q != nil)
+        let fix = fallback.pendingFix(sessionId: t.id, queuedFixTs: row?.fixTs, queuedFix: queuedFix, queueReadable: readable)
+        if fix != nil || (readable && !db.hasUnsettledDeletes(sessionId: t.id)) {
+            store.pendingFix = fix
+        }
     }
 
     private func giveBack(_ ids: [Int64], _ t: Target) {
@@ -556,7 +660,12 @@ final class Uploader {
             }
         }
         guard !rows.isEmpty else {
-            sendFailed(t)
+            if rowsRemain(q, t.id) {
+                Log.debug("queue", "claim failed; retrying", sessionId: t.id, level: "warn")
+                retryLater(t)
+            } else {
+                sendFailed(t)
+            }
             return
         }
         var elements: [String] = []
@@ -583,6 +692,14 @@ final class Uploader {
             return
         }
         upload(t, url: url, elements: elements, rows: ids, fallback: nil, fixTs: rows.first(where: { ids.contains($0.id) })?.fixTs ?? 0)
+    }
+
+    private func rowsRemain(_ q: QueueStore, _ sessionId: String) -> Bool {
+        do {
+            return try q.newestPending(sessionId: sessionId) != nil
+        } catch {
+            return true
+        }
     }
 
     private func upload(_ t: Target, url: URL, elements: [String], rows ids: [Int64], fallback generation: Int?, fixTs: Int64) {
@@ -733,8 +850,9 @@ final class Uploader {
             retryLater(t)
             return
         }
-        if !t.ended { resolveDeferredIfBlocked() }
+        let blocked = t.ended ? [] : blockedWaiters()
         continueAfterSend(t)
+        resolve(blocked)
     }
 
     private func ownsAttempt(_ t: Target) -> Bool {
@@ -745,15 +863,20 @@ final class Uploader {
         if t.ended {
             endPass(.retry)
         } else {
-            resolveDeferredIfBlocked()
+            let blocked = blockedWaiters()
             scheduleRetry()
+            resolve(blocked)
         }
     }
 
-    private func resolveDeferredIfBlocked() {
-        guard !deferred.isEmpty, let c = config, hasPending(c) else { return }
+    private func blockedWaiters() -> [Waiter] {
+        guard !deferred.isEmpty, let c = config, hasPending(c) else { return [] }
         let waiters = deferred
         deferred = []
+        return waiters
+    }
+
+    private func resolve(_ waiters: [Waiter]) {
         let total = drained
         waiters.forEach { $0.done(total - $0.base) }
     }

@@ -106,7 +106,10 @@ class LaunchGate : BroadcastReceiver() {
                         SessionEngine.rearmExpiryAlarm(ctx)
                         finish()
                     }
-                    Kind.PACKAGE_REPLACED -> SessionEngine.syncQueue(ctx, PACKAGE_REPLACED_DRAIN_BUDGET_MS) { finish() }
+                    Kind.PACKAGE_REPLACED -> {
+                        Handler(Looper.getMainLooper()).postDelayed({ finish() }, PACKAGE_REPLACED_DRAIN_BUDGET_MS)
+                        SessionEngine.syncQueue(ctx, PACKAGE_REPLACED_DRAIN_BUDGET_MS) { finish() }
+                    }
                     else -> finish()
                 }
             } finally {

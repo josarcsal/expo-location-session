@@ -171,7 +171,7 @@ object SessionEngine {
 
     fun queueStatus(ctx: Context): QueueStatus {
         init(ctx)
-        return queue.status() ?: throw LocationSessionException("INTERNAL", "queue storage is not available")
+        return queue.status(uploader.hiddenRows()) ?: throw LocationSessionException("INTERNAL", "queue storage is not available")
     }
 
     fun syncQueue(ctx: Context, budgetMs: Long? = null, completion: (Int) -> Unit) {
@@ -209,8 +209,8 @@ object SessionEngine {
         uploader.drain(null) {}
     }
 
-    private fun endLeftoverTargets() {
-        val removed = queue.store()?.endLeftovers() ?: return
+    private fun endLeftoverTargets(running: String? = null) {
+        val removed = queue.store()?.endLeftovers(running) ?: return
         removed.forEach(credentials::remove)
         if (removed.isNotEmpty()) ElsLog.debug("queue", "leftover latest-mode sessions deleted", mapOf("targets" to removed.size))
     }
@@ -295,6 +295,7 @@ object SessionEngine {
             }
             is StoredSession.Session -> {
                 val c = stored.config
+                endLeftoverTargets(c.id)
                 when {
                     nowMs() >= c.expiresAtMs -> teardown(context, c, StopReason.EXPIRED)
                     !Permissions.hasForeground(context) -> teardown(context, c, StopReason.PERMISSION_REVOKED)

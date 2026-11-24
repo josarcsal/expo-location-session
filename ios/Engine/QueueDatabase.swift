@@ -29,9 +29,12 @@ final class QueueDatabase {
     private var buffer = BoundedBuffer<PendingInsert>(capacity: 500)
     private var unsettled = UnsettledRows()
     private var unsavedTargets: [String: QueueTarget] = [:]
+    private var undeletedSessions: Set<String> = []
     private var loggedUnavailable = false
     private var insertFailing = false
     private(set) var unavailable = false
+
+    var onDeletesSettled: (() -> Void)?
 
     var isOpen: Bool { opened != nil }
     var failing: Bool { unavailable || insertFailing }
@@ -47,15 +50,25 @@ final class QueueDatabase {
             failedAtMs = nowMs()
             return nil
         }
+        if !Self.recovered {
+            let count = s.recoverInFlight()
+            guard count >= 0 else {
+                failedAtMs = nowMs()
+                unavailable = UIApplication.shared.isProtectedDataAvailable
+                if !loggedUnavailable {
+                    loggedUnavailable = true
+                    Log.debug("queue", "in-flight recovery failed; database unavailable", level: "warn")
+                }
+                return nil
+            }
+            Self.recovered = true
+            Log.debug("queue", "recovered in-flight rows", data: ["rows": count])
+        }
         opened = s
         failedAtMs = nil
         loggedUnavailable = false
         unavailable = false
-        if !Self.recovered {
-            Self.recovered = true
-            let count = s.recoverInFlight()
-            Log.debug("queue", "recovered in-flight rows", data: ["rows": count])
-        }
+        retrySessionDeletes(s)
         purge(s)
         return s
     }
@@ -108,16 +121,34 @@ final class QueueDatabase {
         return flushBuffer(into: s).trimmed
     }
 
-    func onProtectedDataAvailable() {
+    func onProtectedDataAvailable() -> Int {
         dispatchPrecondition(condition: .onQueue(.main))
         failedAtMs = nil
-        guard !buffer.isEmpty, let s = store() else { return }
-        _ = flushBuffer(into: s)
+        guard !buffer.isEmpty, let s = store() else { return 0 }
+        return flushBuffer(into: s).trimmed
     }
 
-    func status() -> QueueStatus? {
+    func probe() -> Int {
         dispatchPrecondition(condition: .onQueue(.main))
-        return store()?.status(excluding: unsettled.deletes)
+        guard failing, let s = store() else { return 0 }
+        settle(s)
+        guard buffer.isEmpty else { return flushBuffer(into: s).trimmed }
+        if insertFailing, saveTargets(s), s.probeWrite() {
+            insertFailing = false
+        }
+        return 0
+    }
+
+    func status(hiding hidden: Set<Int64> = []) -> QueueStatus? {
+        dispatchPrecondition(condition: .onQueue(.main))
+        return store()?.status(excluding: unsettled.deletes.union(hidden))
+    }
+
+    func hasUnsettledDeletes(sessionId: String) -> Bool {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard !unsettled.deletes.isEmpty else { return false }
+        guard let s = store() else { return true }
+        return !s.existing(ids: unsettled.deletes.sorted(), sessionId: sessionId).isEmpty
     }
 
     func delete(_ ids: [Int64]) {
@@ -156,8 +187,16 @@ final class QueueDatabase {
         dispatchPrecondition(condition: .onQueue(.main))
         unsavedTargets[sessionId] = nil
         let buffered = buffer.removeAll { $0.sessionId == sessionId }
-        guard let s = store() else { return buffered }
+        guard let s = store() else {
+            keepUndeleted(sessionId)
+            return buffered
+        }
         let deleted = s.deleteSession(sessionId)
+        guard deleted >= 0 else {
+            keepUndeleted(sessionId)
+            return buffered
+        }
+        undeletedSessions.remove(sessionId)
         prune(s)
         return buffered + deleted
     }
@@ -171,6 +210,20 @@ final class QueueDatabase {
         return s.clear()
     }
 
+    private func keepUndeleted(_ sessionId: String) {
+        undeletedSessions.insert(sessionId)
+        Log.debug("queue", "session delete failed; retried when the database is available", sessionId: sessionId, level: "warn")
+    }
+
+    private func retrySessionDeletes(_ s: QueueStore) {
+        guard !undeletedSessions.isEmpty else { return }
+        for id in undeletedSessions.sorted() where s.deleteSession(id) >= 0 {
+            undeletedSessions.remove(id)
+            Log.debug("queue", "session rows deleted on retry", sessionId: id)
+        }
+        prune(s)
+    }
+
     private func keep(_ p: PendingInsert) -> EnqueueResult {
         guard p.mode == .all else { return .failed }
         let dropped = buffer.append(p)
@@ -180,15 +233,20 @@ final class QueueDatabase {
 
     private func prune(_ s: QueueStore) {
         guard !unsettled.isEmpty else { return }
+        let deletes = unsettled.deletes.count
         unsettled.retain(s.existing(ids: unsettled.ids))
+        if unsettled.deletes.count < deletes { onDeletesSettled?() }
     }
 
     private func settle(_ s: QueueStore) {
+        retrySessionDeletes(s)
         guard !unsettled.isEmpty else { return }
+        let deletes = unsettled.deletes.count
         let settled = unsettled.retry(delete: { s.delete(ids: $0) }, release: { s.release(ids: $0) })
         if settled > 0 {
             Log.debug("queue", "unsettled rows settled", data: ["rows": settled, "unsettled": unsettled.deletes.count + unsettled.releases.count])
         }
+        if unsettled.deletes.count < deletes { onDeletesSettled?() }
     }
 
     private func saveTargets(_ s: QueueStore) -> Bool {

@@ -88,6 +88,8 @@ class Uploader(
     private var syncScheduled = false
     private var endedAttempt = 0
     private var endedRetryAtMs = 0L
+    private var endedRetry: Runnable? = null
+    private var healthProbe: Runnable? = null
     @Volatile private var connection: HttpURLConnection? = null
     private var timer: Runnable? = null
     private var flushDeadline: Runnable? = null
@@ -98,9 +100,16 @@ class Uploader(
 
     val isBusy: Boolean get() = inFlight || flushCompletion != null
 
+    init {
+        queue.onDeletesSettled = {
+            config?.let { syncPendingFix(running(it)) }
+        }
+    }
+
     fun begin(c: SessionConfig, pending: Fix?, lastSuccessMs: Long?) {
         assertMain()
-        reset()
+        clearState()
+        notifySettled()
         fallback.keep(c.id)
         config = c
         this.lastSuccessMs = lastSuccessMs
@@ -116,6 +125,12 @@ class Uploader(
 
     fun reset() {
         assertMain()
+        clearState()
+        evaluateConnectivity()
+        notifySettled()
+    }
+
+    private fun clearState() {
         epoch += 1
         if (inFlightRows.isNotEmpty()) {
             val t = inFlightTarget
@@ -139,6 +154,8 @@ class Uploader(
         credentialsFallbackLogged = false
         endedAttempt = 0
         endedRetryAtMs = 0L
+        cancelEndedRetry()
+        cancelHealthProbe()
         connection?.let { conn -> watchdog.execute { runCatching { conn.disconnect() } } }
         connection = null
         cancelTimer()
@@ -148,8 +165,6 @@ class Uploader(
         lastSuccessMs = null
         attempt = 0
         flushCompletion = null
-        evaluateConnectivity()
-        notifySettled()
     }
 
     fun discardFallback() {
@@ -180,6 +195,7 @@ class Uploader(
         attempt = 0
         endedAttempt = 0
         endedRetryAtMs = 0L
+        cancelEndedRetry()
         refreshHold = false
         val c = config
         if (c == null) {
@@ -214,6 +230,7 @@ class Uploader(
         dirty = false
         pass = Pass(waiters + deferred)
         deferred.clear()
+        cancelEndedRetry()
         if (config == null) cancelTimer()
         refreshed.retainAll { it == config?.id }
         if (budgetMs != null) {
@@ -234,12 +251,39 @@ class Uploader(
         val q = queue.store()
         val running = config?.id
         val id = if (flushCompletion == null) q?.nextSession(running) else null
-        val t = if (id != null && id != running) q?.target(id) else null
-        if (t == null || !t.ended) {
+        if (q == null || id == null || id == running) {
             endPass(PassEnd.DONE)
             return
         }
-        send(ended(t))
+        val t = try {
+            q.readTarget(id)
+        } catch (e: QueueStoreException) {
+            endPass(PassEnd.DONE)
+            return
+        }
+        when {
+            t == null -> dropUnreadableSession(id)
+            !t.ended -> endPass(PassEnd.DONE)
+            else -> send(ended(t))
+        }
+    }
+
+    private fun dropUnreadableSession(id: String) {
+        val deleted = queue.deleteSession(id)
+        if (deleted <= 0) {
+            endPass(PassEnd.DONE)
+            return
+        }
+        credentials.remove(id)
+        ElsLog.debug("queue", "unreadable session dropped", mapOf("rows" to deleted), id, level = "warn")
+        events.emit(
+            "error",
+            JSONObject()
+                .put("code", "UPLOAD_DROPPED")
+                .put("message", "Queued session unreadable; $deleted location${if (deleted == 1) "" else "s"} dropped")
+                .put("sessionId", id)
+        )
+        drainNext()
     }
 
     private fun drainBudgetReached() {
@@ -289,6 +333,7 @@ class Uploader(
             endedAttempt += 1
             endedRetryAtMs = nowMs() + delay
             ElsLog.debug("sync", "drain retry deferred", mapOf("backoffMs" to delay), config?.id)
+            armEndedRetry(delay)
         } else if (end == PassEnd.DONE) {
             syncScheduled = false
         }
@@ -300,6 +345,22 @@ class Uploader(
         }
         waiters.forEach { it.done(total - it.base) }
         notifySettled()
+    }
+
+    private fun armEndedRetry(delayMs: Long) {
+        cancelEndedRetry()
+        val r = Runnable {
+            endedRetry = null
+            endedRetryAtMs = 0L
+            drainIfIdle()
+        }
+        endedRetry = r
+        main.postDelayed(r, maxOf(0L, delayMs))
+    }
+
+    private fun cancelEndedRetry() {
+        endedRetry?.let { main.removeCallbacks(it) }
+        endedRetry = null
     }
 
     private fun cancelDrainBudget() {
@@ -345,6 +406,33 @@ class Uploader(
         config?.let { reportQueueHealth(it, trimmed) }
     }
 
+    fun hiddenRows(): Set<Long> {
+        assertMain()
+        val c = config ?: return emptySet()
+        if (c.sync.mode != QueueMode.LATEST) return emptySet()
+        val row = queue.store()?.latestPending(c.id) ?: return emptySet()
+        return if (fallback.supersedes(c.id, row.fixTs)) setOf(row.id) else emptySet()
+    }
+
+    private fun armHealthProbe() {
+        cancelHealthProbe()
+        val r = Runnable {
+            healthProbe = null
+            val c = config
+            if (c != null && queueUnavailableReported) {
+                reportQueueHealth(c, queue.probe())
+                if (queueUnavailableReported) armHealthProbe()
+            }
+        }
+        healthProbe = r
+        main.postDelayed(r, HEALTH_PROBE_MS)
+    }
+
+    private fun cancelHealthProbe() {
+        healthProbe?.let { main.removeCallbacks(it) }
+        healthProbe = null
+    }
+
     private fun reportQueueHealth(c: SessionConfig, trimmed: Int) {
         val failing = queue.failing
         if (failing && !queueUnavailableReported) {
@@ -366,8 +454,10 @@ class Uploader(
                 },
                 c.id
             )
+            armHealthProbe()
         } else if (queueUnavailableReported && !failing && queue.isOpen) {
             queueUnavailableReported = false
+            cancelHealthProbe()
             ElsLog.debug("queue", "database available again", sessionId = c.id)
             events.clearStickyError("QUEUE_UNAVAILABLE")
         }
@@ -447,6 +537,10 @@ class Uploader(
         }
         if (body == null) {
             ElsLog.debug("queue", "could not encode location", mapOf("fixTimestamp" to fix.timestampMs), c.id, level = "warn")
+            events.emit(
+                "error",
+                JSONObject().put("code", "UPLOAD_DROPPED").put("message", "Location could not be encoded; location dropped").put("sessionId", c.id)
+            )
             return 0
         }
         return when (val result = queue.enqueue(PendingInsert(c.id, uuid, fix.timestampMs, body, c.sync.mode, c.sync.maxRecords))) {
@@ -493,9 +587,16 @@ class Uploader(
 
     private fun syncPendingFix(t: Target) {
         if (t.ended || t.sync.mode != QueueMode.LATEST) return
+        var row: QueuedRow? = null
         val q = queue.store()
-        val row = q?.latestPending(t.id)
-        store.pendingFix = fallback.pendingFix(t.id, row?.fixTs, row?.let { decodeFix(it.body) }, q != null)
+        val readable = q != null && try {
+            row = q.newestPending(t.id)
+            true
+        } catch (e: QueueStoreException) {
+            false
+        }
+        val fix = fallback.pendingFix(t.id, row?.fixTs, row?.let { decodeFix(it.body) }, readable)
+        if (fix != null || (readable && !queue.hasUnsettledDeletes(t.id))) store.pendingFix = fix
     }
 
     private fun giveBack(ids: List<Long>, t: Target) {
@@ -613,7 +714,12 @@ class Uploader(
             }
         }
         if (rows.isEmpty()) {
-            sendFailed(t)
+            if (rowsRemain(q, t.id)) {
+                ElsLog.debug("queue", "claim failed; retrying", sessionId = t.id, level = "warn")
+                retryLater(t)
+            } else {
+                sendFailed(t)
+            }
             return
         }
         val elements = ArrayList<String>()
@@ -644,6 +750,12 @@ class Uploader(
             return
         }
         upload(t, elements, sent.map { it.id }, null, sent.first().fixTs)
+    }
+
+    private fun rowsRemain(q: QueueStore, sessionId: String): Boolean = try {
+        q.newestPending(sessionId) != null
+    } catch (e: QueueStoreException) {
+        true
     }
 
     private fun upload(t: Target, elements: List<String>, ids: List<Long>, generation: Int?, fixTs: Long) {
@@ -852,8 +964,9 @@ class Uploader(
                 return
             }
         }
-        if (!t.ended) resolveDeferredIfBlocked()
+        val blocked = if (t.ended) emptyList() else blockedWaiters()
         continueAfterSend(t)
+        resolve(blocked)
         notifySettled()
     }
 
@@ -863,16 +976,21 @@ class Uploader(
         if (t.ended) {
             endPass(PassEnd.RETRY)
         } else {
-            resolveDeferredIfBlocked()
+            val blocked = blockedWaiters()
             scheduleRetry()
+            resolve(blocked)
         }
     }
 
-    private fun resolveDeferredIfBlocked() {
-        val c = config ?: return
-        if (deferred.isEmpty() || !hasPending(c)) return
+    private fun blockedWaiters(): List<Waiter> {
+        val c = config ?: return emptyList()
+        if (deferred.isEmpty() || !hasPending(c)) return emptyList()
         val waiters = deferred.toList()
         deferred.clear()
+        return waiters
+    }
+
+    private fun resolve(waiters: List<Waiter>) {
         val total = drained
         waiters.forEach { it.done(total - it.base) }
     }
@@ -1011,6 +1129,7 @@ class Uploader(
 
     private companion object {
         const val TIMEOUT_MS = 20_000
+        const val HEALTH_PROBE_MS = 30_000L
     }
 }
 

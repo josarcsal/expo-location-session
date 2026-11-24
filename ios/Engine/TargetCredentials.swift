@@ -36,11 +36,14 @@ final class TargetCredentials {
         q[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
         let status = SecItemCopyMatching(q as CFDictionary, &item)
-        guard status == errSecSuccess, let data = item as? Data,
-              let stored = try? JSONDecoder().decode(Stored.self, from: data) else {
+        guard status == errSecSuccess, let data = item as? Data else {
             if status != errSecSuccess, status != errSecItemNotFound {
                 Log.debug("auth", "credentials read failed", data: ["status": Int(status)], sessionId: sessionId, level: "warn")
             }
+            return nil
+        }
+        guard let stored = try? JSONDecoder().decode(Stored.self, from: data) else {
+            Log.debug("auth", "credentials unreadable", sessionId: sessionId, level: "warn")
             return nil
         }
         return (stored.headers, stored.refreshHeaders)

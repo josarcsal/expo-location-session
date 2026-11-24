@@ -32,10 +32,13 @@ class QueueDatabase(context: Context, private val file: File, private val clock:
     private val buffer = BoundedBuffer<PendingInsert>(500)
     private var unsettled = UnsettledRows()
     private val unsavedTargets = sortedMapOf<String, QueueTarget>()
+    private val undeletedSessions = sortedSetOf<String>()
     private var loggedUnavailable = false
     private var insertFailing = false
     @Volatile var unavailable = false
         private set
+
+    var onDeletesSettled: (() -> Unit)? = null
 
     val isOpen: Boolean
         @Synchronized get() = opened != null
@@ -62,14 +65,26 @@ class QueueDatabase(context: Context, private val file: File, private val clock:
             }
             return null
         }
+        if (!recovered.get()) {
+            val rows = s.recoverInFlight()
+            if (rows < 0) {
+                s.close()
+                failedAtMs = clock()
+                unavailable = true
+                if (!loggedUnavailable) {
+                    loggedUnavailable = true
+                    ElsLog.debug("queue", "in-flight recovery failed; database unavailable", level = "warn")
+                }
+                return null
+            }
+            recovered.set(true)
+            ElsLog.debug("queue", "recovered in-flight rows", mapOf("rows" to rows))
+        }
         opened = s
         failedAtMs = null
         loggedUnavailable = false
         unavailable = false
-        if (recovered.compareAndSet(false, true)) {
-            val rows = s.recoverInFlight()
-            ElsLog.debug("queue", "recovered in-flight rows", mapOf("rows" to rows))
-        }
+        retrySessionDeletes(s)
         purge(s)
         return s
     }
@@ -121,7 +136,25 @@ class QueueDatabase(context: Context, private val file: File, private val clock:
     }
 
     @Synchronized
-    fun status(): QueueStatus? = store()?.status(unsettled.deletes)
+    fun probe(): Int {
+        if (!failing) return 0
+        val s = store() ?: return 0
+        settle(s)
+        if (!buffer.isEmpty) return flushBuffer(s).second
+        if (insertFailing && saveTargets(s) && s.probeWrite()) insertFailing = false
+        return 0
+    }
+
+    @Synchronized
+    fun status(hidden: Set<Long> = emptySet()): QueueStatus? = store()?.status(unsettled.deletes + hidden)
+
+    @Synchronized
+    fun hasUnsettledDeletes(sessionId: String): Boolean {
+        val deletes = unsettled.deletes
+        if (deletes.isEmpty()) return false
+        val s = store() ?: return true
+        return s.existing(deletes.sorted(), sessionId).isNotEmpty()
+    }
 
     @Synchronized
     fun delete(ids: List<Long>) {
@@ -159,8 +192,13 @@ class QueueDatabase(context: Context, private val file: File, private val clock:
     fun deleteSession(sessionId: String): Int {
         unsavedTargets.remove(sessionId)
         val buffered = buffer.removeAll { it.sessionId == sessionId }
-        val s = store() ?: return buffered
-        val deleted = s.deleteSession(sessionId)
+        val s = store()
+        val deleted = s?.deleteSession(sessionId) ?: -1
+        if (s == null || deleted < 0) {
+            keepUndeleted(sessionId)
+            return buffered
+        }
+        undeletedSessions.remove(sessionId)
         prune(s)
         return buffered + deleted
     }
@@ -174,6 +212,22 @@ class QueueDatabase(context: Context, private val file: File, private val clock:
         return s.clear()
     }
 
+    private fun keepUndeleted(sessionId: String) {
+        undeletedSessions.add(sessionId)
+        ElsLog.debug("queue", "session delete failed; retried when the database is available", sessionId = sessionId, level = "warn")
+    }
+
+    private fun retrySessionDeletes(s: QueueStore) {
+        if (undeletedSessions.isEmpty()) return
+        for (id in undeletedSessions.toList()) {
+            if (s.deleteSession(id) >= 0) {
+                undeletedSessions.remove(id)
+                ElsLog.debug("queue", "session rows deleted on retry", sessionId = id)
+            }
+        }
+        prune(s)
+    }
+
     private fun keep(p: PendingInsert): EnqueueResult {
         if (p.mode != QueueMode.ALL) return EnqueueResult.Failed
         val dropped = buffer.append(p)
@@ -183,15 +237,20 @@ class QueueDatabase(context: Context, private val file: File, private val clock:
 
     private fun prune(s: QueueStore) {
         if (unsettled.isEmpty) return
+        val deletes = unsettled.deletes.size
         unsettled.retain(s.existing(unsettled.ids))
+        if (unsettled.deletes.size < deletes) onDeletesSettled?.invoke()
     }
 
     private fun settle(s: QueueStore) {
+        retrySessionDeletes(s)
         if (unsettled.isEmpty) return
+        val deletes = unsettled.deletes.size
         val settled = unsettled.retry({ s.delete(it) }, { s.release(it) })
         if (settled > 0) {
             ElsLog.debug("queue", "unsettled rows settled", mapOf("rows" to settled, "unsettled" to unsettled.deletes.size + unsettled.releases.size))
         }
+        if (unsettled.deletes.size < deletes) onDeletesSettled?.invoke()
     }
 
     private fun saveTargets(s: QueueStore): Boolean {

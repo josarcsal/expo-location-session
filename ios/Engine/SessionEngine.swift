@@ -44,12 +44,9 @@ final class SessionEngine {
         source.onAuthorizationChange = { [weak self] in self?.authorizationChanged($0) }
         source.onAccuracyChange = { [weak self] in self?.accuracyChanged($0) }
         _ = NotificationCenter.default.addObserver(forName: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.queue.onProtectedDataAvailable()
-            self?.uploader.pump()
+            self?.uploader.protectedDataAvailable()
         }
-        _ = NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.uploader.drain(budgetMs: nil) { _ in }
-        }
+        observeForeground()
         if BackgroundSync.isPermitted {
             _ = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
                 self?.submitBackgroundSync()
@@ -130,7 +127,7 @@ final class SessionEngine {
 
     func queueStatus() throws -> QueueStatus {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard let status = queue.status() else {
+        guard let status = queue.status(hiding: uploader.hiddenRows()) else {
             throw LocationSessionError(code: "INTERNAL", message: "queue storage is not available")
         }
         return status

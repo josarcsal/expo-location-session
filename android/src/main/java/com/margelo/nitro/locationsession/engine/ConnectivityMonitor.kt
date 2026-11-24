@@ -16,10 +16,12 @@ class ConnectivityMonitor(context: Context) {
     private var current: Network? = null
     private var pending: Runnable? = null
     private var generation = 0
+    private var registerFailedAtMs: Long? = null
 
     fun start(onRegained: () -> Unit) {
         assertMain()
         if (callback != null || manager == null) return
+        registerFailedAtMs?.let { if (nowMs() - it < REGISTER_RETRY_MS) return }
         generation += 1
         val gen = generation
         edge = ConnectivityEdge()
@@ -45,8 +47,12 @@ class ConnectivityMonitor(context: Context) {
         try {
             manager.registerDefaultNetworkCallback(cb)
             callback = cb
+            registerFailedAtMs = null
         } catch (e: RuntimeException) {
-            ElsLog.debug("sync", "connectivity callback unavailable", mapOf("error" to e.javaClass.simpleName), level = "warn")
+            if (registerFailedAtMs == null) {
+                ElsLog.debug("sync", "connectivity callback unavailable", mapOf("error" to e.javaClass.simpleName), level = "warn")
+            }
+            registerFailedAtMs = nowMs()
         }
     }
 
@@ -86,5 +92,6 @@ class ConnectivityMonitor(context: Context) {
 
     private companion object {
         const val REGAIN_DELAY_MS = 1_000L
+        const val REGISTER_RETRY_MS = 60_000L
     }
 }

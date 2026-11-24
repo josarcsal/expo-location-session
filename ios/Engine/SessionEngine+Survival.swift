@@ -52,6 +52,7 @@ extension SessionEngine {
             source.stop()
         case let .session(c, startedAt):
             stopWaitingForProtectedData()
+            endLeftoverTargets(except: c.id)
             Log.info("store", "persisted session \(c.id) protectedData=\(protectedData) regionsAtLaunch=\(source.monitoredRegionIds)", sessionId: c.id)
             if nowMs() >= c.expiresAtMs {
                 teardown(c, .expired)
@@ -67,8 +68,8 @@ extension SessionEngine {
         uploader.drain(budgetMs: nil) { _ in }
     }
 
-    private func endLeftoverTargets() {
-        guard let removed = queue.store()?.endLeftovers() else { return }
+    private func endLeftoverTargets(except running: String? = nil) {
+        guard let removed = queue.store()?.endLeftovers(except: running) else { return }
         removed.forEach { credentials.remove(sessionId: $0) }
         if !removed.isEmpty {
             Log.debug("queue", "leftover latest-mode sessions deleted", data: ["targets": removed.count])
@@ -94,6 +95,12 @@ extension SessionEngine {
     private func stopWaitingForProtectedData() {
         protectedDataObservers.forEach { NotificationCenter.default.removeObserver($0) }
         protectedDataObservers.removeAll()
+    }
+
+    func observeForeground() {
+        _ = NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.uploader.drain(budgetMs: nil) { _ in }
+        }
     }
 
     func observeTermination() {
