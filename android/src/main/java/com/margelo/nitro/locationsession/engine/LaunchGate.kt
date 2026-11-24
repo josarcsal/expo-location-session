@@ -107,8 +107,12 @@ class LaunchGate : BroadcastReceiver() {
                         finish()
                     }
                     Kind.PACKAGE_REPLACED -> {
-                        Handler(Looper.getMainLooper()).postDelayed({ finish() }, PACKAGE_REPLACED_DRAIN_BUDGET_MS)
-                        SessionEngine.syncQueue(ctx, PACKAGE_REPLACED_DRAIN_BUDGET_MS) { finish() }
+                        val budget = Handler(Looper.getMainLooper())
+                        budget.postDelayed({ finish() }, PACKAGE_REPLACED_DRAIN_BUDGET_MS)
+                        SessionEngine.syncQueue(ctx, PACKAGE_REPLACED_DRAIN_BUDGET_MS) {
+                            budget.removeCallbacksAndMessages(null)
+                            finish()
+                        }
                     }
                     else -> finish()
                 }
