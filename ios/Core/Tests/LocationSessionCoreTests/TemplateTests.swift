@@ -101,6 +101,27 @@ import Testing
         #expect(validateTemplate(#" {"a":[true,false,null,-0.5e+3,1E2,0,"\n\"é","é",{},[]]} "#, extrasJson: "{}") == nil)
     }
 
+    @Test(arguments: [
+        #"{"a":1,}"#, #"{"a":[1,2,],}"#, "\u{FEFF}{\"a\":1}", "\u{FEFF} {\"a\":[1,]}",
+    ])
+    func trailingCommasAndLeadingBomAreAccepted(_ json: String) {
+        #expect(validateTemplate(json, extrasJson: "{}") == nil)
+    }
+
+    @Test(arguments: [
+        #"{,}"#, #"{"a":[,]}"#, #"{"a":1,,}"#, #"{"a":[1,,]}"#, #"[1,]"#, " \u{FEFF}{\"a\":1}", "{\"a\":1}\u{FEFF}", "\u{FEFF}\u{FEFF}{}",
+    ])
+    func misplacedCommasAndBomAreRejected(_ json: String) {
+        #expect(validateTemplate(json, extrasJson: "{}") == "must be a JSON object")
+    }
+
+    @Test func trailingCommasAreDroppedWhenRendering() throws {
+        let o = try obj(renderTemplate("\u{FEFF}{\"a\":[1,],\"s\":\"{{sessionId}}\",}", record: rec, extrasJson: #"{"k":1,}"#))
+        #expect(o["a"] as? [Int] == [1])
+        #expect(o["s"] as? String == "s1")
+        #expect(o.count == 2)
+    }
+
     @Test func emptyTemplateIsRequired() {
         #expect(validateSync(SyncConfig(templateJson: ""), extrasJson: "{}") == "body.template is required")
     }

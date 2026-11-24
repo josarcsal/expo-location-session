@@ -48,9 +48,9 @@ private fun segmentsOf(s: String): List<Segment>? {
 }
 
 internal fun parseObject(json: String): JSONObject? {
-    if (!StrictJson(json).isObject()) return null
+    val strict = StrictJson(json).normalizedObject() ?: return null
     return try {
-        val tokener = JSONTokener(json)
+        val tokener = JSONTokener(strict)
         val value = tokener.nextValue() as? JSONObject
         if (value != null && tokener.nextClean() != 0.toChar()) null else value
     } catch (e: Exception) {
@@ -60,12 +60,34 @@ internal fun parseObject(json: String): JSONObject? {
 
 private class StrictJson(private val s: String) {
     private var i = 0
+    private val dropped = mutableListOf<Int>()
 
-    fun isObject(): Boolean {
+    fun normalizedObject(): String? {
+        if (peek() == '\uFEFF') {
+            dropped.add(i)
+            i++
+        }
         skipSpace()
-        if (peek() != '{' || !value()) return false
+        if (peek() != '{' || !value()) return null
         skipSpace()
-        return i == s.length
+        if (i != s.length) return null
+        if (dropped.isEmpty()) return s
+        val out = StringBuilder(s.length)
+        var from = 0
+        for (at in dropped) {
+            out.append(s, from, at)
+            from = at + 1
+        }
+        return out.append(s, from, s.length).toString()
+    }
+
+    private fun trailingComma(close: Char): Boolean {
+        val comma = i - 1
+        skipSpace()
+        if (peek() != close) return false
+        dropped.add(comma)
+        i++
+        return true
     }
 
     private fun peek(): Char? = if (i < s.length) s[i] else null
@@ -103,7 +125,10 @@ private class StrictJson(private val s: String) {
             if (!value()) return false
             skipSpace()
             when (peek()) {
-                ',' -> i++
+                ',' -> {
+                    i++
+                    if (trailingComma('}')) return true
+                }
                 '}' -> {
                     i++
                     return true
@@ -124,7 +149,10 @@ private class StrictJson(private val s: String) {
             if (!value()) return false
             skipSpace()
             when (peek()) {
-                ',' -> i++
+                ',' -> {
+                    i++
+                    if (trailingComma(']')) return true
+                }
                 ']' -> {
                     i++
                     return true

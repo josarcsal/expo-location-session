@@ -133,6 +133,28 @@ class TemplateTest {
     }
 
     @Test
+    fun trailingCommasAndLeadingBomAreAccepted() {
+        val vectors = listOf("""{"a":1,}""", """{"a":[1,2,],}""", "\uFEFF{\"a\":1}", "\uFEFF {\"a\":[1,]}")
+        for (json in vectors) assertNull(json, validateTemplate(json, "{}"))
+    }
+
+    @Test
+    fun misplacedCommasAndBomAreRejected() {
+        val vectors = listOf(
+            """{,}""", """{"a":[,]}""", """{"a":1,,}""", """{"a":[1,,]}""", """[1,]""", " \uFEFF{\"a\":1}", "{\"a\":1}\uFEFF", "\uFEFF\uFEFF{}"
+        )
+        for (json in vectors) assertEquals(json, "must be a JSON object", validateTemplate(json, "{}"))
+    }
+
+    @Test
+    fun trailingCommasAreDroppedWhenRendering() {
+        val o = obj(renderTemplate("\uFEFF{\"a\":[1,],\"s\":\"{{sessionId}}\",}", rec, """{"k":1,}"""))
+        assertEquals(listOf(1), (0 until o.getJSONArray("a").length()).map { o.getJSONArray("a").getInt(it) })
+        assertEquals("s1", o.getString("s"))
+        assertEquals(2, o.length())
+    }
+
+    @Test
     fun emptyTemplateIsRequired() {
         assertEquals("body.template is required", validateSync(SyncConfig(templateJson = ""), "{}"))
     }
