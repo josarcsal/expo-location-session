@@ -59,3 +59,14 @@ public func refreshRequestBody(bodyJson: String?, sessionId: String) -> Data {
     if let bodyJson { return Data(bodyJson.utf8) }
     return (try? JSONSerialization.data(withJSONObject: ["sessionId": sessionId])) ?? Data()
 }
+
+public struct ConnectivityEdge {
+    private var satisfied: Bool?
+
+    public init() {}
+
+    public mutating func update(satisfied now: Bool) -> Bool {
+        defer { satisfied = now }
+        return satisfied == false && now
+    }
+}

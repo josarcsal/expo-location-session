@@ -97,3 +97,19 @@ class RefreshContractTest {
         assertEquals("""{"k":"v"}""", refreshRequestBody("""{"k":"v"}""", "s1"))
     }
 }
+
+class ConnectivityEdgeTest {
+    @Test
+    fun firesOnlyOnRegain() {
+        val cases = listOf(
+            listOf(true) to listOf(false),
+            listOf(false, true) to listOf(false, true),
+            listOf(true, false, true, true) to listOf(false, false, true, false),
+            listOf(false, false) to listOf(false, false)
+        )
+        for ((inputs, expected) in cases) {
+            val e = ConnectivityEdge()
+            assertEquals("$inputs", expected, inputs.map { e.update(it) })
+        }
+    }
+}

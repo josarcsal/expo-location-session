@@ -76,3 +76,14 @@ import Testing
         #expect(refreshRequestBody(bodyJson: #"{"k":"v"}"#, sessionId: "s1") == Data(#"{"k":"v"}"#.utf8))
     }
 }
+
+@Suite struct ConnectivityEdgeTests {
+    @Test(arguments: [
+        ([true], [false]), ([false, true], [false, true]),
+        ([true, false, true, true], [false, false, true, false]), ([false, false], [false, false]),
+    ])
+    func firesOnlyOnRegain(inputs: [Bool], expected: [Bool]) {
+        var e = ConnectivityEdge()
+        #expect(inputs.map { e.update(satisfied: $0) } == expected)
+    }
+}

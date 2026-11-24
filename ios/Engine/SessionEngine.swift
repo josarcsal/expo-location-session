@@ -91,6 +91,7 @@ final class SessionEngine {
         uploader.reset()
         let deleted = queue.store()?.deleteSession(c.id) ?? 0
         Log.debug("queue", "session rows deleted", data: ["rows": deleted], sessionId: c.id)
+        uploader.evaluateConnectivity()
         credentials.remove(sessionId: c.id)
         store.wipe()
         store.lastStop = LastStop(reason: reason, atMs: nowMs(), sessionId: c.id)

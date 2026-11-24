@@ -313,6 +313,7 @@ object SessionEngine {
         uploader.reset()
         val deleted = queue.store()?.deleteSession(c.id) ?: 0
         ElsLog.debug("queue", "session rows deleted", mapOf("rows" to deleted), c.id)
+        uploader.evaluateConnectivity()
         credentials.remove(c.id)
         store.wipe()
         config = null

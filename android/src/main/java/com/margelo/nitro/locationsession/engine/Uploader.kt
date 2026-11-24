@@ -44,6 +44,7 @@ class Uploader(
 
     private val appContext = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
+    private val connectivity = ConnectivityMonitor(context)
     private val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "expo-location-session.upload") }
     private val watchdog = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "expo-location-session.upload-watchdog") }
 
@@ -70,6 +71,7 @@ class Uploader(
         reset()
         config = c
         this.lastSuccessMs = lastSuccessMs
+        evaluateConnectivity()
         if (c.sync.mode != QueueMode.LATEST) return
         val fix = pending?.let(::sanitized) ?: return
         val q = queue.store() ?: return
@@ -97,7 +99,34 @@ class Uploader(
         lastSuccessMs = null
         attempt = 0
         flushCompletion = null
+        evaluateConnectivity()
         notifySettled()
+    }
+
+    fun evaluateConnectivity() {
+        assertMain()
+        if (config != null || (queue.store()?.status()?.pending ?: 0) > 0) {
+            connectivity.start { connectivityRegained() }
+        } else {
+            connectivity.stop()
+        }
+    }
+
+    private fun connectivityRegained() {
+        ElsLog.debug(
+            "sync",
+            "connectivity regained",
+            mapOf("running" to (config != null), "inFlight" to inFlight, "flush" to (flushCompletion != null), "attempt" to attempt),
+            config?.id
+        )
+        if (config == null) {
+            evaluateConnectivity()
+            return
+        }
+        attempt = 0
+        if (inFlight) return
+        cancelTimer()
+        if (flushCompletion != null) send() else pump()
     }
 
     fun put(fix: Fix) {

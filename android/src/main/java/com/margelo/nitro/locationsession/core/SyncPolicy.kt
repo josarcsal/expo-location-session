@@ -56,3 +56,13 @@ fun parseRefreshResponse(status: Int?, body: String): RefreshResult? {
 
 fun refreshRequestBody(bodyJson: String?, sessionId: String): String =
     bodyJson ?: JSONObject().put("sessionId", sessionId).toString()
+
+class ConnectivityEdge {
+    private var satisfied: Boolean? = null
+
+    fun update(satisfied: Boolean): Boolean {
+        val regained = this.satisfied == false && satisfied
+        this.satisfied = satisfied
+        return regained
+    }
+}

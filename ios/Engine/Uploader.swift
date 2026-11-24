@@ -13,6 +13,7 @@ final class Uploader {
     private let events: EventBus
     private let db: QueueDatabase
     private let credentials: TargetCredentials
+    private let connectivity = ConnectivityMonitor()
     private let session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 20
@@ -56,6 +57,7 @@ final class Uploader {
             UIDevice.current.isBatteryMonitoringEnabled = true
             ownsBatteryMonitoring = true
         }
+        evaluateConnectivity()
         guard c.sync.mode == .latest, let fix = pending.flatMap(sanitized) else { return }
         if let q = db.store(), q.latestPending(sessionId: c.id) != nil { return }
         enqueue(fix, c)
@@ -84,6 +86,33 @@ final class Uploader {
         if ownsBatteryMonitoring {
             UIDevice.current.isBatteryMonitoringEnabled = false
             ownsBatteryMonitoring = false
+        }
+        evaluateConnectivity()
+    }
+
+    func evaluateConnectivity() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        if config != nil || (db.store()?.status().pending ?? 0) > 0 {
+            connectivity.start { [weak self] in self?.connectivityRegained() }
+        } else {
+            connectivity.stop()
+        }
+    }
+
+    private func connectivityRegained() {
+        Log.debug("sync", "connectivity regained", data: ["running": config != nil, "inFlight": inFlight != nil, "flush": flushCompletion != nil, "attempt": attempt], sessionId: config?.id)
+        guard config != nil else {
+            evaluateConnectivity()
+            return
+        }
+        attempt = 0
+        guard inFlight == nil else { return }
+        timer?.invalidate()
+        timer = nil
+        if flushCompletion != nil {
+            send()
+        } else {
+            pump()
         }
     }
 
