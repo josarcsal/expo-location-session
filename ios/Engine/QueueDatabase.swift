@@ -10,6 +10,12 @@ struct PendingInsert {
     let maxRecords: Int
 }
 
+enum EnqueueResult {
+    case stored(trimmed: Int)
+    case buffered(dropped: Bool)
+    case failed
+}
+
 final class QueueDatabase {
     static let shared = QueueDatabase()
 
@@ -21,10 +27,15 @@ final class QueueDatabase {
     private var opened: QueueStore?
     private var failedAtMs: Int64?
     private var buffer = BoundedBuffer<PendingInsert>(capacity: 500)
+    private var unsettled = UnsettledRows()
+    private var unsavedTargets: [String: QueueTarget] = [:]
     private var loggedUnavailable = false
+    private var insertFailing = false
     private(set) var unavailable = false
 
     var isOpen: Bool { opened != nil }
+    var failing: Bool { unavailable || insertFailing }
+    var buffered: Int { buffer.count }
 
     private init() {}
 
@@ -63,49 +74,144 @@ final class QueueDatabase {
         }
     }
 
-    func enqueue(_ p: PendingInsert) -> Int {
+    func enqueue(_ p: PendingInsert) -> EnqueueResult {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard let s = store() else { return bufferInsert(p) }
-        drainBuffer(into: s)
+        guard let s = store() else { return keep(p) }
+        settle(s)
+        let flushed = flushBuffer(into: s)
+        guard flushed.done, saveTargets(s) else {
+            insertFailing = true
+            return keep(p)
+        }
         do {
             let trimmed = try s.insert(sessionId: p.sessionId, uuid: p.uuid, fixTs: p.fixTs, body: p.body, mode: p.mode, maxRecords: p.maxRecords)
+            insertFailing = false
             Log.debug("queue", "inserted", data: ["mode": p.mode.rawValue, "fixTimestamp": p.fixTs, "trimmed": trimmed], sessionId: p.sessionId)
             if trimmed > 0 {
                 Log.debug("queue", "trimmed", data: ["rows": trimmed, "maxRecords": p.maxRecords], sessionId: p.sessionId, level: "warn")
             }
-            return trimmed
+            return .stored(trimmed: flushed.trimmed + trimmed)
         } catch {
-            Log.debug("queue", "insert failed", data: ["error": "\(error)"], sessionId: p.sessionId, level: "warn")
-            return bufferInsert(p)
+            if !insertFailing {
+                insertFailing = true
+                Log.debug("queue", "insert failed", data: ["error": "\(error)"], sessionId: p.sessionId, level: "warn")
+            }
+            return keep(p)
         }
+    }
+
+    func prepareSend() -> Int {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let s = store() else { return 0 }
+        settle(s)
+        return flushBuffer(into: s).trimmed
     }
 
     func onProtectedDataAvailable() {
         dispatchPrecondition(condition: .onQueue(.main))
         failedAtMs = nil
-        guard buffer.count > 0, let s = store() else { return }
-        drainBuffer(into: s)
+        guard !buffer.isEmpty, let s = store() else { return }
+        _ = flushBuffer(into: s)
     }
 
-    private func bufferInsert(_ p: PendingInsert) -> Int {
+    func status() -> QueueStatus? {
+        dispatchPrecondition(condition: .onQueue(.main))
+        return store()?.status(excluding: unsettled.deletes)
+    }
+
+    func delete(_ ids: [Int64]) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard !ids.isEmpty else { return }
+        let s = store()
+        if !unsettled.delete(ids, { s?.delete(ids: $0) ?? false }) {
+            Log.debug("queue", "delete failed; rows kept as sent", data: ["rows": ids.count, "unsettled": unsettled.deletes.count], level: "warn")
+        }
+    }
+
+    func release(_ ids: [Int64]) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard !ids.isEmpty else { return }
+        let s = store()
+        if !unsettled.release(ids, { s?.release(ids: $0) ?? false }) {
+            Log.debug("queue", "release failed; rows kept in flight", data: ["rows": ids.count, "unsettled": unsettled.releases.count], level: "warn")
+        }
+    }
+
+    func saveTarget(_ t: QueueTarget) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        unsavedTargets[t.sessionId] = t
+        if store().map(saveTargets) != true {
+            Log.debug("queue", "target save deferred", sessionId: t.sessionId, level: "warn")
+        }
+    }
+
+    func markEnded(_ sessionId: String) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        unsavedTargets[sessionId]?.ended = true
+        store()?.markEnded(sessionId)
+    }
+
+    func deleteSession(_ sessionId: String) -> Int {
+        dispatchPrecondition(condition: .onQueue(.main))
+        unsavedTargets[sessionId] = nil
+        let buffered = buffer.removeAll { $0.sessionId == sessionId }
+        return buffered + (store()?.deleteSession(sessionId) ?? 0)
+    }
+
+    func clear() -> [String]? {
+        dispatchPrecondition(condition: .onQueue(.main))
+        _ = buffer.drain()
+        unsavedTargets = unsavedTargets.filter { !$0.value.ended }
+        guard let s = store() else { return nil }
+        unsettled = UnsettledRows()
+        return s.clear()
+    }
+
+    private func keep(_ p: PendingInsert) -> EnqueueResult {
+        guard p.mode == .all else { return .failed }
         let dropped = buffer.append(p)
         Log.debug("queue", "buffered", data: ["buffered": buffer.count, "dropped": dropped], sessionId: p.sessionId, level: dropped ? "warn" : "debug")
-        return dropped ? 1 : 0
+        return .buffered(dropped: dropped)
     }
 
-    private func drainBuffer(into s: QueueStore) {
-        guard buffer.count > 0 else { return }
-        let pending = buffer.drain()
-        var trimmed = 0
-        var failed = 0
-        for p in pending {
+    private func settle(_ s: QueueStore) {
+        guard !unsettled.isEmpty else { return }
+        let settled = unsettled.retry(delete: { s.delete(ids: $0) }, release: { s.release(ids: $0) })
+        if settled > 0 {
+            Log.debug("queue", "unsettled rows settled", data: ["rows": settled, "unsettled": unsettled.deletes.count + unsettled.releases.count])
+        }
+    }
+
+    private func saveTargets(_ s: QueueStore) -> Bool {
+        for id in unsavedTargets.keys.sorted() {
+            guard let t = unsavedTargets[id] else { continue }
             do {
-                trimmed += try s.insert(sessionId: p.sessionId, uuid: p.uuid, fixTs: p.fixTs, body: p.body, mode: p.mode, maxRecords: p.maxRecords)
+                try s.saveTarget(t)
+                unsavedTargets[id] = nil
             } catch {
-                failed += 1
+                return false
             }
         }
-        Log.debug("queue", "buffer drained", data: ["rows": pending.count, "trimmed": trimmed, "failed": failed], level: failed > 0 ? "warn" : "debug")
+        return true
+    }
+
+    private func flushBuffer(into s: QueueStore) -> (done: Bool, trimmed: Int) {
+        guard !buffer.isEmpty else { return (true, 0) }
+        guard saveTargets(s) else {
+            insertFailing = true
+            return (false, 0)
+        }
+        var trimmed = 0
+        let inserted = buffer.flush { p in
+            guard let t = try? s.insert(sessionId: p.sessionId, uuid: p.uuid, fixTs: p.fixTs, body: p.body, mode: p.mode, maxRecords: p.maxRecords) else { return false }
+            trimmed += t
+            return true
+        }
+        insertFailing = !buffer.isEmpty
+        if inserted > 0 {
+            Log.debug("queue", "buffer drained", data: ["rows": inserted, "trimmed": trimmed, "remaining": buffer.count], level: buffer.isEmpty ? "debug" : "warn")
+        }
+        return (buffer.isEmpty, trimmed)
     }
 
     private func removeOrphanCredentials() {

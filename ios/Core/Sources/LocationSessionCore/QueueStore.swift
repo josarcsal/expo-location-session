@@ -202,11 +202,13 @@ public final class QueueStore {
         }
     }
 
-    public func delete(ids: [Int64]) {
+    @discardableResult
+    public func delete(ids: [Int64]) -> Bool {
         locked { updateIds(ids, "DELETE FROM fixes WHERE id IN") }
     }
 
-    public func release(ids: [Int64]) {
+    @discardableResult
+    public func release(ids: [Int64]) -> Bool {
         locked { updateIds(ids, "UPDATE fixes SET state = 0 WHERE id IN") }
     }
 
@@ -280,13 +282,31 @@ public final class QueueStore {
         }
     }
 
-    public func status() -> QueueStatus {
+    public func status(excluding: Set<Int64> = []) -> QueueStatus {
         locked {
-            query("SELECT COUNT(*), MIN(fix_ts), COUNT(DISTINCT session_id) FROM fixes", []) { st in
+            guard !excluding.isEmpty else {
+                return query("SELECT COUNT(*), MIN(fix_ts), COUNT(DISTINCT session_id) FROM fixes", []) { st in
+                    QueueStatus(pending: Int(sqlite3_column_int64(st, 0)),
+                                oldestAt: sqlite3_column_type(st, 1) == SQLITE_NULL ? nil : sqlite3_column_int64(st, 1),
+                                sessions: Int(sqlite3_column_int64(st, 2)))
+                }.first ?? QueueStatus(pending: 0, oldestAt: nil, sessions: 0)
+            }
+            var status = query("SELECT COUNT(*), MIN(fix_ts) FROM fixes WHERE state = 0", []) { st in
                 QueueStatus(pending: Int(sqlite3_column_int64(st, 0)),
                             oldestAt: sqlite3_column_type(st, 1) == SQLITE_NULL ? nil : sqlite3_column_int64(st, 1),
-                            sessions: Int(sqlite3_column_int64(st, 2)))
+                            sessions: 0)
             }.first ?? QueueStatus(pending: 0, oldestAt: nil, sessions: 0)
+            var sessions = Set(query("SELECT DISTINCT session_id FROM fixes WHERE state = 0", []) { Self.column($0, 0) ?? "" })
+            let inFlight = query("SELECT id, fix_ts, session_id FROM fixes WHERE state = 1", []) { st in
+                (id: sqlite3_column_int64(st, 0), fixTs: sqlite3_column_int64(st, 1), sessionId: Self.column(st, 2) ?? "")
+            }
+            for row in inFlight where !excluding.contains(row.id) {
+                status.pending += 1
+                status.oldestAt = min(status.oldestAt ?? row.fixTs, row.fixTs)
+                sessions.insert(row.sessionId)
+            }
+            status.sessions = sessions.count
+            return status
         }
     }
 
@@ -363,9 +383,9 @@ public final class QueueStore {
         return false
     }
 
-    private func updateIds(_ ids: [Int64], _ prefix: String) {
-        guard !ids.isEmpty else { return }
-        _ = transaction {
+    private func updateIds(_ ids: [Int64], _ prefix: String) -> Bool {
+        guard !ids.isEmpty else { return true }
+        return transaction {
             for start in stride(from: 0, to: ids.count, by: 500) {
                 let chunk = ids[start..<min(start + 500, ids.count)]
                 let marks = Array(repeating: "?", count: chunk.count).joined(separator: ",")

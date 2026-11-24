@@ -171,8 +171,7 @@ object SessionEngine {
 
     fun queueStatus(ctx: Context): QueueStatus {
         init(ctx)
-        val q = queue.store() ?: throw LocationSessionException("INTERNAL", "queue storage is not available")
-        return q.status()
+        return queue.status() ?: throw LocationSessionException("INTERNAL", "queue storage is not available")
     }
 
     fun syncQueue(ctx: Context, budgetMs: Long? = null, completion: (Int) -> Unit) {
@@ -188,10 +187,12 @@ object SessionEngine {
     fun clearQueue(ctx: Context) {
         init(ctx)
         uploader.cancelDrain(false)
-        val q = queue.store() ?: return
-        val removed = q.clear()
+        if (config?.sync?.mode == QueueMode.LATEST) {
+            uploader.discardFallback()
+            store.pendingFix = null
+        }
+        val removed = queue.clear() ?: return
         removed.forEach(credentials::remove)
-        if (config?.sync?.mode == QueueMode.LATEST) store.pendingFix = null
         ElsLog.debug("queue", "cleared", mapOf("targets" to removed.size), config?.id)
         uploader.evaluateConnectivity()
     }
@@ -347,12 +348,7 @@ object SessionEngine {
             refreshBodyJson = c.sync.refresh?.bodyJson,
             ended = false
         )
-        try {
-            val q = queue.store() ?: return
-            q.saveTarget(target)
-        } catch (e: QueueStoreException) {
-            ElsLog.debug("queue", "target save failed", mapOf("error" to e.message), c.id, level = "warn")
-        }
+        queue.saveTarget(target)
     }
 
     private fun teardown(ctx: Context, c: SessionConfig, reason: StopReason?) {
@@ -367,10 +363,11 @@ object SessionEngine {
         uploader.reset()
         val action = if (reason == null) StopQueueAction.DELETE_ROWS else stopQueueAction(c.sync.mode, reason)
         if (action == StopQueueAction.MARK_ENDED) {
-            queue.store()?.markEnded(c.id)
-            ElsLog.debug("queue", "session marked ended", mapOf("totalPending" to (queue.store()?.status()?.pending ?: 0)), c.id)
+            queue.markEnded(c.id)
+            ElsLog.debug("queue", "session marked ended", mapOf("totalPending" to (queue.status()?.pending ?: 0), "buffered" to queue.buffered), c.id)
         } else {
-            val deleted = queue.store()?.deleteSession(c.id) ?: 0
+            uploader.discardFallback()
+            val deleted = queue.deleteSession(c.id)
             ElsLog.debug("queue", "session rows deleted", mapOf("rows" to deleted), c.id)
             credentials.remove(c.id)
             if (action == StopQueueAction.DELETE_ROWS_DROPPED && deleted > 0) {
@@ -403,7 +400,7 @@ object SessionEngine {
 
     private fun scheduleSync(ctx: Context) {
         if (!QueueSync.isEnabled(ctx)) return
-        QueueSync.scheduleIfNeeded(ctx, queue.store()?.status()?.pending ?: 0, config != null)
+        QueueSync.scheduleIfNeeded(ctx, queue.status()?.pending ?: 0, config != null)
     }
 
     private fun evaluate(ctx: Context, fix: Fix?) {

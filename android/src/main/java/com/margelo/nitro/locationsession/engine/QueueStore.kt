@@ -151,10 +151,10 @@ class QueueStore(context: Context, file: File) {
     }
 
     @Synchronized
-    fun delete(ids: List<Long>) = updateIds(ids, "DELETE FROM fixes WHERE id IN")
+    fun delete(ids: List<Long>): Boolean = updateIds(ids, "DELETE FROM fixes WHERE id IN")
 
     @Synchronized
-    fun release(ids: List<Long>) = updateIds(ids, "UPDATE fixes SET state = 0 WHERE id IN")
+    fun release(ids: List<Long>): Boolean = updateIds(ids, "UPDATE fixes SET state = 0 WHERE id IN")
 
     @Synchronized
     fun deleteSession(sessionId: String): Int {
@@ -226,10 +226,29 @@ class QueueStore(context: Context, file: File) {
     }
 
     @Synchronized
-    fun status(): QueueStatus = attempt(QueueStatus(0, null, 0)) {
-        query("SELECT COUNT(*), MIN(fix_ts), COUNT(DISTINCT session_id) FROM fixes") { c ->
-            QueueStatus(c.getInt(0), if (c.isNull(1)) null else c.getLong(1), c.getInt(2))
-        }.first()
+    fun status(excluding: Set<Long> = emptySet()): QueueStatus = attempt(QueueStatus(0, null, 0)) {
+        if (excluding.isEmpty()) {
+            query("SELECT COUNT(*), MIN(fix_ts), COUNT(DISTINCT session_id) FROM fixes") { c ->
+                QueueStatus(c.getInt(0), if (c.isNull(1)) null else c.getLong(1), c.getInt(2))
+            }.first()
+        } else {
+            var pending = 0
+            var oldestAt: Long? = null
+            query("SELECT COUNT(*), MIN(fix_ts) FROM fixes WHERE state = 0") { c ->
+                pending = c.getInt(0)
+                oldestAt = if (c.isNull(1)) null else c.getLong(1)
+            }
+            val sessions = query("SELECT DISTINCT session_id FROM fixes WHERE state = 0") { it.getString(0) }.toMutableSet()
+            query("SELECT id, fix_ts, session_id FROM fixes WHERE state = 1") { c ->
+                if (c.getLong(0) !in excluding) {
+                    val ts = c.getLong(1)
+                    pending += 1
+                    oldestAt = oldestAt?.let { minOf(it, ts) } ?: ts
+                    sessions.add(c.getString(2))
+                }
+            }
+            QueueStatus(pending, oldestAt, sessions.size)
+        }
     }
 
     @Synchronized
@@ -304,12 +323,12 @@ class QueueStore(context: Context, file: File) {
         return failure
     }
 
-    private fun updateIds(ids: List<Long>, prefix: String) {
-        if (ids.isEmpty()) return
-        transaction {
+    private fun updateIds(ids: List<Long>, prefix: String): Boolean {
+        if (ids.isEmpty()) return true
+        return transaction {
             for (chunk in ids.chunked(500)) {
                 run("$prefix (${chunk.joinToString(",") { "?" }})", *chunk.toTypedArray())
             }
-        }
+        } == null
     }
 }

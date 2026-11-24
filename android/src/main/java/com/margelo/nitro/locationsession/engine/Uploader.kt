@@ -7,6 +7,7 @@ import android.os.BatteryManager
 import android.os.Handler
 import android.os.Looper
 import com.margelo.nitro.locationsession.core.Battery
+import com.margelo.nitro.locationsession.core.FallbackSlot
 import com.margelo.nitro.locationsession.core.Fix
 import com.margelo.nitro.locationsession.core.FixRecord
 import com.margelo.nitro.locationsession.core.QueueMode
@@ -69,6 +70,8 @@ class Uploader(
     private var inFlight = false
     private var inFlightRows: List<Long> = emptyList()
     private var inFlightTarget: Target? = null
+    private var inFlightFallback: Int? = null
+    private val fallback = FallbackSlot()
     private var pass: Pass? = null
     private val deferred = mutableListOf<Waiter>()
     private var dirty = false
@@ -79,6 +82,7 @@ class Uploader(
     private var refreshHold = false
     private var runningCredentials: Credentials? = null
     private var queueUnavailableReported = false
+    private var bufferTrimReported = false
     private var credentialsFallbackLogged = false
     private var syncScheduled = false
     private var endedAttempt = 0
@@ -96,12 +100,14 @@ class Uploader(
     fun begin(c: SessionConfig, pending: Fix?, lastSuccessMs: Long?) {
         assertMain()
         reset()
+        fallback.keep(c.id)
         config = c
         this.lastSuccessMs = lastSuccessMs
         evaluateConnectivity()
         val fix = pending?.let(::sanitize)
-        val q = queue.store()
-        if (c.sync.mode == QueueMode.LATEST && fix != null && q != null && q.latestPending(c.id) == null) enqueue(fix, c)
+        if (c.sync.mode == QueueMode.LATEST && fix != null && fallback.next(c.id) == null && queue.store()?.latestPending(c.id) == null) {
+            enqueue(fix, c)
+        }
         if (dirty) startPass(null, emptyList())
     }
 
@@ -110,10 +116,11 @@ class Uploader(
         epoch += 1
         if (inFlightRows.isNotEmpty()) {
             val t = inFlightTarget
-            if (t != null) giveBack(inFlightRows, t) else queue.store()?.release(inFlightRows)
+            if (t != null) giveBack(inFlightRows, t) else queue.release(inFlightRows)
         }
         inFlightRows = emptyList()
         inFlightTarget = null
+        inFlightFallback = null
         inFlight = false
         pass?.let {
             pass = null
@@ -126,6 +133,7 @@ class Uploader(
         refreshHold = false
         runningCredentials = null
         queueUnavailableReported = false
+        bufferTrimReported = false
         credentialsFallbackLogged = false
         endedAttempt = 0
         endedRetryAtMs = 0L
@@ -142,9 +150,14 @@ class Uploader(
         notifySettled()
     }
 
+    fun discardFallback() {
+        assertMain()
+        fallback.keep(null)
+    }
+
     fun evaluateConnectivity() {
         assertMain()
-        if (config != null || (queue.store()?.status()?.pending ?: 0) > 0) {
+        if (config != null || (queue.status()?.pending ?: 0) > 0) {
             connectivity.start { connectivityRegained() }
         } else {
             connectivity.stop()
@@ -152,7 +165,7 @@ class Uploader(
     }
 
     private fun connectivityRegained() {
-        if (config == null && (queue.store()?.status()?.pending ?: 0) == 0) {
+        if (config == null && (queue.status()?.pending ?: 0) == 0) {
             evaluateConnectivity()
             return
         }
@@ -209,6 +222,7 @@ class Uploader(
             drainBudget = r
             main.postDelayed(r, maxOf(0L, budgetMs))
         }
+        prepareQueue()
         queue.purge()
         drainNext()
     }
@@ -238,11 +252,12 @@ class Uploader(
         epoch += 1
         if (release) {
             connection?.let { conn -> watchdog.execute { runCatching { conn.disconnect() } } }
-            if (inFlightRows.isNotEmpty()) queue.store()?.release(inFlightRows)
+            queue.release(inFlightRows)
         }
         inFlight = false
         inFlightRows = emptyList()
         inFlightTarget = null
+        inFlightFallback = null
         refreshing = false
         cancelSendWatchdog()
     }
@@ -265,7 +280,7 @@ class Uploader(
             startTimer(delay) { drain(null) {} }
             if (QueueSync.isEnabled(appContext) && !syncScheduled) {
                 syncScheduled = true
-                QueueSync.scheduleIfNeeded(appContext, queue.store()?.status()?.pending ?: 0, false)
+                QueueSync.scheduleIfNeeded(appContext, queue.status()?.pending ?: 0, false)
             }
         } else if (end == PassEnd.RETRY) {
             val delay = backoffMs(endedAttempt)
@@ -320,11 +335,36 @@ class Uploader(
         }
         val trimmed = enqueue(fix, c)
         store.pendingFix = fix
-        if (queue.unavailable && !queueUnavailableReported) {
+        reportQueueHealth(c, trimmed)
+    }
+
+    private fun prepareQueue() {
+        val trimmed = queue.prepareSend()
+        config?.let { reportQueueHealth(it, trimmed) }
+    }
+
+    private fun reportQueueHealth(c: SessionConfig, trimmed: Int) {
+        val failing = queue.failing
+        if (failing && !queueUnavailableReported) {
             queueUnavailableReported = true
-            ElsLog.debug("queue", "database unavailable; locations are not stored or uploaded", sessionId = c.id, level = "warn")
-            events.emitStickyError("QUEUE_UNAVAILABLE", "Location queue storage is unavailable; locations are not uploaded", c.id)
-        } else if (queueUnavailableReported && queue.isOpen) {
+            val latest = c.sync.mode == QueueMode.LATEST
+            ElsLog.debug(
+                "queue",
+                if (latest) "database unavailable; newest location kept in memory" else "database unavailable; locations buffered in memory",
+                mapOf("buffered" to queue.buffered),
+                c.id,
+                level = "warn"
+            )
+            events.emitStickyError(
+                "QUEUE_UNAVAILABLE",
+                if (latest) {
+                    "Location queue storage is unavailable; the newest location is uploaded from memory"
+                } else {
+                    "Location queue storage is unavailable; up to 500 locations are kept in memory until it recovers"
+                },
+                c.id
+            )
+        } else if (queueUnavailableReported && !failing && queue.isOpen) {
             queueUnavailableReported = false
             ElsLog.debug("queue", "database available again", sessionId = c.id)
             events.clearStickyError("QUEUE_UNAVAILABLE")
@@ -338,6 +378,7 @@ class Uploader(
                     .put("sessionId", c.id)
             )
         }
+        if (queue.buffered == 0) bufferTrimReported = false
     }
 
     fun pump() {
@@ -358,6 +399,7 @@ class Uploader(
 
     fun flush(completion: () -> Unit) {
         assertMain()
+        if (!inFlight) prepareQueue()
         val c = config
         if (c == null || (!inFlight && !hasPending(c))) {
             ElsLog.debug("upload", "flush skipped, nothing pending", sessionId = c?.id)
@@ -405,40 +447,51 @@ class Uploader(
             ElsLog.debug("queue", "could not encode location", mapOf("fixTimestamp" to fix.timestampMs), c.id, level = "warn")
             return 0
         }
-        val q = queue.store()
-        if (q == null) {
-            ElsLog.debug("queue", "database unavailable; location dropped", mapOf("fixTimestamp" to fix.timestampMs), c.id, level = "warn")
-            return 0
-        }
-        return try {
-            val trimmed = q.insert(c.id, uuid, fix.timestampMs, body, c.sync.mode, c.sync.maxRecords)
-            ElsLog.debug("queue", "inserted", mapOf("mode" to c.sync.mode.wire, "fixTimestamp" to fix.timestampMs, "trimmed" to trimmed), c.id)
-            if (trimmed > 0) {
-                ElsLog.debug("queue", "trimmed", mapOf("rows" to trimmed, "maxRecords" to c.sync.maxRecords), c.id, level = "warn")
+        return when (val result = queue.enqueue(PendingInsert(c.id, uuid, fix.timestampMs, body, c.sync.mode, c.sync.maxRecords))) {
+            is EnqueueResult.Stored -> {
+                fallback.stored()
+                result.trimmed
             }
-            trimmed
-        } catch (e: QueueStoreException) {
-            ElsLog.debug("queue", "insert failed", mapOf("error" to e.message), c.id, level = "warn")
-            0
+            EnqueueResult.Failed -> {
+                val generation = fallback.put(c.id, uuid, fix)
+                ElsLog.debug("queue", "kept in memory", mapOf("fixTimestamp" to fix.timestampMs, "generation" to generation), c.id)
+                0
+            }
+            is EnqueueResult.Buffered -> {
+                if (result.dropped && !bufferTrimReported) {
+                    bufferTrimReported = true
+                    events.emit(
+                        "error",
+                        JSONObject()
+                            .put("code", "QUEUE_TRIMMED")
+                            .put("message", "Queue storage unavailable and memory buffer full; oldest buffered locations dropped")
+                            .put("sessionId", c.id)
+                    )
+                }
+                0
+            }
         }
     }
 
-    private fun generation(c: SessionConfig): Long = queue.store()?.latestPending(c.id)?.id ?: 0L
+    private fun generation(c: SessionConfig): Long = fallback.next(c.id)?.generation?.toLong() ?: queued(c.id, c.sync.mode)?.id ?: 0L
 
-    private fun hasPending(c: SessionConfig): Boolean = queue.store()?.latestPending(c.id) != null
+    private fun hasPending(c: SessionConfig): Boolean = fallback.next(c.id) != null || queued(c.id, c.sync.mode) != null
+
+    private fun queued(sessionId: String, mode: QueueMode): QueuedRow? {
+        val row = queue.store()?.latestPending(sessionId) ?: return null
+        return if (mode == QueueMode.LATEST && fallback.supersedes(sessionId, row.fixTs)) null else row
+    }
 
     private fun syncPendingFix(t: Target) {
         if (t.ended || t.sync.mode != QueueMode.LATEST) return
-        val q = queue.store() ?: return
-        store.pendingFix = q.latestPending(t.id)?.let { decodeFix(it.body) }
+        store.pendingFix = fallback.next(t.id)?.fix ?: queued(t.id, QueueMode.LATEST)?.let { decodeFix(it.body) }
     }
 
     private fun giveBack(ids: List<Long>, t: Target) {
-        val q = queue.store() ?: return
-        if (t.sync.mode == QueueMode.LATEST && q.latestPending(t.id) != null) {
-            q.delete(ids)
+        if (t.sync.mode == QueueMode.LATEST && (fallback.next(t.id) != null || queue.store()?.latestPending(t.id) != null)) {
+            queue.delete(ids)
         } else {
-            q.release(ids)
+            queue.release(ids)
         }
     }
 
@@ -523,6 +576,15 @@ class Uploader(
     }
 
     private fun send(t: Target) {
+        prepareQueue()
+        val f = if (t.ended) null else fallback.next(t.id)
+        if (f != null) {
+            cancelTimer()
+            epoch += 1
+            val element = buildElement(FixRecord(f.uuid, t.id, f.fix, battery()), t.sync, t.extrasJson)
+            upload(t, listOf(element), emptyList(), f.generation, f.fix.timestampMs)
+            return
+        }
         val q = queue.store()
         if (q == null) {
             sendFailed(t)
@@ -532,9 +594,9 @@ class Uploader(
         epoch += 1
         var rows = q.claim(t.id, if (t.sync.mode == QueueMode.LATEST) 1 else batchLimit(t.sync))
         if (t.sync.mode == QueueMode.LATEST) {
-            while (rows.isNotEmpty() && q.latestPending(t.id) != null) {
+            while (rows.isNotEmpty() && (q.latestPending(t.id) != null || fallback.supersedes(t.id, rows.first().fixTs))) {
                 val row = rows.first()
-                q.delete(listOf(row.id))
+                queue.delete(listOf(row.id))
                 ElsLog.debug("queue", "superseded row deleted", mapOf("fixTimestamp" to row.fixTs), t.id)
                 rows = q.claim(t.id, 1)
             }
@@ -556,7 +618,7 @@ class Uploader(
             }
         }
         if (unreadable.isNotEmpty()) {
-            q.delete(unreadable.map { it.id })
+            queue.delete(unreadable.map { it.id })
             for (row in unreadable) {
                 ElsLog.debug("queue", "unreadable row deleted", mapOf("fixTimestamp" to row.fixTs, "attempts" to row.attempts), t.id, level = "warn")
                 events.emit(
@@ -570,21 +632,26 @@ class Uploader(
             continueAfterSend(t)
             return
         }
-        val ids = sent.map { it.id }
+        upload(t, elements, sent.map { it.id }, null, sent.first().fixTs)
+    }
+
+    private fun upload(t: Target, elements: List<String>, ids: List<Long>, generation: Int?, fixTs: Long) {
         val body = buildRequestBody(t.id, elements, t.sync, t.extrasJson)
         val headers = credentialsFor(t)?.headers ?: emptyMap()
         val sentEpoch = epoch
         inFlight = true
         inFlightRows = ids
         inFlightTarget = t
+        inFlightFallback = generation
         val startedAt = nowMs()
         val data = mutableMapOf<String, Any?>(
-            "generation" to ids.last(),
+            "generation" to (generation?.toLong() ?: ids.lastOrNull() ?: 0L),
             "bytes" to body.length,
             "flush" to (flushCompletion != null),
             "rows" to ids.size,
-            "fixTimestamp" to sent.first().fixTs
+            "fixTimestamp" to fixTs
         )
+        if (generation != null) data["memory"] = true
         if (ownsAttempt(t)) data["attempt"] = attempt
         if (t.ended) {
             data["ended"] = true
@@ -685,12 +752,14 @@ class Uploader(
     private fun complete(status: Int?, durationMs: Long) {
         val rows = inFlightRows
         val t = inFlightTarget
+        val sentFallback = inFlightFallback
         inFlight = false
         inFlightRows = emptyList()
         inFlightTarget = null
+        inFlightFallback = null
         cancelSendWatchdog()
         if (t == null || (!t.ended && t.id != config?.id)) {
-            if (rows.isNotEmpty()) queue.store()?.release(rows)
+            queue.release(rows)
             notifySettled()
             return
         }
@@ -702,19 +771,21 @@ class Uploader(
         events.emit("upload", payload)
         val outcome = outcomeName(action)
         val detail = mutableMapOf<String, Any?>(
-            "generation" to (rows.lastOrNull() ?: 0L),
+            "generation" to (sentFallback?.toLong() ?: rows.lastOrNull() ?: 0L),
             "outcome" to outcome,
             "durationMs" to durationMs,
             "status" to status,
             "rows" to rows.size
         )
+        if (sentFallback != null) detail["memory"] = true
         if (action == SyncAction.Retry && ownsAttempt(t)) detail["backoffMs"] = backoffMs(attempt)
         ElsLog.info("upload", "upload status=${status ?: "none"} outcome=$outcome", detail, t.id)
         DebugLogger.onUploadCompleted()
 
         when (action) {
             SyncAction.DeleteSent -> {
-                queue.store()?.delete(rows)
+                queue.delete(rows)
+                sentFallback?.let(fallback::markSent)
                 if (ownsAttempt(t)) attempt = 0
                 if (!t.ended) refreshHold = false
                 if (t.ended) {
@@ -728,18 +799,20 @@ class Uploader(
                 }
             }
             SyncAction.DropSent -> {
-                queue.store()?.delete(rows)
+                queue.delete(rows)
+                sentFallback?.let(fallback::markSent)
                 syncPendingFix(t)
                 if (ownsAttempt(t)) attempt = 0
-                val message = if (rows.size == 1) {
+                val dropped = if (sentFallback == null) rows.size else 1
+                val message = if (dropped == 1) {
                     "Server responded ${status ?: 0}; location dropped"
                 } else {
-                    "Server responded ${status ?: 0}; ${rows.size} locations dropped"
+                    "Server responded ${status ?: 0}; $dropped locations dropped"
                 }
                 events.emit("error", JSONObject().put("code", "UPLOAD_DROPPED").put("message", message).put("sessionId", t.id))
             }
             SyncAction.DropSession -> {
-                val deleted = queue.store()?.deleteSession(t.id) ?: 0
+                val deleted = queue.deleteSession(t.id)
                 credentials.remove(t.id)
                 if (ownsAttempt(t)) attempt = 0
                 ElsLog.debug("queue", "session rows deleted", mapOf("rows" to deleted, "status" to status), t.id)

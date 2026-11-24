@@ -99,10 +99,11 @@ final class SessionEngine {
         uploader.reset()
         let action = stopQueueAction(mode: c.sync.mode, reason: reason)
         if action == .markEnded {
-            queue.store()?.markEnded(c.id)
-            Log.debug("queue", "session marked ended", data: ["totalPending": queue.store()?.status().pending ?? 0], sessionId: c.id)
+            queue.markEnded(c.id)
+            Log.debug("queue", "session marked ended", data: ["totalPending": queue.status()?.pending ?? 0, "buffered": queue.buffered], sessionId: c.id)
         } else {
-            let deleted = queue.store()?.deleteSession(c.id) ?? 0
+            uploader.discardFallback()
+            let deleted = queue.deleteSession(c.id)
             Log.debug("queue", "session rows deleted", data: ["rows": deleted], sessionId: c.id)
             credentials.remove(sessionId: c.id)
             if action == .deleteRowsDropped, deleted > 0 {
@@ -124,15 +125,15 @@ final class SessionEngine {
 
     func submitBackgroundSync() {
         guard BackgroundSync.isPermitted else { return }
-        BackgroundSync.submitIfNeeded(pending: queue.store()?.status().pending ?? 0, sessionRunning: config != nil)
+        BackgroundSync.submitIfNeeded(pending: queue.status()?.pending ?? 0, sessionRunning: config != nil)
     }
 
     func queueStatus() throws -> QueueStatus {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard let q = queue.store() else {
+        guard let status = queue.status() else {
             throw LocationSessionError(code: "INTERNAL", message: "queue storage is not available")
         }
-        return q.status()
+        return status
     }
 
     func syncQueue(_ completion: @escaping (Int) -> Void) {
@@ -143,10 +144,12 @@ final class SessionEngine {
     func clearQueue() {
         dispatchPrecondition(condition: .onQueue(.main))
         uploader.cancelDrain(release: false)
-        guard let q = queue.store() else { return }
-        let removed = q.clear()
+        if config?.sync.mode == .latest {
+            uploader.discardFallback()
+            store.pendingFix = nil
+        }
+        guard let removed = queue.clear() else { return }
         removed.forEach { credentials.remove(sessionId: $0) }
-        if config?.sync.mode == .latest { store.pendingFix = nil }
         Log.debug("queue", "cleared", data: ["targets": removed.count], sessionId: config?.id)
         uploader.evaluateConnectivity()
     }
@@ -185,12 +188,7 @@ final class SessionEngine {
 
     private func saveTarget(_ c: SessionConfig) {
         let target = QueueTarget(sessionId: c.id, url: c.uploadUrl, mode: c.sync.mode, batch: c.sync.batch, extrasJson: c.uploadExtrasJson, maxAgeMs: c.sync.maxAgeMs, refreshUrl: c.sync.refresh?.url, refreshBodyJson: c.sync.refresh?.bodyJson, ended: false)
-        do {
-            guard let q = queue.store() else { return }
-            try q.saveTarget(target)
-        } catch {
-            Log.debug("queue", "target save failed", data: ["error": "\(error)"], sessionId: c.id, level: "warn")
-        }
+        queue.saveTarget(target)
     }
 
     private func startSource(_ c: SessionConfig) {

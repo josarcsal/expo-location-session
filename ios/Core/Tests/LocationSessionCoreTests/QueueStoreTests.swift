@@ -143,4 +143,32 @@ import Testing
         _ = try put(s, "s1", "c", mode: .latest)
         #expect(s.claim(sessionId: "s1", limit: 10).map(\.attempts) == [1])
     }
+
+    @Test func deleteAndReleaseReportFailure() throws {
+        let (s, path) = try open(); try s.saveTarget(target("s1"))
+        _ = try put(s, "s1", "a"); _ = try put(s, "s1", "b")
+        let ids = s.claim(sessionId: "s1", limit: 10).map(\.id)
+        var raw: OpaquePointer?
+        #expect(sqlite3_open(path, &raw) == SQLITE_OK)
+        defer { sqlite3_close(raw) }
+        #expect(sqlite3_exec(raw, "CREATE TRIGGER boom BEFORE DELETE ON fixes BEGIN SELECT RAISE(ABORT, 'boom'); END", nil, nil, nil) == SQLITE_OK)
+        #expect(!s.delete(ids: ids))
+        #expect(s.release(ids: [ids[1]]))
+        #expect(sqlite3_exec(raw, "DROP TRIGGER boom; CREATE TRIGGER boom BEFORE UPDATE ON fixes BEGIN SELECT RAISE(ABORT, 'boom'); END", nil, nil, nil) == SQLITE_OK)
+        #expect(!s.release(ids: [ids[0]]))
+        #expect(s.delete(ids: ids))
+        #expect(s.delete(ids: []) && s.release(ids: []))
+        #expect(s.status().pending == 0)
+    }
+
+    @Test func statusExcludesRowsAwaitingDelete() throws {
+        let (s, _) = try open(); try s.saveTarget(target("s1")); try s.saveTarget(target("s2"))
+        _ = try put(s, "s1", "a", ts: 10); _ = try put(s, "s1", "b", ts: 20); _ = try put(s, "s2", "c", ts: 30)
+        let sent = s.claim(sessionId: "s1", limit: 1).map(\.id)
+        let inFlight = s.claim(sessionId: "s2", limit: 1).map(\.id)
+        #expect(s.status(excluding: []) == QueueStatus(pending: 3, oldestAt: 10, sessions: 2))
+        #expect(s.status(excluding: Set(sent)) == QueueStatus(pending: 2, oldestAt: 20, sessions: 2))
+        #expect(s.status(excluding: Set(sent + inFlight)) == QueueStatus(pending: 1, oldestAt: 20, sessions: 1))
+        #expect(s.status(excluding: [999]) == s.status())
+    }
 }

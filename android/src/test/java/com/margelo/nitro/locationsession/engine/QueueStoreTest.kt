@@ -11,6 +11,7 @@ import com.margelo.nitro.locationsession.core.QueueTarget
 import java.io.File
 import java.util.UUID
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -241,5 +242,46 @@ class QueueStoreTest {
             fail("expected insert to throw")
         } catch (_: QueueStoreException) {
         }
+    }
+
+    @Test
+    fun deleteAndReleaseReportFailure() {
+        val file = newFile()
+        val s = open(file)
+        s.saveTarget(target("s1"))
+        put(s, "s1", "a")
+        put(s, "s1", "b")
+        val ids = s.claim("s1", 10).map { it.id }
+        val raw = SQLiteDatabase.openDatabase(file.absolutePath, null, SQLiteDatabase.OPEN_READWRITE)
+        try {
+            raw.execSQL("CREATE TRIGGER boom BEFORE DELETE ON fixes BEGIN SELECT RAISE(ABORT, 'boom'); END")
+            assertFalse(s.delete(ids))
+            assertTrue(s.release(listOf(ids[1])))
+            raw.execSQL("DROP TRIGGER boom")
+            raw.execSQL("CREATE TRIGGER boom BEFORE UPDATE ON fixes BEGIN SELECT RAISE(ABORT, 'boom'); END")
+            assertFalse(s.release(listOf(ids[0])))
+            assertTrue(s.delete(ids))
+            assertTrue(s.delete(emptyList()) && s.release(emptyList()))
+            assertEquals(0, s.status().pending)
+            raw.execSQL("DROP TRIGGER boom")
+        } finally {
+            raw.close()
+        }
+    }
+
+    @Test
+    fun statusExcludesRowsAwaitingDelete() {
+        val s = open()
+        s.saveTarget(target("s1"))
+        s.saveTarget(target("s2"))
+        put(s, "s1", "a", ts = 10)
+        put(s, "s1", "b", ts = 20)
+        put(s, "s2", "c", ts = 30)
+        val sent = s.claim("s1", 1).map { it.id }
+        val inFlight = s.claim("s2", 1).map { it.id }
+        assertEquals(QueueStatus(3, 10, 2), s.status(emptySet()))
+        assertEquals(QueueStatus(2, 20, 2), s.status(sent.toSet()))
+        assertEquals(QueueStatus(1, 20, 1), s.status((sent + inFlight).toSet()))
+        assertEquals(s.status(), s.status(setOf(999L)))
     }
 }

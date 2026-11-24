@@ -39,7 +39,7 @@ enum BackgroundSync {
         let finish = {
             guard !completed else { return }
             completed = true
-            let pending = engine.queue.store()?.status().pending
+            let pending = engine.queue.status()?.pending
             let sessionRunning = engine.config != nil
             let remaining = pending.map { shouldScheduleSync(enabled: true, pending: $0, sessionRunning: sessionRunning) } ?? true
             Log.debug("sync", "background sync finished", data: ["pending": pending ?? NSNull(), "sessionRunning": sessionRunning, "expired": expired])
