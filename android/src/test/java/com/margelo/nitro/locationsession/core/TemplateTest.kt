@@ -117,4 +117,30 @@ class TemplateTest {
     fun trailingInputIsRejected() {
         assertEquals("must be a JSON object", validateTemplate("""{"a":1} xyz""", "{}"))
     }
+
+    @Test
+    fun nonJsonIsRejected() {
+        val vectors = listOf(
+            """{"a":1} // x""", """/*c*/{"a":1}""", """{'a':1}""", """{a:1}""", """{"a":01}""", """{"a":NaN}""", """{"a":Infinity}""",
+            """{"a":"x\q"}""", """{"a":+1}""", """{"a":.5}""", """{"a":1.}""", """{"a":0x1}""", "{\"a\":\"tab\there\"}", """{"a":1}#"""
+        )
+        for (json in vectors) assertEquals(json, "must be a JSON object", validateTemplate(json, "{}"))
+    }
+
+    @Test
+    fun strictJsonIsAccepted() {
+        assertNull(validateTemplate(""" {"a":[true,false,null,-0.5e+3,1E2,0,"\n\"é","é",{},[]]} """, "{}"))
+    }
+
+    @Test
+    fun emptyTemplateIsRequired() {
+        assertEquals("body.template is required", validateSync(SyncConfig(templateJson = ""), "{}"))
+    }
+
+    @Test
+    fun timestampIsoAndExtrasNumbersInterpolate() {
+        val o = obj(renderTemplate("""{"at":"at {{timestampIso}}","n":"n={{extras.n}} f={{extras.f}}"}""", rec, """{"n":3,"f":2.5}"""))
+        assertEquals("at 2023-11-14T22:13:20.000Z", o.getString("at"))
+        assertEquals("n=3 f=2.5", o.getString("n"))
+    }
 }

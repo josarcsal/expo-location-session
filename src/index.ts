@@ -135,8 +135,6 @@ export function getCurrentPosition(opts: CurrentPositionOptions = {}): Promise<L
 
 export function start(config: SessionConfig): Promise<void> {
   const { queue, batch, body, auth } = config.upload;
-  if (body != null && body.template === undefined)
-    return Promise.reject(new LocationSessionError('INVALID_CONFIG', 'body.template is required'));
   return call((s) =>
     s.start({
       id: config.id,
@@ -153,7 +151,7 @@ export function start(config: SessionConfig): Promise<void> {
       uploadQueueMaxAgeMs: queue?.maxAgeMs ?? DEFAULT_QUEUE_MAX_AGE_MS,
       uploadBatchMaxSize: batch?.maxSize,
       uploadBatchRootProperty: batch ? (batch.rootProperty ?? DEFAULT_BATCH_ROOT_PROPERTY) : undefined,
-      uploadBodyTemplateJson: body ? JSON.stringify(body.template) : undefined,
+      uploadBodyTemplateJson: body ? (JSON.stringify(body.template) ?? '') : undefined,
       uploadRefreshUrl: auth?.refresh.url,
       uploadRefreshHeaders: auth?.refresh.headers,
       uploadRefreshBodyJson: auth?.refresh.body ? JSON.stringify(auth.refresh.body) : undefined,

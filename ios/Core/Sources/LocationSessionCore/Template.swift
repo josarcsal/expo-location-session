@@ -77,11 +77,15 @@ public func validateTemplate(_ json: String, extrasJson: String) -> String? {
     return checkNode(root, extras: parseObject(extrasJson) ?? [:])
 }
 
-private func isoString(_ ms: Int64) -> String {
+private let isoFormatter: ISO8601DateFormatter = {
     let f = ISO8601DateFormatter()
     f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     f.timeZone = TimeZone(identifier: "UTC")
-    return f.string(from: Date(timeIntervalSince1970: Double(ms) / 1000))
+    return f
+}()
+
+private func isoString(_ ms: Int64) -> String {
+    isoFormatter.string(from: Date(timeIntervalSince1970: Double(ms) / 1000))
 }
 
 private func lookup(_ name: String, _ record: FixRecord, _ extras: [String: Any]) -> Any? {

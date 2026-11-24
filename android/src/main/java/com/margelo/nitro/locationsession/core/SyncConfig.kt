@@ -89,6 +89,7 @@ fun validateSync(s: SyncConfig, extrasJson: String): String? {
         }
     }
     if (s.templateJson != null) {
+        if (s.templateJson.isEmpty()) return "body.template is required"
         val reason = validateTemplate(s.templateJson, extrasJson)
         if (reason != null) return "template: $reason"
     }

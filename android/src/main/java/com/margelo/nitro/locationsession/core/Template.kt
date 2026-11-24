@@ -47,14 +47,147 @@ private fun segmentsOf(s: String): List<Segment>? {
     return out
 }
 
-internal fun parseObject(json: String): JSONObject? =
-    try {
+internal fun parseObject(json: String): JSONObject? {
+    if (!StrictJson(json).isObject()) return null
+    return try {
         val tokener = JSONTokener(json)
         val value = tokener.nextValue() as? JSONObject
         if (value != null && tokener.nextClean() != 0.toChar()) null else value
     } catch (e: Exception) {
         null
     }
+}
+
+private class StrictJson(private val s: String) {
+    private var i = 0
+
+    fun isObject(): Boolean {
+        skipSpace()
+        if (peek() != '{' || !value()) return false
+        skipSpace()
+        return i == s.length
+    }
+
+    private fun peek(): Char? = if (i < s.length) s[i] else null
+
+    private fun skipSpace() {
+        while (i < s.length && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r')) i++
+    }
+
+    private fun value(): Boolean {
+        skipSpace()
+        return when (peek()) {
+            '{' -> obj()
+            '[' -> arr()
+            '"' -> str()
+            't' -> word("true")
+            'f' -> word("false")
+            'n' -> word("null")
+            else -> num()
+        }
+    }
+
+    private fun obj(): Boolean {
+        i++
+        skipSpace()
+        if (peek() == '}') {
+            i++
+            return true
+        }
+        while (true) {
+            skipSpace()
+            if (peek() != '"' || !str()) return false
+            skipSpace()
+            if (peek() != ':') return false
+            i++
+            if (!value()) return false
+            skipSpace()
+            when (peek()) {
+                ',' -> i++
+                '}' -> {
+                    i++
+                    return true
+                }
+                else -> return false
+            }
+        }
+    }
+
+    private fun arr(): Boolean {
+        i++
+        skipSpace()
+        if (peek() == ']') {
+            i++
+            return true
+        }
+        while (true) {
+            if (!value()) return false
+            skipSpace()
+            when (peek()) {
+                ',' -> i++
+                ']' -> {
+                    i++
+                    return true
+                }
+                else -> return false
+            }
+        }
+    }
+
+    private fun str(): Boolean {
+        i++
+        while (i < s.length) {
+            val c = s[i++]
+            when {
+                c == '"' -> return true
+                c < ' ' -> return false
+                c == '\\' -> {
+                    val e = peek() ?: return false
+                    i++
+                    if (e == 'u') {
+                        if (i + 4 > s.length || !s.substring(i, i + 4).all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) return false
+                        i += 4
+                    } else if (e !in "\"\\/bfnrt") {
+                        return false
+                    }
+                }
+            }
+        }
+        return false
+    }
+
+    private fun word(w: String): Boolean {
+        if (!s.startsWith(w, i)) return false
+        i += w.length
+        return true
+    }
+
+    private fun num(): Boolean {
+        val start = i
+        if (peek() == '-') i++
+        when (peek()) {
+            '0' -> i++
+            in '1'..'9' -> digits()
+            else -> return false
+        }
+        if (peek() == '.') {
+            i++
+            if (!digits()) return false
+        }
+        if (peek() == 'e' || peek() == 'E') {
+            i++
+            if (peek() == '+' || peek() == '-') i++
+            if (!digits()) return false
+        }
+        return i > start
+    }
+
+    private fun digits(): Boolean {
+        val start = i
+        while (i < s.length && s[i] in '0'..'9') i++
+        return i > start
+    }
+}
 
 private fun checkNode(node: Any?, extras: JSONObject): String? {
     when (node) {
@@ -83,11 +216,11 @@ fun validateTemplate(json: String, extrasJson: String): String? {
     return checkNode(root, parseObject(extrasJson) ?: JSONObject())
 }
 
-private fun isoString(ms: Long): String {
-    val f = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
-    f.timeZone = TimeZone.getTimeZone("UTC")
-    return f.format(Date(ms))
+private val isoFormatter = object : ThreadLocal<SimpleDateFormat>() {
+    override fun initialValue() = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
 }
+
+private fun isoString(ms: Long): String = isoFormatter.get()!!.format(Date(ms))
 
 private fun lookup(name: String, r: FixRecord, extras: JSONObject): Any? {
     if (name.startsWith(EXTRAS_PREFIX)) {
