@@ -65,11 +65,13 @@ public struct QueueStoreError: Error, Equatable {
 public final class QueueStore {
     private var db: OpaquePointer?
     private let lock = NSRecursiveLock()
+    private var transactionError = ""
 
     public init(path: String) throws {
         guard sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK else {
             let message = db.map { String(cString: sqlite3_errmsg($0)) } ?? "open failed"
             sqlite3_close(db)
+            db = nil
             throw QueueStoreError(message: message)
         }
         sqlite3_busy_timeout(db, 5_000)
@@ -102,6 +104,7 @@ public final class QueueStore {
             """)
         } catch {
             sqlite3_close(db)
+            db = nil
             throw error
         }
     }
@@ -152,69 +155,64 @@ public final class QueueStore {
 
     public func insert(sessionId: String, uuid: String, fixTs: Int64, body: String, mode: QueueMode, maxRecords: Int) throws -> Int {
         try locked {
-            guard run("BEGIN IMMEDIATE", []) >= 0 else { throw QueueStoreError(message: lastError()) }
             var trimmed = 0
-            if mode == .latest {
-                _ = run("DELETE FROM fixes WHERE session_id = ? AND state = 0", [.text(sessionId)])
-            }
-            let inserted = run("INSERT INTO fixes (uuid, session_id, fix_ts, body, state, attempts) VALUES (?, ?, ?, ?, 0, 0)",
-                               [.text(uuid), .text(sessionId), .int(fixTs), .text(body)])
-            if inserted < 0 {
-                let message = lastError()
-                _ = run("ROLLBACK", [])
-                throw QueueStoreError(message: message)
-            }
-            if mode == .all {
-                let total = scalar("SELECT COUNT(*) FROM fixes", []) ?? 0
-                let excess = trimCount(rows: Int(total), maxRecords: maxRecords)
-                if excess > 0 {
-                    trimmed = max(0, run("DELETE FROM fixes WHERE id IN (SELECT id FROM fixes WHERE state = 0 ORDER BY id LIMIT ?)", [.int(Int64(excess))]))
+            let committed = transaction {
+                if mode == .latest, run("DELETE FROM fixes WHERE session_id = ? AND state = 0", [.text(sessionId)]) < 0 { return false }
+                if run("INSERT INTO fixes (uuid, session_id, fix_ts, body, state, attempts) VALUES (?, ?, ?, ?, 0, 0)",
+                       [.text(uuid), .text(sessionId), .int(fixTs), .text(body)]) < 0 { return false }
+                if mode == .all {
+                    let total = scalar("SELECT COUNT(*) FROM fixes", []) ?? 0
+                    let excess = trimCount(rows: Int(total), maxRecords: maxRecords)
+                    if excess > 0 {
+                        let deleted = run("DELETE FROM fixes WHERE id IN (SELECT id FROM fixes WHERE state = 0 ORDER BY id LIMIT ?)", [.int(Int64(excess))])
+                        if deleted < 0 { return false }
+                        trimmed = deleted
+                    }
                 }
+                return true
             }
-            guard run("COMMIT", []) >= 0 else {
-                let message = lastError()
-                _ = run("ROLLBACK", [])
-                throw QueueStoreError(message: message)
-            }
+            if !committed { throw QueueStoreError(message: transactionError) }
             return trimmed
         }
     }
 
     public func claim(sessionId: String, limit: Int) -> [QueuedRow] {
         locked {
-            guard run("BEGIN IMMEDIATE", []) >= 0 else { return [] }
-            var rows = query("SELECT id, uuid, session_id, fix_ts, body, attempts FROM fixes WHERE session_id = ? AND state = 0 ORDER BY id LIMIT ?",
+            var rows: [QueuedRow] = []
+            let committed = transaction {
+                rows = query("SELECT id, uuid, session_id, fix_ts, body, attempts FROM fixes WHERE session_id = ? AND state = 0 ORDER BY id LIMIT ?",
                              [.text(sessionId), .int(Int64(limit))]) { st in
-                QueuedRow(id: sqlite3_column_int64(st, 0), uuid: Self.column(st, 1) ?? "", sessionId: Self.column(st, 2) ?? "",
-                          fixTs: sqlite3_column_int64(st, 3), body: Self.column(st, 4) ?? "", attempts: Int(sqlite3_column_int64(st, 5)))
+                    QueuedRow(id: sqlite3_column_int64(st, 0), uuid: Self.column(st, 1) ?? "", sessionId: Self.column(st, 2) ?? "",
+                              fixTs: sqlite3_column_int64(st, 3), body: Self.column(st, 4) ?? "", attempts: Int(sqlite3_column_int64(st, 5)))
+                }
+                for i in rows.indices {
+                    if run("UPDATE fixes SET state = 1, attempts = attempts + 1 WHERE id = ?", [.int(rows[i].id)]) < 0 { return false }
+                    rows[i].attempts += 1
+                }
+                return true
             }
-            for i in rows.indices {
-                _ = run("UPDATE fixes SET state = 1, attempts = attempts + 1 WHERE id = ?", [.int(rows[i].id)])
-                rows[i].attempts += 1
-            }
-            if run("COMMIT", []) < 0 {
-                _ = run("ROLLBACK", [])
-                return []
-            }
-            return rows
+            return committed ? rows : []
         }
     }
 
     public func delete(ids: [Int64]) {
-        locked { forEach(ids, "DELETE FROM fixes WHERE id = ?") }
+        locked { updateIds(ids, "DELETE FROM fixes WHERE id IN") }
     }
 
     public func release(ids: [Int64]) {
-        locked { forEach(ids, "UPDATE fixes SET state = 0 WHERE id = ?") }
+        locked { updateIds(ids, "UPDATE fixes SET state = 0 WHERE id IN") }
     }
 
     public func deleteSession(_ sessionId: String) -> Int {
         locked {
-            _ = run("BEGIN IMMEDIATE", [])
-            let rows = max(0, run("DELETE FROM fixes WHERE session_id = ?", [.text(sessionId)]))
-            _ = run("DELETE FROM targets WHERE session_id = ?", [.text(sessionId)])
-            _ = run("COMMIT", [])
-            return rows
+            var rows = 0
+            let committed = transaction {
+                let deleted = run("DELETE FROM fixes WHERE session_id = ?", [.text(sessionId)])
+                if deleted < 0 || run("DELETE FROM targets WHERE session_id = ?", [.text(sessionId)]) < 0 { return false }
+                rows = deleted
+                return true
+            }
+            return committed ? rows : 0
         }
     }
 
@@ -224,16 +222,20 @@ public final class QueueStore {
 
     public func purge(nowMs: Int64) -> PurgeResult {
         locked {
-            _ = run("BEGIN IMMEDIATE", [])
-            let aged = max(0, run("""
-            DELETE FROM fixes WHERE state = 0 AND session_id IN (SELECT session_id FROM targets WHERE mode = 'all')
-            AND ? - fix_ts > (SELECT max_age_ms FROM targets WHERE targets.session_id = fixes.session_id)
-            """, [.int(nowMs)]))
-            let orphans = max(0, run("DELETE FROM fixes WHERE state = 0 AND session_id NOT IN (SELECT session_id FROM targets)", []))
-            let removed = query("SELECT session_id FROM targets WHERE ended = 1 AND session_id NOT IN (SELECT session_id FROM fixes) ORDER BY session_id", []) { Self.column($0, 0) ?? "" }
-            for id in removed { _ = run("DELETE FROM targets WHERE session_id = ?", [.text(id)]) }
-            _ = run("COMMIT", [])
-            return PurgeResult(rowsDeleted: aged + orphans, targetsRemoved: removed)
+            var result = PurgeResult(rowsDeleted: 0, targetsRemoved: [])
+            let committed = transaction {
+                let aged = run("""
+                DELETE FROM fixes WHERE state = 0 AND session_id IN (SELECT session_id FROM targets WHERE mode = 'all')
+                AND ? - fix_ts > (SELECT max_age_ms FROM targets WHERE targets.session_id = fixes.session_id)
+                """, [.int(nowMs)])
+                let orphans = run("DELETE FROM fixes WHERE state = 0 AND session_id NOT IN (SELECT session_id FROM targets)", [])
+                if aged < 0 || orphans < 0 { return false }
+                let removed = query("SELECT session_id FROM targets WHERE ended = 1 AND session_id NOT IN (SELECT session_id FROM fixes) ORDER BY session_id", []) { Self.column($0, 0) ?? "" }
+                for id in removed where run("DELETE FROM targets WHERE session_id = ?", [.text(id)]) < 0 { return false }
+                result = PurgeResult(rowsDeleted: aged + orphans, targetsRemoved: removed)
+                return true
+            }
+            return committed ? result : PurgeResult(rowsDeleted: 0, targetsRemoved: [])
         }
     }
 
@@ -267,12 +269,13 @@ public final class QueueStore {
 
     public func clear() -> [String] {
         locked {
-            _ = run("BEGIN IMMEDIATE", [])
-            _ = run("DELETE FROM fixes", [])
-            let removed = query("SELECT session_id FROM targets WHERE ended = 1 ORDER BY session_id", []) { Self.column($0, 0) ?? "" }
-            _ = run("DELETE FROM targets WHERE ended = 1", [])
-            _ = run("COMMIT", [])
-            return removed
+            var removed: [String] = []
+            let committed = transaction {
+                if run("DELETE FROM fixes", []) < 0 { return false }
+                removed = query("SELECT session_id FROM targets WHERE ended = 1 ORDER BY session_id", []) { Self.column($0, 0) ?? "" }
+                return run("DELETE FROM targets WHERE ended = 1", []) >= 0
+            }
+            return committed ? removed : []
         }
     }
 
@@ -321,11 +324,31 @@ public final class QueueStore {
         return Int(sqlite3_changes(db))
     }
 
-    private func forEach(_ ids: [Int64], _ sql: String) {
+    private func transaction(_ body: () -> Bool) -> Bool {
+        guard run("BEGIN IMMEDIATE", []) >= 0 else {
+            transactionError = lastError()
+            return false
+        }
+        if body() {
+            if run("COMMIT", []) >= 0 { return true }
+            transactionError = lastError()
+        } else {
+            transactionError = lastError()
+        }
+        _ = run("ROLLBACK", [])
+        return false
+    }
+
+    private func updateIds(_ ids: [Int64], _ prefix: String) {
         guard !ids.isEmpty else { return }
-        _ = run("BEGIN IMMEDIATE", [])
-        for id in ids { _ = run(sql, [.int(id)]) }
-        _ = run("COMMIT", [])
+        _ = transaction {
+            for start in stride(from: 0, to: ids.count, by: 500) {
+                let chunk = ids[start..<min(start + 500, ids.count)]
+                let marks = Array(repeating: "?", count: chunk.count).joined(separator: ",")
+                if run("\(prefix) (\(marks))", chunk.map { Bind.int($0) }) < 0 { return false }
+            }
+            return true
+        }
     }
 
     private func query<T>(_ sql: String, _ binds: [Bind], _ map: (OpaquePointer) -> T) -> [T] {

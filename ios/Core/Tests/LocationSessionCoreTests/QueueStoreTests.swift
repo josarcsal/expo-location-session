@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import Testing
 @testable import LocationSessionCore
 
@@ -88,5 +89,26 @@ import Testing
         var t = target("s1"); t.batch = BatchConfig(maxSize: 20, rootProperty: "pts"); t.refreshUrl = "https://x.dev/r"; t.refreshBodyJson = #"{"k":"v"}"#
         try s.saveTarget(t); #expect(s.target("s1") == t)
         t.url = "https://y.dev/l"; try s.saveTarget(t); #expect(s.target("s1") == t)
+    }
+
+    @Test func openFailureThrows() {
+        let path = NSTemporaryDirectory() + UUID().uuidString + "/missing/queue.sqlite"
+        #expect(throws: QueueStoreError.self) { try QueueStore(path: path) }
+    }
+
+    @Test func failedStatementRollsBackAndStoreStaysUsable() throws {
+        let (s, path) = try open(); try s.saveTarget(target("s1", .latest))
+        _ = try put(s, "s1", "a", mode: .latest)
+        var raw: OpaquePointer?
+        #expect(sqlite3_open(path, &raw) == SQLITE_OK)
+        defer { sqlite3_close(raw) }
+        #expect(sqlite3_exec(raw, "CREATE TRIGGER boom BEFORE DELETE ON fixes BEGIN SELECT RAISE(ABORT, 'boom'); END", nil, nil, nil) == SQLITE_OK)
+        #expect(throws: QueueStoreError.self) { try put(s, "s1", "b", mode: .latest) }
+        #expect(s.status().pending == 1)
+        #expect(sqlite3_exec(raw, "DROP TRIGGER boom; CREATE TRIGGER boom BEFORE UPDATE ON fixes BEGIN SELECT RAISE(ABORT, 'boom'); END", nil, nil, nil) == SQLITE_OK)
+        #expect(s.claim(sessionId: "s1", limit: 10).isEmpty)
+        #expect(sqlite3_exec(raw, "DROP TRIGGER boom", nil, nil, nil) == SQLITE_OK)
+        _ = try put(s, "s1", "c", mode: .latest)
+        #expect(s.claim(sessionId: "s1", limit: 10).map(\.attempts) == [1])
     }
 }
