@@ -133,7 +133,7 @@ class Uploader(
 
     private fun clearState() {
         epoch += 1
-        if (inFlight) requests.abandon()
+        if (inFlight) requests.abandon(interrupt = false)
         if (inFlightRows.isNotEmpty()) {
             val t = inFlightTarget
             if (t != null) giveBack(inFlightRows, t) else queue.release(inFlightRows)
@@ -298,7 +298,7 @@ class Uploader(
     private fun abandonDrainRequest(release: Boolean) {
         if (inFlightTarget?.ended != true) return
         epoch += 1
-        if (inFlight) requests.abandon()
+        if (inFlight) requests.abandon(interrupt = false)
         if (release) {
             connection?.let { conn -> watchdog.execute { runCatching { conn.disconnect() } } }
             queue.release(inFlightRows)
@@ -820,7 +820,7 @@ class Uploader(
 
     private fun abandonInFlight(durationMs: Long) {
         epoch += 1
-        requests.abandon()
+        requests.abandon(interrupt = true)
         connection?.let { conn -> watchdog.execute { runCatching { conn.disconnect() } } }
         if (refreshing) {
             ElsLog.info("auth", "refresh watchdog fired", mapOf("durationMs" to durationMs), inFlightTarget?.id ?: config?.id, level = "warn")

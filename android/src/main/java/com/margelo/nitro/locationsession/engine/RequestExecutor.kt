@@ -8,8 +8,8 @@ internal class RequestExecutor(private val name: String) {
 
     fun execute(task: () -> Unit) = executor.execute(task)
 
-    fun abandon() {
-        executor.shutdownNow()
+    fun abandon(interrupt: Boolean) {
+        if (interrupt) executor.shutdownNow() else executor.shutdown()
         executor = newExecutor()
     }
 

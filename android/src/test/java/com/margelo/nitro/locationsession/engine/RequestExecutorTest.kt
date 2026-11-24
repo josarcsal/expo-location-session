@@ -9,6 +9,11 @@ import org.junit.Test
 class RequestExecutorTest {
     @Test
     fun abandonedRequestDoesNotBlockTheNextOne() {
+        abandonThenRun(interrupt = true)
+        abandonThenRun(interrupt = false)
+    }
+
+    private fun abandonThenRun(interrupt: Boolean) {
         val requests = RequestExecutor("test.request")
         val started = CountDownLatch(1)
         val hung = CountDownLatch(1)
@@ -25,11 +30,10 @@ class RequestExecutorTest {
             }
         }
         assertTrue(started.await(1, TimeUnit.SECONDS))
-        requests.abandon()
+        requests.abandon(interrupt)
         requests.execute { next.countDown() }
         assertTrue(next.await(1, TimeUnit.SECONDS))
         assertEquals(1L, hung.count)
         hung.countDown()
     }
-
 }
