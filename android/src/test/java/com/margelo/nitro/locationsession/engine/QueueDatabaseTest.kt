@@ -56,28 +56,33 @@ class QueueDatabaseTest {
     @Test
     fun failedRecoveryLeavesTheStoreUnavailableAndTheNextOpenRetriesIt() {
         val recovered = QueueDatabase::class.java.getDeclaredField("recovered").apply { isAccessible = true }.get(null) as AtomicBoolean
+        val saved = recovered.get()
         recovered.set(false)
-        val file = File(ctx.filesDir, "${UUID.randomUUID()}/queue.sqlite").also { dirs.add(it.parentFile!!) }
-        file.parentFile?.mkdirs()
-        val seeded = QueueStore(ctx, file)
-        seeded.saveTarget(target("s1"))
-        seeded.insert("s1", "a", System.currentTimeMillis(), "{}", QueueMode.ALL, 10_000)
-        assertEquals(1, seeded.claim("s1", 10).size)
-        seeded.close()
-        withRaw(file) { it.execSQL("CREATE TRIGGER boom BEFORE UPDATE ON fixes BEGIN SELECT RAISE(ABORT, 'boom'); END") }
-        var now = 0L
-        val db = QueueDatabase(ctx, file) { now }
-        assertNull(db.store())
-        assertTrue(db.unavailable)
-        assertFalse(recovered.get())
-        withRaw(file) { it.execSQL("DROP TRIGGER boom") }
-        now = 5_000
-        val opened = db.store()
-        assertNotNull(opened)
-        assertFalse(db.unavailable)
-        assertTrue(recovered.get())
-        assertEquals(listOf("a"), opened?.claim("s1", 10)?.map { it.uuid })
-        opened?.close()
+        try {
+            val file = File(ctx.filesDir, "${UUID.randomUUID()}/queue.sqlite").also { dirs.add(it.parentFile!!) }
+            file.parentFile?.mkdirs()
+            val seeded = QueueStore(ctx, file)
+            seeded.saveTarget(target("s1"))
+            seeded.insert("s1", "a", System.currentTimeMillis(), "{}", QueueMode.ALL, 10_000)
+            assertEquals(1, seeded.claim("s1", 10).size)
+            seeded.close()
+            withRaw(file) { it.execSQL("CREATE TRIGGER boom BEFORE UPDATE ON fixes BEGIN SELECT RAISE(ABORT, 'boom'); END") }
+            var now = 0L
+            val db = QueueDatabase(ctx, file) { now }
+            assertNull(db.store())
+            assertTrue(db.unavailable)
+            assertFalse(recovered.get())
+            withRaw(file) { it.execSQL("DROP TRIGGER boom") }
+            now = 5_000
+            val opened = db.store()
+            assertNotNull(opened)
+            assertFalse(db.unavailable)
+            assertTrue(recovered.get())
+            assertEquals(listOf("a"), opened?.claim("s1", 10)?.map { it.uuid })
+            opened?.close()
+        } finally {
+            recovered.set(saved)
+        }
     }
 
     @Test

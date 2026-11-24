@@ -13,6 +13,7 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -25,6 +26,7 @@ import org.robolectric.annotation.Config
 class UploaderTest {
     private val ctx: Context = ApplicationProvider.getApplicationContext()
     private val requests = AtomicInteger()
+    private val accepts = AtomicInteger()
     private lateinit var server: ServerSocket
     private lateinit var dir: File
 
@@ -34,6 +36,7 @@ class UploaderTest {
         Thread {
             while (!server.isClosed) {
                 val socket = runCatching { server.accept() }.getOrNull() ?: break
+                accepts.incrementAndGet()
                 socket.use {
                     val input = it.getInputStream().bufferedReader(Charsets.ISO_8859_1)
                     var length = 0
@@ -90,6 +93,15 @@ class UploaderTest {
         throw AssertionError("expected $count settled requests, got ${requests.get()}")
     }
 
+    private fun assertNothingSent(u: Uploader, count: Int) {
+        Thread.sleep(300)
+        idle()
+        idle()
+        assertFalse(u.isBusy)
+        assertEquals(count, requests.get())
+        assertEquals(count, accepts.get())
+    }
+
     @Test
     fun newFixWaitsForTheBackoffAfterAFailure() {
         val u = uploader()
@@ -100,9 +112,7 @@ class UploaderTest {
 
         u.put(fix(nowMs() + 1))
         u.pump()
-        Thread.sleep(300)
-        idle()
-        assertEquals(1, requests.get())
+        assertNothingSent(u, 1)
 
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(5_000))
         awaitSettled(u, 2)
@@ -111,9 +121,7 @@ class UploaderTest {
         u.put(fix(nowMs() + 2))
         u.pump()
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(9_000))
-        Thread.sleep(300)
-        idle()
-        assertEquals(2, requests.get())
+        assertNothingSent(u, 2)
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(1_000))
         awaitSettled(u, 3)
         assertEquals(3, requests.get())
