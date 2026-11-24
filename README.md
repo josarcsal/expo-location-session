@@ -44,9 +44,11 @@ Add the config plugin to `app.json` and run `npx expo prebuild`:
 | `locationAlwaysText` | existing value, else `Allow $(PRODUCT_NAME) to access your location in the background` | iOS `NSLocationAlwaysAndWhenInUseUsageDescription` |
 | `enableBackgroundLocationPermission` | `true` | Adds `ACCESS_BACKGROUND_LOCATION` to the Android manifest. Set it to `false` if you do not want to file the Google Play background-location declaration; Android sessions then pause when the process dies (see [Survival](#survival)). |
 | `androidNotificationIcon` | none | Path to a white-on-transparent PNG used as the small icon of the Android foreground-service notification. Without it the notification uses a system location icon. |
-| `backgroundSync` | `false` | Lets the OS deliver queued locations of ended sessions while the app is closed (see [Background delivery](#background-delivery)). Android: adds the `expo-location-session.backgroundSync` meta-data. iOS: adds `processing` to `UIBackgroundModes` and `<bundle id>.els.queue-sync` to `BGTaskSchedulerPermittedIdentifiers`. |
+| `backgroundSync` | `false` | Lets the OS deliver queued locations of ended sessions while the app is closed (see [Background delivery](#background-delivery)). Android: adds the `expo-location-session.backgroundSync` meta-data. iOS: adds `processing` to `UIBackgroundModes` and `<bundle id>.els.queue-sync` to `BGTaskSchedulerPermittedIdentifiers`. When off, Android: removes WorkManager's startup initializer and `RECEIVE_BOOT_COMPLETED` from the merged manifest (see below). |
 
 The plugin always adds `location` to iOS `UIBackgroundModes`, keeping any modes already there (and `processing` with `backgroundSync`).
+
+The library depends on `androidx.work`. With `backgroundSync` off, the plugin marks WorkManager's initializer (`androidx.work.WorkManagerInitializer` in the `androidx.startup.InitializationProvider`) and the `RECEIVE_BOOT_COMPLETED` permission with `tools:node="remove"`, so WorkManager does not start with your app and your merged manifest gains no permission over 0.1. A `RECEIVE_BOOT_COMPLETED` that your app manifest declares itself is kept. The removal applies to the whole merged manifest: if your app, or another library in it, uses WorkManager or needs `RECEIVE_BOOT_COMPLETED`, either turn `backgroundSync` on or add them back in your app (for WorkManager, an on-demand initializer through `Configuration.Provider`, or a config plugin that drops the `tools:node="remove"` lines). With `backgroundSync` on, the manifest is left as WorkManager ships it.
 
 On Android the plugin also keeps the session, its headers, the upload queue and the debug log out of Auto Backup and device transfer (see [Backup](#backup)). When neither `android:fullBackupContent` nor `android:dataExtractionRules` is set, it points them at the library's rules. When the app already references its own rules files, it adds the library's excludes to those files, or prints a warning when it cannot.
 
@@ -97,7 +99,20 @@ and on Android add this inside `<application>`:
 <meta-data android:name="expo-location-session.backgroundSync" android:value="true" />
 ```
 
-The library depends on `androidx.work`. WorkManager's default initializer runs at app start in every app that includes the library, whether or not `backgroundSync` is on.
+The library depends on `androidx.work`. Its default initializer runs at app start, and its manifest adds `RECEIVE_BOOT_COMPLETED`. Without `backgroundSync` you can remove both from your app manifest (with `xmlns:tools="http://schemas.android.com/tools"` on `<manifest>`), as the Expo plugin does; the library never calls WorkManager without the meta-data above. Keep them if your app or another library uses WorkManager or needs the permission.
+
+```xml
+<uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" tools:node="remove" />
+<application>
+  <provider
+    android:name="androidx.startup.InitializationProvider"
+    android:authorities="${applicationId}.androidx-startup"
+    android:exported="false"
+    tools:node="merge">
+    <meta-data android:name="androidx.work.WorkManagerInitializer" android:value="androidx.startup" tools:node="remove" />
+  </provider>
+</application>
+```
 
 To keep the session out of Auto Backup, add the library's rules to `<application>` (see [Backup](#backup)):
 
@@ -459,7 +474,7 @@ Only the latest position matters. There is one pending slot: a newer location re
 | `410` | Stop with `rejected` (the server ended the session). |
 | Other `4xx` | The location is dropped, an `error` event with `UPLOAD_DROPPED` is emitted, the session keeps running. |
 | `3xx` | Redirects are never followed. Treated like a `5xx`: the location stays pending and is retried with backoff. Point `upload.url` at the final address. |
-| `5xx`, timeout, no network | The location stays pending. Retries back off 5 s, 10 s, 20 s, 40 s, then every 60 s while the process is alive, and a new location triggers a new attempt. |
+| `5xx`, timeout, no network | The location stays pending. Retries back off 5 s, 10 s, 20 s, 40 s, then every 60 s while the process is alive. A new location replaces the pending one and is sent when the backoff timer fires; only connectivity returning ends the wait early. |
 
 Throttle: after a success, locations that arrive within `minIntervalMs` stay pending and are sent when the interval has passed (by a timer while the process is alive, or with the next location).
 
@@ -619,10 +634,10 @@ Rows of an ended session are delivered while the process is alive, when connecti
 
 When a location cannot be written to the queue (the database cannot be opened, the disk is full, or any other write error), the library reports `QUEUE_UNAVAILABLE` once and keeps the session running:
 
-- `latest` (default): the newest location is kept in memory and uploaded exactly as in 0.1: the same body, throttle, backoff, final-upload budget and status handling. A newer location replaces it; a `2xx` or a drop clears it; a retry keeps it. Once writes succeed again, new locations go back to the queue, and a location still in memory is never overtaken by an older queued one. When the session stops, the location in memory is discarded, as the pending location is in 0.1. It does not survive process death.
+- `latest` (default): the newest location is kept in memory and uploaded with the same body, throttle, backoff, final-upload budget and status handling as a queued one. A newer location replaces it; a `2xx` or a drop clears it; a retry keeps it. Once writes succeed again, new locations go back to the queue, and a location still in memory is never overtaken by an older queued one. When the session stops, the location in memory is discarded, as the pending location is in 0.1. It does not survive process death.
 - `all`: locations are never sent around the queue. Up to 500 are kept in memory, oldest dropped first (`QUEUE_TRIMMED` once per outage), and written in order on the next location and before each send attempt. Rows already in the queue keep being sent meanwhile, as far as the database allows. Locations still in memory when the process dies are lost.
 - When the server accepts a request but its rows cannot be deleted, they are remembered in memory as sent: they are not sent again by this process, are left out of `getQueueStatus()`, and the delete is retried on the next queue operation. If the process dies before that, they are sent again at the next launch (delivery is at-least-once; deduplicate on the `id` template field, or on `sessionId` with the location `timestamp`). Rows that cannot be made pending again after a failed request are retried the same way.
-- `QUEUE_UNAVAILABLE` is cleared once a write succeeds and nothing is left in memory.
+- `QUEUE_UNAVAILABLE` is cleared once a location is written to the queue again and nothing is left in memory.
 
 ## Stop policy
 
@@ -688,7 +703,8 @@ In a bare app with its own rules files, add these excludes to them yourself (ins
 
 With none of the new options, the upload contract is the one of 0.1. Other changes to know about:
 
-- Android: the library depends on `androidx.work:work-runtime`, even with `backgroundSync` off. Its manifest is merged into your app: WorkManager's startup initializer (through `androidx.startup`) and its permissions, such as `RECEIVE_BOOT_COMPLETED`, appear in your merged manifest.
+- After a failed upload, new locations wait for the backoff instead of being sent immediately. In 0.1 a new location triggered a new attempt at once (on iOS, about one request per location against a failing server). The backoff (5 s, 10 s, 20 s, 40 s, then 60 s) is now always respected; a new location still replaces the pending one, and connectivity returning still resets the backoff and sends at once. The request body is unchanged.
+- Android: the library depends on `androidx.work:work-runtime`, even with `backgroundSync` off. With the Expo plugin and `backgroundSync` off, WorkManager's startup initializer and `RECEIVE_BOOT_COMPLETED` are removed from your merged manifest (see [Expo](#expo)); if your app uses WorkManager itself, re-add the initializer or turn `backgroundSync` on. In a bare app they are merged unless you remove them (see [Bare React Native](#bare-react-native)).
 - A connectivity monitor runs in every queue mode, the default included, while a session runs or rows are pending. When the network returns it resets the backoff and uploads at once.
 - Delivery is at-least-once: a request whose response is lost (timeout, process killed) is sent again, so the server may receive the same location twice. Deduplicate on `sessionId` with the location `timestamp`, or on the `id` template field.
 - A new error code, `QUEUE_UNAVAILABLE`, reports that the queue database cannot be opened or written (see [Events](#events)). In the default mode the newest location is still uploaded from memory meanwhile (see [Storage failure](#storage-failure)).
