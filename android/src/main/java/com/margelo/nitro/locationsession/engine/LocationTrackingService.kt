@@ -59,17 +59,16 @@ class LocationTrackingService : Service() {
                 SessionEngine.resumeIfNeeded(app)
                 SessionEngine.syncQueue(app) {}
             }
-            val c = SessionEngine.activeConfig
-            if (c != null && activeBefore) SessionEngine.refreshUpdates(app)
+            if (SessionEngine.activeConfig != null && activeBefore) SessionEngine.refreshUpdates(app)
             if (promotedNow) LaunchGate.onPromoted(app)
-            main.post { settle(c) }
+            main.post { settle() }
         }
         return if (promoted) START_STICKY else START_NOT_STICKY
     }
 
-    private fun settle(c: SessionConfig?) {
+    private fun settle() {
         if (destroyed) return
-        val config = c ?: SessionEngine.activeConfig
+        val config = SessionEngine.activeConfig
         if (config == null || !promoted) {
             if (config == null) ElsLog.info("service", "service has no active session; stopping") else ElsLog.info("service", "service not promoted; stopping", level = "warn")
             if (promoted && promote(notification(PLACEHOLDER_TITLE, null))) {
