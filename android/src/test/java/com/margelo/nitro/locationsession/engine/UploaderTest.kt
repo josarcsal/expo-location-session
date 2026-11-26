@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -61,8 +62,8 @@ class UploaderTest {
         dir.deleteRecursively()
     }
 
-    private fun uploader(): Uploader =
-        Uploader(ctx, SessionStore(ctx), QueueDatabase(ctx, File(dir, "queue.sqlite")), TargetCredentials(ctx), EventBus())
+    private fun uploader(events: EventBus = EventBus()): Uploader =
+        Uploader(ctx, SessionStore(ctx), QueueDatabase(ctx, File(dir, "queue.sqlite")), TargetCredentials(ctx), events)
 
     private fun config() = SessionConfig(
         id = "s1",
@@ -81,13 +82,20 @@ class UploaderTest {
 
     private fun fix(ts: Long) = Fix(latitude = 19.43, longitude = -99.13, accuracy = 5.0, timestampMs = ts)
 
-    private fun idle() = shadowOf(Looper.getMainLooper()).idle()
+    private fun idleEngine() = shadowOf(EngineThread.looper).idle()
+
+    private fun <T> onEngine(block: () -> T): T {
+        var result: Result<T>? = null
+        EngineThread.post { result = runCatching(block) }
+        idleEngine()
+        return result!!.getOrThrow()
+    }
 
     private fun awaitSettled(u: Uploader, count: Int) {
         val deadline = System.currentTimeMillis() + 5_000
         while (System.currentTimeMillis() < deadline) {
-            idle()
-            if (requests.get() >= count && !u.isBusy) return
+            idleEngine()
+            if (requests.get() >= count && !onEngine { u.isBusy }) return
             Thread.sleep(10)
         }
         throw AssertionError("expected $count settled requests, got ${requests.get()}")
@@ -95,9 +103,9 @@ class UploaderTest {
 
     private fun assertNothingSent(u: Uploader, count: Int) {
         Thread.sleep(300)
-        idle()
-        idle()
-        assertFalse(u.isBusy)
+        idleEngine()
+        idleEngine()
+        assertFalse(onEngine { u.isBusy })
         assertEquals(count, requests.get())
         assertEquals(count, accepts.get())
     }
@@ -105,26 +113,62 @@ class UploaderTest {
     @Test
     fun newFixWaitsForTheBackoffAfterAFailure() {
         val u = uploader()
-        u.begin(config(), null, null)
-        u.put(fix(nowMs()))
-        u.pump()
+        onEngine {
+            u.begin(config(), null, null)
+            u.put(fix(nowMs()))
+            u.pump()
+        }
         awaitSettled(u, 1)
 
-        u.put(fix(nowMs() + 1))
-        u.pump()
+        onEngine {
+            u.put(fix(nowMs() + 1))
+            u.pump()
+        }
         assertNothingSent(u, 1)
 
-        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(5_000))
+        shadowOf(EngineThread.looper).idleFor(Duration.ofMillis(5_000))
         awaitSettled(u, 2)
         assertEquals(2, requests.get())
 
-        u.put(fix(nowMs() + 2))
-        u.pump()
-        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(9_000))
+        onEngine {
+            u.put(fix(nowMs() + 2))
+            u.pump()
+        }
+        shadowOf(EngineThread.looper).idleFor(Duration.ofMillis(9_000))
         assertNothingSent(u, 2)
-        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(1_000))
+        shadowOf(EngineThread.looper).idleFor(Duration.ofMillis(1_000))
         awaitSettled(u, 3)
         assertEquals(3, requests.get())
-        u.reset()
+        onEngine { u.reset() }
+    }
+
+    @Test
+    fun uploadResultIsEmittedOnTheEngineThread() {
+        val events = EventBus()
+        var name: String? = null
+        events.add("upload") { name = Thread.currentThread().name }
+        val u = uploader(events)
+        onEngine {
+            u.begin(config(), null, null)
+            u.put(fix(nowMs()))
+            u.pump()
+        }
+        awaitSettled(u, 1)
+        assertEquals("els-engine", name)
+        onEngine { u.reset() }
+    }
+
+    @Test
+    fun backoffIsScheduledOnTheEngineLooperNotMain() {
+        val u = uploader()
+        onEngine {
+            u.begin(config(), null, null)
+            u.put(fix(nowMs()))
+            u.pump()
+        }
+        awaitSettled(u, 1)
+        assertTrue(shadowOf(Looper.getMainLooper()).isIdle)
+        assertTrue(shadowOf(EngineThread.looper).nextScheduledTaskTime > Duration.ZERO)
+        onEngine { u.reset() }
     }
 }

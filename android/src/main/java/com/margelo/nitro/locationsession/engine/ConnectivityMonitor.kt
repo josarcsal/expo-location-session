@@ -4,13 +4,10 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
-import android.os.Handler
-import android.os.Looper
 import com.margelo.nitro.locationsession.core.ConnectivityEdge
 
 class ConnectivityMonitor(context: Context) {
     private val manager = context.applicationContext.getSystemService(ConnectivityManager::class.java)
-    private val main = Handler(Looper.getMainLooper())
     private var callback: ConnectivityManager.NetworkCallback? = null
     private var edge = ConnectivityEdge()
     private var current: Network? = null
@@ -19,7 +16,7 @@ class ConnectivityMonitor(context: Context) {
     private var registerFailedAtMs: Long? = null
 
     fun start(onRegained: () -> Unit) {
-        assertMain()
+        assertEngine()
         if (callback != null || manager == null) return
         registerFailedAtMs?.let { if (nowMs() - it < REGISTER_RETRY_MS) return }
         generation += 1
@@ -30,7 +27,7 @@ class ConnectivityMonitor(context: Context) {
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
                 val ok = satisfied(caps)
-                main.post {
+                EngineThread.post {
                     if (gen != generation) return@post
                     current = network
                     update(ok, onRegained)
@@ -38,7 +35,7 @@ class ConnectivityMonitor(context: Context) {
             }
 
             override fun onLost(network: Network) {
-                main.post {
+                EngineThread.post {
                     if (gen != generation || network != current) return@post
                     update(false, onRegained)
                 }
@@ -57,7 +54,7 @@ class ConnectivityMonitor(context: Context) {
     }
 
     fun stop() {
-        assertMain()
+        assertEngine()
         generation += 1
         callback?.let { cb -> runCatching { manager?.unregisterNetworkCallback(cb) } }
         callback = null
@@ -74,14 +71,14 @@ class ConnectivityMonitor(context: Context) {
                 if (gen == generation) onRegained()
             }
             pending = r
-            main.postDelayed(r, REGAIN_DELAY_MS)
+            EngineThread.postDelayed(r, REGAIN_DELAY_MS)
         } else if (!satisfied) {
             cancelPending()
         }
     }
 
     private fun cancelPending() {
-        pending?.let { main.removeCallbacks(it) }
+        pending?.let { EngineThread.removeCallbacks(it) }
         pending = null
     }
 

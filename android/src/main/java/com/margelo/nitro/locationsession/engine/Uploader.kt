@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.BatteryManager
-import android.os.Handler
 import android.os.Looper
 import com.margelo.nitro.locationsession.core.Battery
 import com.margelo.nitro.locationsession.core.FallbackSlot
@@ -59,7 +58,6 @@ class Uploader(
     var onStop: ((StopReason) -> Unit)? = null
 
     private val appContext = context.applicationContext
-    private val main = Handler(Looper.getMainLooper())
     private val connectivity = ConnectivityMonitor(context)
     private val requests = RequestExecutor("expo-location-session.upload")
     private val watchdog = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "expo-location-session.upload-watchdog") }
@@ -108,7 +106,7 @@ class Uploader(
     }
 
     fun begin(c: SessionConfig, pending: Fix?, lastSuccessMs: Long?) {
-        assertMain()
+        assertEngine()
         clearState()
         notifySettled()
         fallback.keep(c.id)
@@ -125,7 +123,7 @@ class Uploader(
     }
 
     fun reset() {
-        assertMain()
+        assertEngine()
         clearState()
         evaluateConnectivity()
         notifySettled()
@@ -170,12 +168,12 @@ class Uploader(
     }
 
     fun discardFallback() {
-        assertMain()
+        assertEngine()
         fallback.keep(null)
     }
 
     fun evaluateConnectivity() {
-        assertMain()
+        assertEngine()
         if (config != null || queue.buffered > 0 || (queue.status()?.pending ?: 0) > 0) {
             connectivity.start { connectivityRegained() }
         } else {
@@ -210,7 +208,7 @@ class Uploader(
     }
 
     fun drain(budgetMs: Long?, completion: (Int) -> Unit) {
-        assertMain()
+        assertEngine()
         val waiter = Waiter(drained, completion)
         if (inFlight || flushCompletion != null || pass != null) {
             dirty = true
@@ -221,7 +219,7 @@ class Uploader(
     }
 
     fun cancelDrain(release: Boolean) {
-        assertMain()
+        assertEngine()
         abandonDrainRequest(release)
         if (config == null) cancelTimer()
         if (pass == null) pass = Pass(emptyList())
@@ -241,7 +239,7 @@ class Uploader(
                 drainBudgetReached()
             }
             drainBudget = r
-            main.postDelayed(r, maxOf(0L, budgetMs))
+            EngineThread.postDelayed(r, maxOf(0L, budgetMs))
         }
         prepareQueue()
         queue.purge()
@@ -358,16 +356,16 @@ class Uploader(
             drainIfIdle()
         }
         endedRetry = r
-        main.postDelayed(r, maxOf(0L, delayMs))
+        EngineThread.postDelayed(r, maxOf(0L, delayMs))
     }
 
     private fun cancelEndedRetry() {
-        endedRetry?.let { main.removeCallbacks(it) }
+        endedRetry?.let { EngineThread.removeCallbacks(it) }
         endedRetry = null
     }
 
     private fun cancelDrainBudget() {
-        drainBudget?.let { main.removeCallbacks(it) }
+        drainBudget?.let { EngineThread.removeCallbacks(it) }
         drainBudget = null
     }
 
@@ -392,7 +390,7 @@ class Uploader(
     }
 
     fun put(raw: Fix) {
-        assertMain()
+        assertEngine()
         val c = config ?: return
         val fix = sanitize(raw)
         if (fix == null) {
@@ -410,7 +408,7 @@ class Uploader(
     }
 
     fun hiddenRows(): Set<Long> {
-        assertMain()
+        assertEngine()
         val c = config ?: return emptySet()
         if (c.sync.mode != QueueMode.LATEST) return emptySet()
         val row = queue.store()?.latestPending(c.id) ?: return emptySet()
@@ -428,11 +426,11 @@ class Uploader(
             }
         }
         healthProbe = r
-        main.postDelayed(r, HEALTH_PROBE_MS)
+        EngineThread.postDelayed(r, HEALTH_PROBE_MS)
     }
 
     private fun cancelHealthProbe() {
-        healthProbe?.let { main.removeCallbacks(it) }
+        healthProbe?.let { EngineThread.removeCallbacks(it) }
         healthProbe = null
     }
 
@@ -477,7 +475,7 @@ class Uploader(
     }
 
     fun pump() {
-        assertMain()
+        assertEngine()
         val c = config ?: return
         if (inFlight || flushCompletion != null || refreshHold || (backingOff && timer != null) || !hasPending(c)) return
         refreshed.clear()
@@ -493,7 +491,7 @@ class Uploader(
     }
 
     fun flush(completion: () -> Unit) {
-        assertMain()
+        assertEngine()
         if (!inFlight) prepareQueue()
         val c = config
         if (c == null || (!inFlight && !hasPending(c))) {
@@ -509,7 +507,7 @@ class Uploader(
             flushDeadlineReached()
         }
         flushDeadline = r
-        main.postDelayed(r, FINAL_UPLOAD_BUDGET_MS)
+        EngineThread.postDelayed(r, FINAL_UPLOAD_BUDGET_MS)
         if (!inFlight) {
             refreshed.clear()
             send(running(c))
@@ -517,7 +515,7 @@ class Uploader(
     }
 
     fun whenSettled(callback: () -> Unit) {
-        assertMain()
+        assertEngine()
         if (isBusy) settledWaiters.add(callback) else callback()
     }
 
@@ -631,21 +629,21 @@ class Uploader(
             fire()
         }
         timer = r
-        main.postDelayed(r, maxOf(0L, delayMs))
+        EngineThread.postDelayed(r, maxOf(0L, delayMs))
     }
 
     private fun cancelTimer() {
-        timer?.let { main.removeCallbacks(it) }
+        timer?.let { EngineThread.removeCallbacks(it) }
         timer = null
     }
 
     private fun cancelFlushDeadline() {
-        flushDeadline?.let { main.removeCallbacks(it) }
+        flushDeadline?.let { EngineThread.removeCallbacks(it) }
         flushDeadline = null
     }
 
     private fun cancelSendWatchdog() {
-        sendWatchdog?.let { main.removeCallbacks(it) }
+        sendWatchdog?.let { EngineThread.removeCallbacks(it) }
         sendWatchdog = null
     }
 
@@ -789,7 +787,7 @@ class Uploader(
         val url = t.url
         requests.execute {
             val status = post(url, headers, body, sentEpoch, t.id, "upload")?.status
-            main.post { finish(sentEpoch, status, nowMs() - startedAt) }
+            EngineThread.post { finish(sentEpoch, status, nowMs() - startedAt) }
         }
     }
 
@@ -815,7 +813,7 @@ class Uploader(
             if (sentEpoch == epoch) abandonInFlight(nowMs() - startedAt)
         }
         sendWatchdog = r
-        main.postDelayed(r, (TIMEOUT_MS + 5_000).toLong())
+        EngineThread.postDelayed(r, (TIMEOUT_MS + 5_000).toLong())
     }
 
     private fun abandonInFlight(durationMs: Long) {
@@ -1048,7 +1046,7 @@ class Uploader(
         startSendWatchdog(sentEpoch, startedAt)
         requests.execute {
             val response = post(r.url, headers, body, sentEpoch, t.id, "auth")
-            main.post {
+            EngineThread.post {
                 if (sentEpoch != epoch) {
                     ElsLog.debug("auth", "stale refresh response ignored", mapOf("status" to response?.status))
                 } else {

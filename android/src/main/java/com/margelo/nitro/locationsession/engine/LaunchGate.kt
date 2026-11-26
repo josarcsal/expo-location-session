@@ -7,8 +7,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.GeofencingEvent
 import com.google.android.gms.location.LocationResult
@@ -20,7 +18,11 @@ class LaunchGate : BroadcastReceiver() {
         val kind = Kind.fromAction(intent.action) ?: return
         DebugLogger.launched("gate", mapOf("gateKind" to kind.route))
         val pending = goAsync()
-        finishOnce(pending) { finish -> onDelivery(context, kind, intent, finish) }
+        val receivedAt = nowMs()
+        val app = context.applicationContext
+        EngineThread.post {
+            finishOnce(pending, receivedAt) { finish -> onDelivery(app, kind, intent, finish) }
+        }
     }
 
     enum class Kind(val action: String, val route: String, val mutable: Boolean) {
@@ -57,7 +59,7 @@ class LaunchGate : BroadcastReceiver() {
         }
 
         fun onDelivery(ctx: Context, kind: Kind, intent: Intent, finish: () -> Unit) {
-            assertMain()
+            assertEngine()
             deliveryRoute = kind.route
             deniedDuringDelivery = false
             try {
@@ -107,10 +109,10 @@ class LaunchGate : BroadcastReceiver() {
                         finish()
                     }
                     Kind.PACKAGE_REPLACED -> {
-                        val budget = Handler(Looper.getMainLooper())
-                        budget.postDelayed({ finish() }, PACKAGE_REPLACED_DRAIN_BUDGET_MS)
+                        val budget = Runnable { finish() }
+                        EngineThread.postDelayed(budget, PACKAGE_REPLACED_DRAIN_BUDGET_MS)
                         SessionEngine.syncQueue(ctx, PACKAGE_REPLACED_DRAIN_BUDGET_MS) {
-                            budget.removeCallbacksAndMessages(null)
+                            EngineThread.removeCallbacks(budget)
                             finish()
                         }
                     }
@@ -123,7 +125,7 @@ class LaunchGate : BroadcastReceiver() {
         }
 
         fun promote(ctx: Context) {
-            assertMain()
+            assertEngine()
             if (LocationTrackingService.isForeground || startPending || deniedDuringDelivery) {
                 ElsLog.debug(
                     "gate",
@@ -177,7 +179,7 @@ class LaunchGate : BroadcastReceiver() {
         }
 
         fun restart(ctx: Context, route: String) {
-            assertMain()
+            assertEngine()
             if (!SessionEngine.isActive || LocationTrackingService.isForeground) return
             deliveryRoute = route
             try {
@@ -188,12 +190,12 @@ class LaunchGate : BroadcastReceiver() {
         }
 
         fun serviceStartDelivered() {
-            assertMain()
+            assertEngine()
             startPending = false
         }
 
         fun onPromoted(ctx: Context) {
-            assertMain()
+            assertEngine()
             val route = startedRoute ?: "systemRestart"
             startedRoute = null
             val store = SessionStore(ctx)
@@ -289,9 +291,8 @@ private var openWindows = 0
 internal var asyncDeadlineMs = 0L
     private set
 
-internal fun finishOnce(pending: BroadcastReceiver.PendingResult, run: (() -> Unit) -> Unit) {
-    val handler = Handler(Looper.getMainLooper())
-    val openedAt = nowMs()
+internal fun finishOnce(pending: BroadcastReceiver.PendingResult, openedAt: Long, run: (() -> Unit) -> Unit) {
+    assertEngine()
     var done = false
     openWindows += 1
     asyncDeadlineMs = openedAt + ASYNC_BUDGET_MS
@@ -304,10 +305,11 @@ internal fun finishOnce(pending: BroadcastReceiver.PendingResult, run: (() -> Un
             pending.finish()
         }
     }
-    handler.postDelayed(finish, ASYNC_BUDGET_MS)
+    val budget = Runnable { finish() }
+    EngineThread.postDelayed(budget, maxOf(0L, openedAt + ASYNC_BUDGET_MS - nowMs()))
     try {
         run {
-            handler.removeCallbacksAndMessages(null)
+            EngineThread.removeCallbacks(budget)
             finish()
         }
     } catch (e: Exception) {

@@ -1,8 +1,6 @@
 package com.margelo.nitro.locationsession.engine
 
 import android.content.Context
-import android.os.Handler
-import android.os.Looper
 import androidx.work.Worker
 import androidx.work.WorkerParameters
 import com.margelo.nitro.locationsession.core.shouldScheduleSync
@@ -10,7 +8,6 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 class QueueSyncWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params) {
-    private val main = Handler(Looper.getMainLooper())
     private val done = CountDownLatch(1)
 
     @Volatile
@@ -18,7 +15,7 @@ class QueueSyncWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, para
 
     override fun doWork(): Result {
         val ctx = applicationContext
-        main.post {
+        EngineThread.post {
             ElsLog.debug("sync", "background sync started", mapOf("attempt" to runAttemptCount))
             SessionEngine.syncQueue(ctx, DRAIN_BUDGET_MS) {
                 val status = runCatching { SessionEngine.queueStatus(ctx) }.getOrNull()
@@ -29,7 +26,7 @@ class QueueSyncWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, para
         }
         if (!done.await(AWAIT_MS, TimeUnit.MILLISECONDS)) {
             ElsLog.debug("sync", "background sync timed out", level = "warn")
-            main.post { SessionEngine.cancelSync(ctx) }
+            EngineThread.post { SessionEngine.cancelSync(ctx) }
             return Result.retry()
         }
         return if (remaining) Result.retry() else Result.success()
@@ -38,7 +35,7 @@ class QueueSyncWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, para
     override fun onStopped() {
         if (done.count == 0L) return
         val ctx = applicationContext
-        main.post {
+        EngineThread.post {
             ElsLog.debug("sync", "background sync stopped")
             SessionEngine.cancelSync(ctx)
         }

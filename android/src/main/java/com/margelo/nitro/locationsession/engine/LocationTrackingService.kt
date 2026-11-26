@@ -8,13 +8,17 @@ import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.margelo.nitro.locationsession.core.SessionConfig
 
 class LocationTrackingService : Service() {
+    private val main = Handler(Looper.getMainLooper())
     private var promoted = false
+    private var destroyed = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -26,42 +30,56 @@ class LocationTrackingService : Service() {
         promoted = promote(placeholder)
         isForeground = promoted
         ElsLog.debug("service", "service created", mapOf("promoted" to promoted), level = "info")
-        if (promoted) LaunchGate.onPromoted(this)
+        if (promoted) {
+            val app = applicationContext
+            EngineThread.post { LaunchGate.onPromoted(app) }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         DebugLogger.launched(if (intent == null) "stickyRestart" else "serviceStart")
-        LaunchGate.serviceStartDelivered()
         ElsLog.debug(
             "service",
             "service start command",
             mapOf("intent" to (intent != null), "flags" to flags, "startId" to startId, "promoted" to promoted),
             level = "info"
         )
-        val activeBefore = SessionEngine.isActive
-        if (intent == null) {
-            ElsLog.info("service", "service restarted by the system")
-            SessionEngine.resumeIfNeeded(this)
-            SessionEngine.syncQueue(this) {}
-        }
-        val c = SessionEngine.activeConfig
-        if (c != null && activeBefore) SessionEngine.refreshUpdates(this)
+        var promotedNow = false
         if (!promoted) {
             promoted = promote(notification(PLACEHOLDER_TITLE, null))
             isForeground = promoted
-            if (promoted) LaunchGate.onPromoted(this)
+            promotedNow = promoted
         }
-        if (c == null || !promoted) {
-            if (c == null) ElsLog.info("service", "service has no active session; stopping") else ElsLog.info("service", "service not promoted; stopping", level = "warn")
+        val app = applicationContext
+        EngineThread.post {
+            LaunchGate.serviceStartDelivered()
+            val activeBefore = SessionEngine.isActive
+            if (intent == null) {
+                ElsLog.info("service", "service restarted by the system")
+                SessionEngine.resumeIfNeeded(app)
+                SessionEngine.syncQueue(app) {}
+            }
+            val c = SessionEngine.activeConfig
+            if (c != null && activeBefore) SessionEngine.refreshUpdates(app)
+            if (promotedNow) LaunchGate.onPromoted(app)
+            main.post { settle(c) }
+        }
+        return if (promoted) START_STICKY else START_NOT_STICKY
+    }
+
+    private fun settle(c: SessionConfig?) {
+        if (destroyed) return
+        val config = c ?: SessionEngine.activeConfig
+        if (config == null || !promoted) {
+            if (config == null) ElsLog.info("service", "service has no active session; stopping") else ElsLog.info("service", "service not promoted; stopping", level = "warn")
             if (promoted && promote(notification(PLACEHOLDER_TITLE, null))) {
                 ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             }
             isForeground = false
             stopSelf()
-            return START_NOT_STICKY
+            return
         }
-        showConfigured(c)
-        return START_STICKY
+        showConfigured(config)
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
@@ -74,7 +92,8 @@ class LocationTrackingService : Service() {
         )
         if (SessionEngine.isActive && !isForeground) {
             ElsLog.info("service", "task removed while the service is not foreground; asking the gate to restart")
-            LaunchGate.restart(this, "taskRemoved")
+            val app = applicationContext
+            EngineThread.post { LaunchGate.restart(app, "taskRemoved") }
         }
     }
 
@@ -85,6 +104,7 @@ class LocationTrackingService : Service() {
             mapOf("sessionActive" to SessionEngine.isActive, "foreground" to isForeground),
             level = if (SessionEngine.isActive) "warn" else "info"
         )
+        destroyed = true
         isForeground = false
         isAlive = false
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)

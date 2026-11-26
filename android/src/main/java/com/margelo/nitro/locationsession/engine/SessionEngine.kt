@@ -9,8 +9,6 @@ import android.content.Context
 import android.content.Intent
 import android.location.Location
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
@@ -29,6 +27,7 @@ import com.margelo.nitro.locationsession.core.stopQueueAction
 import com.margelo.nitro.locationsession.core.syncInvalidReason
 import com.margelo.nitro.locationsession.core.validate
 import org.json.JSONObject
+import java.util.concurrent.atomic.AtomicBoolean
 
 class LocationSessionException(val code: String, message: String) : RuntimeException("$code: $message")
 
@@ -46,16 +45,15 @@ data class EngineState(
 object SessionEngine {
     val events = EventBus()
 
-    private val main = Handler(Looper.getMainLooper())
     private var app: Context? = null
     private lateinit var store: SessionStore
     private lateinit var queue: QueueDatabase
     private lateinit var credentials: TargetCredentials
     private lateinit var uploader: Uploader
 
-    private var config: SessionConfig? = null
+    @Volatile private var config: SessionConfig? = null
     private var startedAtMs = 0L
-    private var lastFix: Fix? = null
+    @Volatile private var lastFix: Fix? = null
     private var stopping = false
     private var expiryRunnable: Runnable? = null
     private var updatesRequestedForServiceStart = false
@@ -64,17 +62,18 @@ object SessionEngine {
     val isActive: Boolean get() = config != null
     val lastKnownFix: Fix? get() = lastFix
 
-    private var lifecycleAttached = false
+    private val lifecycleAttached = AtomicBoolean(false)
 
     fun attach(ctx: Context) {
-        assertMain()
-        if (lifecycleAttached) return
-        lifecycleAttached = true
-        (ctx.applicationContext as? Application)?.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
+        val application = ctx.applicationContext as? Application ?: return
+        if (!lifecycleAttached.compareAndSet(false, true)) return
+        application.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
             override fun onActivityResumed(activity: Activity) {
                 ElsLog.debug("lifecycle", "activity resumed", level = "info")
-                resumeIfNeeded(activity)
-                uploader.drain(null) {}
+                EngineThread.post {
+                    resumeIfNeeded(application)
+                    uploader.drain(null) {}
+                }
             }
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
                 DebugLogger.launched("activity", mapOf("restored" to (savedInstanceState != null)))
@@ -90,11 +89,10 @@ object SessionEngine {
     }
 
     private fun init(ctx: Context): Context {
-        assertMain()
+        assertEngine()
         app?.let { return it }
         val context = ctx.applicationContext
         DebugLogger.init(context)
-        attach(context)
         app = context
         store = SessionStore(context)
         queue = QueueDatabase.shared(context)
@@ -316,6 +314,7 @@ object SessionEngine {
     }
 
     fun refreshUpdates(ctx: Context) {
+        assertEngine()
         if (updatesRequestedForServiceStart) {
             updatesRequestedForServiceStart = false
             return
@@ -353,7 +352,7 @@ object SessionEngine {
     }
 
     private fun teardown(ctx: Context, c: SessionConfig, reason: StopReason?) {
-        expiryRunnable?.let { main.removeCallbacks(it) }
+        expiryRunnable?.let { EngineThread.removeCallbacks(it) }
         expiryRunnable = null
         updatesRequestedForServiceStart = false
         cancelAlarm(ctx)
@@ -443,13 +442,13 @@ object SessionEngine {
     }
 
     private fun scheduleExpiry(ctx: Context, c: SessionConfig) {
-        expiryRunnable?.let { main.removeCallbacks(it) }
+        expiryRunnable?.let { EngineThread.removeCallbacks(it) }
         val r = Runnable {
             expiryRunnable = null
             evaluate(ctx, null)
         }
         expiryRunnable = r
-        main.postDelayed(r, maxOf(0L, c.expiresAtMs - nowMs()))
+        EngineThread.postDelayed(r, maxOf(0L, c.expiresAtMs - nowMs()))
         scheduleAlarm(ctx, c)
     }
 

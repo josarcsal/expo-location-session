@@ -1,13 +1,11 @@
 package com.margelo.nitro.locationsession.engine
 
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
-class EventBus(private val post: (Runnable) -> Unit = { mainHandler.post(it) }) {
+class EventBus(private val post: (Runnable) -> Unit = { r -> EngineThread.post { r.run() } }) {
     private class Listener(val event: String, val callback: (String) -> Unit)
 
     private val lock = Any()
@@ -75,10 +73,6 @@ class EventBus(private val post: (Runnable) -> Unit = { mainHandler.post(it) }) 
         } catch (e: Exception) {
             Log.i("ExpoLocationSession", "listener for $event threw: ${e.javaClass.simpleName}")
         }
-    }
-
-    private companion object {
-        val mainHandler by lazy { Handler(Looper.getMainLooper()) }
     }
 }
 
