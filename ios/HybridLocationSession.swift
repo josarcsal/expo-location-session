@@ -1,5 +1,6 @@
 import Foundation
 import NitroModules
+import UIKit
 
 class HybridLocationSession: HybridLocationSessionSpec {
     private let engine = SessionEngine.shared
@@ -8,7 +9,10 @@ class HybridLocationSession: HybridLocationSessionSpec {
 
     override init() {
         super.init()
-        DispatchQueue.main.async { SessionEngine.shared.resumeIfNeeded() }
+        DispatchQueue.main.async {
+            SessionEngine.shared.primeOnMain()
+            EngineQueue.shared.async { SessionEngine.shared.resumeIfNeeded() }
+        }
     }
 
     deinit {
@@ -41,26 +45,30 @@ class HybridLocationSession: HybridLocationSessionSpec {
 
     func start(config: NativeSessionConfig) throws -> Promise<Void> {
         onMain { promise in
-            do {
-                try self.engine.start(sessionConfig(config))
-                promise.resolve()
-            } catch let error as LocationSessionError {
-                promise.reject(withError: runtimeError(error))
-            } catch {
-                promise.reject(withError: RuntimeError.error(withMessage: "INTERNAL: \(error)"))
+            self.engine.primeOnMain()
+            let appActive = UIApplication.shared.applicationState == .active
+            EngineQueue.shared.async {
+                do {
+                    try self.engine.start(sessionConfig(config), appActive: appActive)
+                    promise.resolve()
+                } catch let error as LocationSessionError {
+                    promise.reject(withError: runtimeError(error))
+                } catch {
+                    promise.reject(withError: RuntimeError.error(withMessage: "INTERNAL: \(error)"))
+                }
             }
         }
     }
 
     func stop() throws -> Promise<Void> {
-        onMain { promise in
+        onEngine { promise in
             self.engine.stop(.stopped)
             promise.resolve()
         }
     }
 
     func getState() throws -> Promise<NativeSessionState> {
-        onMain { promise in promise.resolve(withResult: nativeState(self.engine.state())) }
+        onEngine { promise in promise.resolve(withResult: nativeState(self.engine.state())) }
     }
 
     func configureDebug(options: NativeDebugOptions) throws -> Promise<Void> {
@@ -110,7 +118,7 @@ class HybridLocationSession: HybridLocationSessionSpec {
     }
 
     func getQueueStatus() throws -> Promise<NativeQueueStatus> {
-        onMain { promise in
+        onEngine { promise in
             do {
                 let status = try self.engine.queueStatus()
                 promise.resolve(withResult: NativeQueueStatus(pending: Double(status.pending), oldestAt: status.oldestAt.map(Double.init), sessions: Double(status.sessions)))
@@ -123,13 +131,13 @@ class HybridLocationSession: HybridLocationSessionSpec {
     }
 
     func syncQueue() throws -> Promise<Double> {
-        onMain { promise in
+        onEngine { promise in
             self.engine.syncQueue { promise.resolve(withResult: Double($0)) }
         }
     }
 
     func clearQueue() throws -> Promise<Void> {
-        onMain { promise in
+        onEngine { promise in
             self.engine.clearQueue()
             promise.resolve()
         }
@@ -156,6 +164,12 @@ class HybridLocationSession: HybridLocationSessionSpec {
     private func onMain<T>(_ body: @escaping (Promise<T>) -> Void) -> Promise<T> {
         let promise = Promise<T>()
         DispatchQueue.main.async { body(promise) }
+        return promise
+    }
+
+    private func onEngine<T>(_ body: @escaping (Promise<T>) -> Void) -> Promise<T> {
+        let promise = Promise<T>()
+        EngineQueue.shared.async { body(promise) }
         return promise
     }
 

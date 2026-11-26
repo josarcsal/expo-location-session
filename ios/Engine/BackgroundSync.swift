@@ -13,7 +13,7 @@ enum BackgroundSync {
 
     static func register() {
         guard isPermitted, let identifier else { return }
-        let registered = BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: .main) { task in
+        let registered = BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: EngineQueue.shared.queue) { task in
             run(task)
         }
         Log.debug("sync", "background sync registered", data: ["identifier": identifier, "registered": registered], level: registered ? "debug" : "warn")
@@ -32,7 +32,7 @@ enum BackgroundSync {
     }
 
     private static func run(_ task: BGTask) {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         let engine = SessionEngine.shared
         var completed = false
         var expired = false
@@ -47,7 +47,7 @@ enum BackgroundSync {
             submitIfNeeded(pending: pending ?? 0, sessionRunning: sessionRunning)
         }
         task.expirationHandler = {
-            DispatchQueue.main.async {
+            EngineQueue.shared.async {
                 guard !completed else { return }
                 expired = true
                 engine.uploader.cancelDrain(release: true)

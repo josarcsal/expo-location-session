@@ -2,7 +2,9 @@ import CoreLocation
 import UIKit
 
 final class Permissions: NSObject, CLLocationManagerDelegate {
-    private let manager = CLLocationManager()
+    private var manager: CLLocationManager?
+    private let lock = NSLock()
+    private var statusSnapshot: CLAuthorizationStatus = .notDetermined
     private let store: SessionStore
     private var waiters: [(CLAuthorizationStatus) -> Void] = []
     private var promptTimer: Timer?
@@ -15,10 +17,35 @@ final class Permissions: NSObject, CLLocationManagerDelegate {
     init(store: SessionStore) {
         self.store = store
         super.init()
-        manager.delegate = self
     }
 
-    var authorizationStatus: CLAuthorizationStatus { manager.authorizationStatus }
+    func primeOnMain() {
+        refreshSnapshot(mainManager())
+    }
+
+    private func mainManager() -> CLLocationManager {
+        dispatchPrecondition(condition: .onQueue(.main))
+        if let manager { return manager }
+        let m = CLLocationManager()
+        manager = m
+        m.delegate = self
+        return m
+    }
+
+    private func refreshSnapshot(_ m: CLLocationManager) {
+        let status = m.authorizationStatus
+        lock.lock()
+        statusSnapshot = status
+        lock.unlock()
+    }
+
+    private var liveStatus: CLAuthorizationStatus { mainManager().authorizationStatus }
+
+    var authorizationStatus: CLAuthorizationStatus {
+        lock.lock()
+        defer { lock.unlock() }
+        return statusSnapshot
+    }
 
     var isAuthorized: Bool {
         let s = authorizationStatus
@@ -28,9 +55,12 @@ final class Permissions: NSObject, CLLocationManagerDelegate {
     var hasAlways: Bool { authorizationStatus == .authorizedAlways }
 
     func status() -> NativePermissionStatus {
+        let m = mainManager()
+        refreshSnapshot(m)
+        let authorization = m.authorizationStatus
         let foreground: PermissionValue
         let background: PermissionValue
-        switch authorizationStatus {
+        switch authorization {
         case .notDetermined:
             foreground = .undetermined
             background = .undetermined
@@ -47,12 +77,12 @@ final class Permissions: NSObject, CLLocationManagerDelegate {
         let result = NativePermissionStatus(
             foreground: foreground,
             background: background,
-            precise: manager.accuracyAuthorization == .fullAccuracy,
+            precise: m.accuracyAuthorization == .fullAccuracy,
             notifications: .granted
         )
         Log.debug("permission", "status", data: [
-            "authorization": authorizationStatus.rawValue,
-            "accuracyAuthorization": manager.accuracyAuthorization.rawValue,
+            "authorization": authorization.rawValue,
+            "accuracyAuthorization": m.accuracyAuthorization.rawValue,
             "alwaysRequested": store.alwaysRequested,
             "foreground": foreground.stringValue,
             "background": background.stringValue,
@@ -80,7 +110,7 @@ final class Permissions: NSObject, CLLocationManagerDelegate {
     }
 
     private func perform(always: Bool, completion: @escaping (NativePermissionStatus) -> Void) {
-        Log.debug("permission", "request", data: ["always": always, "authorization": authorizationStatus.rawValue, "alwaysRequested": store.alwaysRequested], level: "info")
+        Log.debug("permission", "request", data: ["always": always, "authorization": liveStatus.rawValue, "alwaysRequested": store.alwaysRequested], level: "info")
         let finish: () -> Void = { [weak self] in
             guard let self else { return }
             let result = self.status()
@@ -89,17 +119,17 @@ final class Permissions: NSObject, CLLocationManagerDelegate {
         }
         let askAlways: () -> Void = { [weak self] in
             guard let self else { return }
-            guard always, self.authorizationStatus == .authorizedWhenInUse, !self.store.alwaysRequested else {
+            guard always, self.liveStatus == .authorizedWhenInUse, !self.store.alwaysRequested else {
                 finish()
                 return
             }
             self.store.alwaysRequested = true
             self.awaitPrompt { _ in finish() }
-            self.manager.requestAlwaysAuthorization()
+            self.mainManager().requestAlwaysAuthorization()
         }
-        if authorizationStatus == .notDetermined {
+        if liveStatus == .notDetermined {
             awaitPrompt { _ in askAlways() }
-            manager.requestWhenInUseAuthorization()
+            mainManager().requestWhenInUseAuthorization()
         } else {
             askAlways()
         }
@@ -108,7 +138,7 @@ final class Permissions: NSObject, CLLocationManagerDelegate {
     private func awaitPrompt(_ waiter: @escaping (CLAuthorizationStatus) -> Void) {
         waiters.append(waiter)
         resignedActive = false
-        promptStartStatus = authorizationStatus
+        promptStartStatus = liveStatus
         let center = NotificationCenter.default
         observers.append(center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
             self?.resignedActive = true
@@ -132,11 +162,12 @@ final class Permissions: NSObject, CLLocationManagerDelegate {
         observers.removeAll()
         let pending = waiters
         waiters.removeAll()
-        let s = authorizationStatus
+        let s = liveStatus
         pending.forEach { $0(s) }
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        refreshSnapshot(manager)
         Log.debug("permission", "authorization callback", data: ["authorization": manager.authorizationStatus.rawValue, "accuracyAuthorization": manager.accuracyAuthorization.rawValue, "awaitingPrompt": !waiters.isEmpty])
         guard !waiters.isEmpty, manager.authorizationStatus != promptStartStatus else { return }
         resolveWaiters()

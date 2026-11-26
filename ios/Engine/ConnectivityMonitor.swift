@@ -8,25 +8,22 @@ final class ConnectivityMonitor {
     private var generation = 0
 
     func start(onRegained: @escaping () -> Void) {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         guard monitor == nil else { return }
         generation += 1
         let current = generation
         edge = ConnectivityEdge()
         let m = NWPathMonitor()
         m.pathUpdateHandler = { [weak self] path in
-            let satisfied = path.status == .satisfied
-            DispatchQueue.main.async {
-                guard let self, self.generation == current else { return }
-                self.update(satisfied: satisfied, onRegained: onRegained)
-            }
+            guard let self, self.generation == current else { return }
+            self.update(satisfied: path.status == .satisfied, onRegained: onRegained)
         }
         monitor = m
-        m.start(queue: DispatchQueue(label: "expo-location-session.connectivity"))
+        m.start(queue: EngineQueue.shared.queue)
     }
 
     func stop() {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         generation += 1
         monitor?.cancel()
         monitor = nil
@@ -44,7 +41,7 @@ final class ConnectivityMonitor {
                 onRegained()
             }
             pending = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
+            EngineQueue.shared.queue.asyncAfter(deadline: .now() + 1, execute: work)
         } else if !satisfied {
             pending?.cancel()
             pending = nil

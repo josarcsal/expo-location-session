@@ -20,7 +20,7 @@ final class EventBus {
         if event == .error { awaitingReplay[id] = [] }
         lock.unlock()
         if event == .error {
-            DispatchQueue.main.async { [weak self] in
+            EngineQueue.shared.async { [weak self] in
                 guard let self else { return }
                 self.lock.lock()
                 let deliveredLive = self.awaitingReplay.removeValue(forKey: id) ?? []

@@ -1,5 +1,4 @@
 import Foundation
-import UIKit
 
 struct PendingInsert {
     let sessionId: String
@@ -43,7 +42,7 @@ final class QueueDatabase {
     private init() {}
 
     func store() -> QueueStore? {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         if let opened { return opened }
         if let failedAtMs, nowMs() - failedAtMs < Self.reopenCooldownMs { return nil }
         let openedAt = DispatchTime.now().uptimeNanoseconds
@@ -56,7 +55,7 @@ final class QueueDatabase {
             let count = s.recoverInFlight()
             guard count >= 0 else {
                 failedAtMs = nowMs()
-                unavailable = UIApplication.shared.isProtectedDataAvailable
+                unavailable = AppSnapshot.shared.protectedDataAvailable
                 if !loggedUnavailable {
                     loggedUnavailable = true
                     Log.debug("queue", "in-flight recovery failed; database unavailable", level: "warn")
@@ -80,7 +79,7 @@ final class QueueDatabase {
     }
 
     func purge() {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         guard let s = store() else { return }
         purge(s)
     }
@@ -95,7 +94,7 @@ final class QueueDatabase {
     }
 
     func enqueue(_ p: PendingInsert) -> EnqueueResult {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         guard let s = store() else { return keep(p) }
         settle(s)
         let flushed = flushBuffer(into: s)
@@ -121,40 +120,40 @@ final class QueueDatabase {
     }
 
     func prepareSend() -> Int {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         guard let s = store() else { return 0 }
         settle(s)
         return flushBuffer(into: s).trimmed
     }
 
     func onProtectedDataAvailable() -> Int {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         failedAtMs = nil
         guard !buffer.isEmpty, let s = store() else { return 0 }
         return flushBuffer(into: s).trimmed
     }
 
     func probe() -> Int {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         guard failing, let s = store() else { return 0 }
         settle(s)
         return buffer.isEmpty ? 0 : flushBuffer(into: s).trimmed
     }
 
     func status(hiding hidden: Set<Int64> = []) -> QueueStatus? {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         return store()?.status(excluding: unsettled.deletes.union(hidden))
     }
 
     func hasUnsettledDeletes(sessionId: String) -> Bool {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         guard !unsettled.deletes.isEmpty else { return false }
         guard let s = store() else { return true }
         return !s.existing(ids: unsettled.deletes.sorted(), sessionId: sessionId).isEmpty
     }
 
     func delete(_ ids: [Int64]) {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         guard !ids.isEmpty else { return }
         let s = store()
         if !unsettled.delete(ids, { s?.delete(ids: $0) ?? false }) {
@@ -163,7 +162,7 @@ final class QueueDatabase {
     }
 
     func release(_ ids: [Int64]) {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         guard !ids.isEmpty else { return }
         let s = store()
         if !unsettled.release(ids, { s?.release(ids: $0) ?? false }) {
@@ -172,7 +171,7 @@ final class QueueDatabase {
     }
 
     func saveTarget(_ t: QueueTarget) {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         unsavedTargets[t.sessionId] = t
         if store().map(saveTargets) != true {
             Log.debug("queue", "target save deferred", sessionId: t.sessionId, level: "warn")
@@ -180,13 +179,13 @@ final class QueueDatabase {
     }
 
     func markEnded(_ sessionId: String) {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         unsavedTargets[sessionId]?.ended = true
         store()?.markEnded(sessionId)
     }
 
     func deleteSession(_ sessionId: String) -> Int {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         unsavedTargets[sessionId] = nil
         let buffered = buffer.removeAll { $0.sessionId == sessionId }
         guard let s = store() else {
@@ -204,7 +203,7 @@ final class QueueDatabase {
     }
 
     func clear() -> [String]? {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         _ = buffer.drain()
         unsavedTargets = unsavedTargets.filter { !$0.value.ended }
         guard let s = store() else { return nil }
@@ -311,7 +310,7 @@ final class QueueDatabase {
             try excluded.setResourceValues(values)
             do {
                 return try QueueStore(path: path)
-            } catch let error as QueueStoreError where error.isCorrupt && !Self.rebuilt && UIApplication.shared.isProtectedDataAvailable {
+            } catch let error as QueueStoreError where error.isCorrupt && !Self.rebuilt && AppSnapshot.shared.protectedDataAvailable {
                 Self.rebuilt = true
                 for suffix in ["", "-wal", "-shm"] where fm.fileExists(atPath: path + suffix) {
                     try fm.removeItem(atPath: path + suffix)
@@ -322,7 +321,7 @@ final class QueueDatabase {
                 return rebuiltStore
             }
         } catch {
-            unavailable = UIApplication.shared.isProtectedDataAvailable
+            unavailable = AppSnapshot.shared.protectedDataAvailable
             if !loggedUnavailable {
                 loggedUnavailable = true
                 Log.debug("queue", "database unavailable", data: ["error": "\(error)"], level: "warn")

@@ -35,10 +35,7 @@ final class Uploader {
         configuration.timeoutIntervalForRequest = 20
         configuration.timeoutIntervalForResource = 20
         configuration.urlCache = nil
-        let queue = OperationQueue()
-        queue.name = "expo-location-session.upload"
-        queue.maxConcurrentOperationCount = 1
-        return URLSession(configuration: configuration, delegate: RefuseRedirects(), delegateQueue: queue)
+        return URLSession(configuration: configuration, delegate: RefuseRedirects(), delegateQueue: EngineQueue.shared.operationQueue)
     }()
 
     private var config: SessionConfig?
@@ -54,7 +51,7 @@ final class Uploader {
     private var deferred: [Waiter] = []
     private var dirty = false
     private var drained = 0
-    private var drainBudget: Timer?
+    private let drainBudget = EngineTimer(EngineQueue.shared)
     private var refreshing = false
     private var refreshStartedAt: Int64 = 0
     private var refreshed: Set<String> = []
@@ -66,15 +63,14 @@ final class Uploader {
     private var syncSubmitted = false
     private var endedAttempt = 0
     private var endedRetryAtMs: Int64 = 0
-    private var endedRetryTimer: Timer?
-    private var healthProbe: Timer?
+    private let endedRetryTimer = EngineTimer(EngineQueue.shared)
+    private let healthProbe = EngineTimer(EngineQueue.shared)
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
-    private var timer: Timer?
+    private let timer = EngineTimer(EngineQueue.shared)
     private var backingOff = false
-    private var watchdog: Timer?
-    private var flushDeadline: Timer?
+    private let watchdog = EngineTimer(EngineQueue.shared)
+    private let flushDeadline = EngineTimer(EngineQueue.shared)
     private var flushCompletion: (() -> Void)?
-    private var ownsBatteryMonitoring = false
 
     init(store: SessionStore, events: EventBus, db: QueueDatabase, credentials: TargetCredentials) {
         self.store = store
@@ -88,15 +84,12 @@ final class Uploader {
     }
 
     func begin(_ c: SessionConfig, pending: Fix?, lastSuccessMs: Int64?) {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         clearState()
         fallback.keep(sessionId: c.id)
         config = c
         self.lastSuccessMs = lastSuccessMs
-        if !UIDevice.current.isBatteryMonitoringEnabled {
-            UIDevice.current.isBatteryMonitoringEnabled = true
-            ownsBatteryMonitoring = true
-        }
+        AppSnapshot.shared.setBatteryMonitoring(true)
         evaluateConnectivity()
         if c.sync.mode == .latest, let fix = pending.flatMap(sanitize), fallback.next(sessionId: c.id) == nil,
            FallbackSlot.resumes(pendingFixTs: fix.timestampMs, over: db.store()?.latestPending(sessionId: c.id)?.fixTs) {
@@ -106,7 +99,7 @@ final class Uploader {
     }
 
     func reset() {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         clearState()
         evaluateConnectivity()
     }
@@ -124,8 +117,7 @@ final class Uploader {
             deferred = p.waiters + deferred
             dirty = true
         }
-        drainBudget?.invalidate()
-        drainBudget = nil
+        drainBudget.cancel()
         refreshing = false
         refreshed = []
         refreshHold = false
@@ -135,32 +127,25 @@ final class Uploader {
         endedAttempt = 0
         endedRetryAtMs = 0
         cancelEndedRetry()
-        healthProbe?.invalidate()
-        healthProbe = nil
-        timer?.invalidate()
-        timer = nil
-        watchdog?.invalidate()
-        watchdog = nil
-        flushDeadline?.invalidate()
-        flushDeadline = nil
+        healthProbe.cancel()
+        timer.cancel()
+        watchdog.cancel()
+        flushDeadline.cancel()
         endBackgroundTask()
         config = nil
         lastSuccessMs = nil
         attempt = 0
         flushCompletion = nil
-        if ownsBatteryMonitoring {
-            UIDevice.current.isBatteryMonitoringEnabled = false
-            ownsBatteryMonitoring = false
-        }
+        AppSnapshot.shared.setBatteryMonitoring(false)
     }
 
     func discardFallback() {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         fallback.keep(sessionId: nil)
     }
 
     func evaluateConnectivity() {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         if config != nil || db.buffered > 0 || (db.status()?.pending ?? 0) > 0 {
             connectivity.start { [weak self] in self?.connectivityRegained() }
         } else {
@@ -184,8 +169,7 @@ final class Uploader {
             return
         }
         guard inFlight == nil else { return }
-        timer?.invalidate()
-        timer = nil
+        timer.cancel()
         if flushCompletion != nil {
             send(running(c))
         } else {
@@ -194,7 +178,7 @@ final class Uploader {
     }
 
     func drain(budgetMs: Int64?, completion: @escaping (Int) -> Void) {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         let waiter: Waiter = (drained, completion)
         guard inFlight == nil, flushCompletion == nil, pass == nil else {
             dirty = true
@@ -205,11 +189,10 @@ final class Uploader {
     }
 
     func cancelDrain(release: Bool) {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         abandonDrainRequest(release: release)
         if config == nil {
-            timer?.invalidate()
-            timer = nil
+            timer.cancel()
         }
         if pass == nil {
             pass = ([], 0)
@@ -223,16 +206,13 @@ final class Uploader {
         deferred = []
         cancelEndedRetry()
         if config == nil {
-            timer?.invalidate()
-            timer = nil
+            timer.cancel()
         }
         refreshed = refreshed.filter { $0 == config?.id }
         if let budgetMs {
-            let t = Timer(timeInterval: Double(max(0, budgetMs)) / 1000, repeats: false) { [weak self] _ in
+            drainBudget.schedule(afterMs: budgetMs) { [weak self] in
                 self?.drainBudgetReached()
             }
-            RunLoop.main.add(t, forMode: .common)
-            drainBudget = t
         }
         prepareQueue()
         db.purge()
@@ -277,7 +257,6 @@ final class Uploader {
     }
 
     private func drainBudgetReached() {
-        drainBudget = nil
         guard pass != nil else { return }
         Log.debug("sync", "drain budget reached", data: ["inFlight": inFlight != nil])
         abandonDrainRequest(release: true)
@@ -296,16 +275,14 @@ final class Uploader {
         inFlightTarget = nil
         inFlightFallback = nil
         refreshing = false
-        watchdog?.invalidate()
-        watchdog = nil
+        watchdog.cancel()
         endBackgroundTask()
     }
 
     private func endPass(_ end: PassEnd) {
         guard let p = pass else { return }
         pass = nil
-        drainBudget?.invalidate()
-        drainBudget = nil
+        drainBudget.cancel()
         var waiters = p.waiters
         if end != .done {
             dirty = false
@@ -341,24 +318,19 @@ final class Uploader {
     }
 
     private func armEndedRetry(afterMs delay: Int64) {
-        cancelEndedRetry()
-        let t = Timer(timeInterval: Double(max(0, delay)) / 1000, repeats: false) { [weak self] _ in
+        endedRetryTimer.schedule(afterMs: delay) { [weak self] in
             guard let self else { return }
-            self.endedRetryTimer = nil
             self.endedRetryAtMs = 0
             self.drainIfIdle()
         }
-        RunLoop.main.add(t, forMode: .common)
-        endedRetryTimer = t
     }
 
     private func cancelEndedRetry() {
-        endedRetryTimer?.invalidate()
-        endedRetryTimer = nil
+        endedRetryTimer.cancel()
     }
 
     private func resumeRunning() {
-        guard let c = config, inFlight == nil, timer == nil else { return }
+        guard let c = config, inFlight == nil, !timer.isScheduled else { return }
         if flushCompletion != nil {
             send(running(c))
         } else {
@@ -377,7 +349,7 @@ final class Uploader {
     }
 
     func put(_ raw: Fix) {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         guard let c = config else { return }
         guard let fix = sanitize(raw) else {
             Log.debug("queue", "invalid location dropped", data: ["fixTimestamp": raw.timestampMs], sessionId: c.id, level: "warn")
@@ -394,30 +366,26 @@ final class Uploader {
     }
 
     func protectedDataAvailable() {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         let trimmed = db.onProtectedDataAvailable()
         if let c = config { reportQueueHealth(c, trimmed: trimmed) }
         pump()
     }
 
     func hiddenRows() -> Set<Int64> {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         guard let c = config, c.sync.mode == .latest, let row = db.store()?.latestPending(sessionId: c.id),
               fallback.supersedes(sessionId: c.id, fixTs: row.fixTs) else { return [] }
         return [row.id]
     }
 
     private func armHealthProbe() {
-        healthProbe?.invalidate()
-        let t = Timer(timeInterval: Double(Self.healthProbeMs) / 1000, repeats: false) { [weak self] _ in
+        healthProbe.schedule(afterMs: Self.healthProbeMs) { [weak self] in
             guard let self else { return }
-            self.healthProbe = nil
             guard let c = self.config, self.queueUnavailableReported else { return }
             self.reportQueueHealth(c, trimmed: self.db.probe())
             if self.queueUnavailableReported { self.armHealthProbe() }
         }
-        RunLoop.main.add(t, forMode: .common)
-        healthProbe = t
     }
 
     private func reportQueueHealth(_ c: SessionConfig, trimmed: Int) {
@@ -429,8 +397,7 @@ final class Uploader {
             armHealthProbe()
         } else if queueUnavailableReported, !db.failing, db.isOpen {
             queueUnavailableReported = false
-            healthProbe?.invalidate()
-            healthProbe = nil
+            healthProbe.cancel()
             Log.debug("queue", "database available again", sessionId: c.id)
             events.clearStickyError("QUEUE_UNAVAILABLE")
         }
@@ -441,8 +408,8 @@ final class Uploader {
     }
 
     func pump() {
-        dispatchPrecondition(condition: .onQueue(.main))
-        guard let c = config, inFlight == nil, flushCompletion == nil, !refreshHold, !(backingOff && timer != nil), hasPending(c) else { return }
+        EngineQueue.shared.assertCurrent()
+        guard let c = config, inFlight == nil, flushCompletion == nil, !refreshHold, !(backingOff && timer.isScheduled), hasPending(c) else { return }
         refreshed = []
         let now = nowMs()
         if shouldUploadNow(lastSuccessMs: lastSuccessMs, nowMs: now, minIntervalMs: c.uploadMinIntervalMs, bypass: false) {
@@ -455,7 +422,7 @@ final class Uploader {
     }
 
     func flush(_ completion: @escaping () -> Void) {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         if inFlight == nil { prepareQueue() }
         guard let c = config, inFlight != nil || hasPending(c) else {
             Log.debug("upload", "flush skipped, nothing pending", sessionId: config?.id)
@@ -464,13 +431,10 @@ final class Uploader {
         }
         Log.debug("upload", "flush start", data: ["generation": generation(c), "inFlight": inFlight != nil], sessionId: c.id)
         flushCompletion = completion
-        timer?.invalidate()
-        timer = nil
-        let t = Timer(timeInterval: Double(finalUploadBudgetMs) / 1000, repeats: false) { [weak self] _ in
+        timer.cancel()
+        flushDeadline.schedule(afterMs: finalUploadBudgetMs) { [weak self] in
             self?.flushDeadlineReached()
         }
-        RunLoop.main.add(t, forMode: .common)
-        flushDeadline = t
         if inFlight == nil {
             refreshed = []
             send(running(c))
@@ -576,28 +540,19 @@ final class Uploader {
     }
 
     private func startTimer(afterMs delay: Int64, _ fire: @escaping () -> Void) {
-        timer?.invalidate()
         backingOff = false
-        let t = Timer(timeInterval: max(0, Double(delay)) / 1000, repeats: false) { [weak self] _ in
-            self?.timer = nil
-            fire()
-        }
-        RunLoop.main.add(t, forMode: .common)
-        timer = t
+        timer.schedule(afterMs: delay, fire)
     }
 
     private func flushDeadlineReached() {
-        flushDeadline = nil
         guard flushCompletion != nil else { return }
         Log.debug("upload", "final upload deadline reached", data: ["pending": config.map(hasPending) ?? false, "inFlight": inFlight != nil], sessionId: config?.id, level: "warn")
-        timer?.invalidate()
-        timer = nil
+        timer.cancel()
         completeFlush()
     }
 
     private func completeFlush() {
-        flushDeadline?.invalidate()
-        flushDeadline = nil
+        flushDeadline.cancel()
         if flushCompletion != nil {
             Log.debug("upload", "flush end", data: ["pending": config.map(hasPending) ?? false], sessionId: config?.id)
         }
@@ -637,8 +592,7 @@ final class Uploader {
         }
         prepareQueue()
         if !t.ended, let f = fallback.next(sessionId: t.id) {
-            timer?.invalidate()
-            timer = nil
+            timer.cancel()
             flushId += 1
             let element = buildElement(record: FixRecord(uuid: f.uuid, sessionId: t.id, fix: f.fix, battery: battery()), sync: t.sync, extrasJson: t.extrasJson)
             upload(t, url: url, elements: [element], rows: [], fallback: f.generation, fixTs: f.fix.timestampMs)
@@ -649,8 +603,7 @@ final class Uploader {
             return
         }
         if !t.ended {
-            timer?.invalidate()
-            timer = nil
+            timer.cancel()
         }
         flushId += 1
         var rows = q.claim(sessionId: t.id, limit: t.sync.mode == .latest ? 1 : batchLimit(t.sync))
@@ -727,9 +680,7 @@ final class Uploader {
         let task = session.dataTask(with: request) { [weak self] _, response, error in
             let status = error == nil ? (response as? HTTPURLResponse)?.statusCode : nil
             let failure = error.map { "\(($0 as NSError).domain) \(($0 as NSError).code) \($0.localizedDescription)" }
-            DispatchQueue.main.async {
-                self?.finish(sentId, status: status, detail: ["latencyMs": nowMs() - startedAt, "bytes": body.count, "error": failure ?? NSNull()])
-            }
+            self?.finish(sentId, status: status, detail: ["latencyMs": nowMs() - startedAt, "bytes": body.count, "error": failure ?? NSNull()])
         }
         inFlight = task
         inFlightRows = ids
@@ -751,14 +702,10 @@ final class Uploader {
     }
 
     private func startWatchdog(_ sentId: Int, startedAt: Int64) {
-        watchdog?.invalidate()
-        let t = Timer(timeInterval: 25, repeats: false) { [weak self] _ in
+        watchdog.schedule(afterMs: 25_000) { [weak self] in
             guard let self, sentId == self.flushId else { return }
-            self.watchdog = nil
             self.abandonInFlight(detail: ["latencyMs": nowMs() - startedAt, "error": "watchdog"])
         }
-        RunLoop.main.add(t, forMode: .common)
-        watchdog = t
     }
 
     private func abandonInFlight(detail: [String: Any]) {
@@ -787,8 +734,7 @@ final class Uploader {
         inFlightRows = []
         inFlightTarget = nil
         inFlightFallback = nil
-        watchdog?.invalidate()
-        watchdog = nil
+        watchdog.cancel()
         endBackgroundTask()
         guard let t = target, t.ended || t.id == config?.id else {
             db.release(rows)
@@ -935,14 +881,12 @@ final class Uploader {
         let task = session.dataTask(with: request) { [weak self] data, response, error in
             let status = error == nil ? (response as? HTTPURLResponse)?.statusCode : nil
             let failure = error.map { "\(($0 as NSError).domain) \(($0 as NSError).code) \($0.localizedDescription)" }
-            DispatchQueue.main.async {
-                guard let self else { return }
-                guard sentId == self.flushId else {
-                    Log.debug("auth", "stale refresh response ignored", data: ["status": status ?? NSNull()])
-                    return
-                }
-                self.completeRefresh(status: status, body: data ?? Data(), error: failure, latencyMs: nowMs() - startedAt)
+            guard let self else { return }
+            guard sentId == self.flushId else {
+                Log.debug("auth", "stale refresh response ignored", data: ["status": status ?? NSNull()])
+                return
             }
+            self.completeRefresh(status: status, body: data ?? Data(), error: failure, latencyMs: nowMs() - startedAt)
         }
         inFlight = task
         refreshing = true
@@ -956,8 +900,7 @@ final class Uploader {
         inFlight = nil
         inFlightTarget = nil
         refreshing = false
-        watchdog?.invalidate()
-        watchdog = nil
+        watchdog.cancel()
         endBackgroundTask()
         guard let t = target, t.ended || t.id == config?.id else { return }
         if let result = parseRefreshResponse(status: status, body: body) {
@@ -1002,17 +945,13 @@ final class Uploader {
     }
 
     private func battery() -> Battery? {
-        let device = UIDevice.current
-        guard device.isBatteryMonitoringEnabled, device.batteryLevel >= 0 else { return nil }
-        let level = Double(device.batteryLevel)
-        guard level.isFinite else { return nil }
-        return Battery(level: level, charging: device.batteryState == .charging || device.batteryState == .full)
+        AppSnapshot.shared.battery
     }
 
     private func beginBackgroundTask() {
         endBackgroundTask()
         backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "expo-location-session.upload") { [weak self] in
-            self?.backgroundTaskExpired()
+            EngineQueue.shared.syncFromMain { self?.backgroundTaskExpired() }
         }
     }
 

@@ -37,14 +37,21 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
     var onFixes: (([Fix]) -> Void)?
     var onAuthorizationChange: ((CLAuthorizationStatus) -> Void)?
     var onAccuracyChange: ((CLAccuracyAuthorization) -> Void)?
+    var onStarted: ((CLAccuracyAuthorization) -> Void)?
 
     private var manager: CLLocationManager?
     private var lastStatus: CLAuthorizationStatus?
     private var lastAccuracy: CLAccuracyAuthorization?
     private var leftoversReleased = false
 
-    var accuracyAuthorization: CLAccuracyAuthorization? { manager?.accuracyAuthorization }
-    var backgroundUpdatesActive: Bool { manager?.allowsBackgroundLocationUpdates ?? false }
+    private let lock = NSLock()
+    private var backgroundUpdates = false
+
+    var backgroundUpdatesActive: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return backgroundUpdates
+    }
     private var launchReport: (launchAtMs: Int64, region: CLCircularRegion?)?
 
     func expectLaunchEvent(launchAtMs: Int64) {
@@ -73,8 +80,7 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
         Log.debug("lifecycle", "first location event after launch", data: data, level: "info")
     }
 
-    @discardableResult
-    func start(_ config: SessionConfig) -> Bool {
+    func start(_ config: SessionConfig) {
         dispatchPrecondition(condition: .onQueue(.main))
         let m = manager ?? CLLocationManager()
         manager = m
@@ -115,7 +121,9 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
             m.startMonitoring(for: region)
             Log.debug("region", "destination region armed", data: ["latitude": d.latitude, "longitude": d.longitude, "radius": radius], sessionId: config.id, level: "info")
         }
-        return backgroundMode
+        setBackgroundUpdates(m.allowsBackgroundLocationUpdates)
+        let accuracy = m.accuracyAuthorization
+        forward { $0.onStarted?(accuracy) }
     }
 
     func stop() {
@@ -125,6 +133,7 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
         stopOwnedSignificantChanges(m)
         removeRegions(m)
         m.allowsBackgroundLocationUpdates = false
+        setBackgroundUpdates(false)
         m.delegate = nil
         manager = nil
         lastStatus = nil
@@ -170,6 +179,19 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
         (manager ?? CLLocationManager()).monitoredRegions.map(\.identifier).filter { $0.hasPrefix(Self.regionPrefix) }.sorted()
     }
 
+    private func setBackgroundUpdates(_ active: Bool) {
+        lock.lock()
+        backgroundUpdates = active
+        lock.unlock()
+    }
+
+    private func forward(_ deliver: @escaping (LocationSource) -> Void) {
+        EngineQueue.shared.async { [weak self] in
+            guard let self else { return }
+            deliver(self)
+        }
+    }
+
     private func startSignificantChanges(_ m: CLLocationManager) {
         Self.defaults.set(true, forKey: Self.significantChangesOwnedKey)
         m.startMonitoringSignificantLocationChanges()
@@ -204,7 +226,7 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
             }
         }
         guard !fixes.isEmpty else { return }
-        onFixes?(fixes)
+        forward { $0.onFixes?(fixes) }
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
@@ -240,12 +262,12 @@ final class LocationSource: NSObject, CLLocationManagerDelegate {
         let accuracy = manager.accuracyAuthorization
         if let last = lastAccuracy, accuracy != last {
             lastAccuracy = accuracy
-            onAccuracyChange?(accuracy)
+            forward { $0.onAccuracyChange?(accuracy) }
         }
         let status = manager.authorizationStatus
         guard status != lastStatus else { return }
         lastStatus = status
-        onAuthorizationChange?(status)
+        forward { $0.onAuthorizationChange?(status) }
     }
 }
 
