@@ -687,8 +687,8 @@ In a bare app with its own rules files, add these excludes to them yourself (ins
 
 ## Threading
 
-The engine, queue database, timers and uploads run on one library thread per platform (iOS serial queue `els.engine`, Android `HandlerThread` `els-engine`), so a busy JS or UI thread does not delay locations, inserts or uploads.
-The main thread only receives OS callbacks and forwards them; CoreLocation managers, permission prompts and the foreground-service notification stay on main.
+The engine, queue database, timers and uploads run on one library thread per platform (iOS serial queue `els.engine`, Android `HandlerThread` `els-engine`), so database work, timers and uploads never run on or wait for the UI thread.
+OS callbacks, including location fixes, arrive on main and are handed to the library thread at once; on iOS, JS calls pass through main to keep their order. CoreLocation managers, permission prompts and the foreground-service notification stay on main.
 Promises resolve and events fire from the library thread, and Nitro delivers them on the JS thread, so nothing changes for JS.
 
 ## Upgrading to 0.2
@@ -700,7 +700,7 @@ With none of the new options, the upload contract is the one of 0.1. Other chang
 - A connectivity monitor runs in every queue mode, the default included, while a session runs or rows are pending. When the network returns it resets the backoff and uploads at once.
 - Delivery is at-least-once: a request whose response is lost (timeout, process killed) is sent again, so the server may receive the same location twice. Deduplicate on `sessionId` with the location `timestamp`, or on the `id` template field.
 - A new error code, `QUEUE_UNAVAILABLE`, reports that the queue database cannot be opened or written (see [Events](#events)). In the default mode the newest location is still uploaded from memory meanwhile (see [Storage failure](#storage-failure)).
-- From 0.2.0-beta.2 the engine no longer runs on the app's main thread; there is no API change. Debug lines now come from the engine thread, so await `configureDebug(...)` before `start()` if you want the first session's debug lines.
+- From 0.2.0-beta.2 the engine no longer runs on the app's main thread; there is no API change. Debug lines now come from the engine thread, so on Android await `configureDebug(...)` before `start()` if you want the first session's debug lines.
 
 ## Known limits
 
