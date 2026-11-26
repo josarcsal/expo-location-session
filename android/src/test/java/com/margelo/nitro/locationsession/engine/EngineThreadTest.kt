@@ -2,6 +2,8 @@ package com.margelo.nitro.locationsession.engine
 
 import android.Manifest
 import android.app.Application
+import android.app.Notification
+import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.os.Looper
@@ -21,6 +23,9 @@ import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.Implementation
+import org.robolectric.annotation.Implements
+import org.robolectric.shadows.ShadowService
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -148,5 +153,33 @@ class EngineThreadTest {
             onEngine { LaunchGate.serviceStartDelivered() }
             c.destroy()
         }
+    }
+
+    @Test
+    @Config(shadows = [ServiceStateAtStartForeground::class])
+    fun serviceIsNotSeenAliveBeforeItIsForeground() {
+        ServiceStateAtStartForeground.seen.clear()
+        val c = Robolectric.buildService(LocationTrackingService::class.java).create()
+        try {
+            assertEquals(listOf(false to false), ServiceStateAtStartForeground.seen)
+            assertTrue(LocationTrackingService.isAlive)
+            assertTrue(LocationTrackingService.isForeground)
+        } finally {
+            c.destroy()
+            idleEngine()
+        }
+    }
+}
+
+@Implements(Service::class)
+class ServiceStateAtStartForeground : ShadowService() {
+    @Implementation
+    override fun startForeground(id: Int, notification: Notification, foregroundServiceType: Int) {
+        seen.add(LocationTrackingService.isAlive to LocationTrackingService.isForeground)
+        super.startForeground(id, notification, foregroundServiceType)
+    }
+
+    companion object {
+        val seen = mutableListOf<Pair<Boolean, Boolean>>()
     }
 }

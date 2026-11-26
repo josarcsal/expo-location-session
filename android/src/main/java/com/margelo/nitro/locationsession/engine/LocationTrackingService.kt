@@ -24,11 +24,11 @@ class LocationTrackingService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        isAlive = true
         ensureChannel(PLACEHOLDER_CHANNEL_NAME)
         val placeholder = notification(PLACEHOLDER_TITLE, null)
         promoted = promote(placeholder)
         isForeground = promoted
+        isAlive = true
         ElsLog.debug("service", "service created", mapOf("promoted" to promoted), level = "info")
         if (promoted) {
             val app = applicationContext
