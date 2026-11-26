@@ -20,6 +20,16 @@ public struct Fix: Codable, Equatable {
     }
 }
 
+public func sanitize(_ f: Fix) -> Fix? {
+    guard f.latitude.isFinite, f.longitude.isFinite, abs(f.latitude) <= 90, abs(f.longitude) <= 180,
+          f.accuracy.isFinite, f.accuracy >= 0 else { return nil }
+    var fix = f
+    if let v = fix.altitude, !v.isFinite { fix.altitude = nil }
+    if let v = fix.speed, !(v.isFinite && v >= 0) { fix.speed = nil }
+    if let v = fix.heading, !(v.isFinite && v >= 0) { fix.heading = nil }
+    return fix
+}
+
 public struct Destination: Codable, Equatable {
     public var latitude: Double
     public var longitude: Double
@@ -29,6 +39,16 @@ public struct Destination: Codable, Equatable {
         self.latitude = latitude
         self.longitude = longitude
         self.radiusMeters = radiusMeters
+    }
+}
+
+public struct Battery: Codable, Equatable {
+    public var level: Double
+    public var charging: Bool
+
+    public init(level: Double, charging: Bool) {
+        self.level = level
+        self.charging = charging
     }
 }
 
@@ -42,8 +62,9 @@ public struct SessionConfig: Codable, Equatable {
     public var uploadHeaders: [String: String]
     public var uploadExtrasJson: String
     public var uploadMinIntervalMs: Int64
+    public var sync: SyncConfig
 
-    public init(id: String, expiresAtMs: Int64, destination: Destination?, accuracy: String, distanceFilterMeters: Double, uploadUrl: String, uploadHeaders: [String: String], uploadExtrasJson: String, uploadMinIntervalMs: Int64) {
+    public init(id: String, expiresAtMs: Int64, destination: Destination?, accuracy: String, distanceFilterMeters: Double, uploadUrl: String, uploadHeaders: [String: String], uploadExtrasJson: String, uploadMinIntervalMs: Int64, sync: SyncConfig = .default) {
         self.id = id
         self.expiresAtMs = expiresAtMs
         self.destination = destination
@@ -53,6 +74,21 @@ public struct SessionConfig: Codable, Equatable {
         self.uploadHeaders = uploadHeaders
         self.uploadExtrasJson = uploadExtrasJson
         self.uploadMinIntervalMs = uploadMinIntervalMs
+        self.sync = sync
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        expiresAtMs = try c.decode(Int64.self, forKey: .expiresAtMs)
+        destination = try c.decodeIfPresent(Destination.self, forKey: .destination)
+        accuracy = try c.decode(String.self, forKey: .accuracy)
+        distanceFilterMeters = try c.decode(Double.self, forKey: .distanceFilterMeters)
+        uploadUrl = try c.decode(String.self, forKey: .uploadUrl)
+        uploadHeaders = try c.decode([String: String].self, forKey: .uploadHeaders)
+        uploadExtrasJson = try c.decode(String.self, forKey: .uploadExtrasJson)
+        uploadMinIntervalMs = try c.decode(Int64.self, forKey: .uploadMinIntervalMs)
+        sync = try c.decodeIfPresent(SyncConfig.self, forKey: .sync) ?? .default
     }
 }
 

@@ -27,6 +27,8 @@ namespace margelo::nitro::locationsession { struct NativeSessionConfig; }
 namespace margelo::nitro::locationsession { struct NativeSessionState; }
 // Forward declaration of `NativeDebugOptions` to properly resolve imports.
 namespace margelo::nitro::locationsession { struct NativeDebugOptions; }
+// Forward declaration of `NativeQueueStatus` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeQueueStatus; }
 // Forward declaration of `SessionEvent` to properly resolve imports.
 namespace margelo::nitro::locationsession { enum class SessionEvent; }
 
@@ -39,6 +41,7 @@ namespace margelo::nitro::locationsession { enum class SessionEvent; }
 #include "NativeSessionState.hpp"
 #include "NativeDebugOptions.hpp"
 #include <string>
+#include "NativeQueueStatus.hpp"
 #include "SessionEvent.hpp"
 #include <functional>
 
@@ -84,6 +87,9 @@ namespace margelo::nitro::locationsession {
       virtual std::shared_ptr<Promise<void>> clearDebugLog() = 0;
       virtual std::shared_ptr<Promise<double>> flushDebugLog() = 0;
       virtual std::shared_ptr<Promise<std::string>> getDebugInstallId() = 0;
+      virtual std::shared_ptr<Promise<NativeQueueStatus>> getQueueStatus() = 0;
+      virtual std::shared_ptr<Promise<double>> syncQueue() = 0;
+      virtual std::shared_ptr<Promise<void>> clearQueue() = 0;
       virtual double addListener(SessionEvent event, const std::function<void(const std::string& /* payloadJson */)>& callback) = 0;
       virtual void removeListener(double id) = 0;
 

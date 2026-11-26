@@ -10,7 +10,13 @@ fun validate(c: SessionConfig, nowMs: Long, running: Boolean, notificationsGrant
     return null
 }
 
-private fun isInvalid(c: SessionConfig): Boolean {
+fun syncInvalidReason(c: SessionConfig): String? =
+    if (isInvalidBase(c)) null else validateSync(c.sync, c.uploadExtrasJson)
+
+private fun isInvalid(c: SessionConfig): Boolean =
+    isInvalidBase(c) || validateSync(c.sync, c.uploadExtrasJson) != null
+
+private fun isInvalidBase(c: SessionConfig): Boolean {
     if (c.id.isEmpty()) return true
     val uri = try { URI(c.uploadUrl) } catch (e: Exception) { return true }
     if (uri.scheme?.lowercase() != "https") return true

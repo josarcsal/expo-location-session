@@ -2,17 +2,20 @@ import { AppState, Button, Platform, ScrollView, StyleSheet, Switch, Text, TextI
 import { useCallback, useEffect, useState } from 'react';
 import {
   addListener,
+  clearQueue,
   configureDebug,
   flushDebugLog,
   getCurrentPosition,
   getDebugInstallId,
   getDebugLog,
   getPermissionStatus,
+  getQueueStatus,
   getState,
   LocationSessionError,
   requestPermission,
   start,
   stop,
+  syncQueue,
   type PermissionLevel,
   type PermissionStatus,
   type SessionState,
@@ -47,6 +50,8 @@ export default function App() {
   const [debugUrl, setDebugUrl] = useState(DEFAULT_DEBUG_URL);
   const [debugEnabled, setDebugEnabled] = useState(false);
   const [debugEvents, setDebugEvents] = useState(0);
+  const [trail, setTrail] = useState(false);
+  const [refreshUrl, setRefreshUrl] = useState('');
 
   const append = useCallback((line: string) => {
     console.log(`ELS ${line}`);
@@ -127,6 +132,9 @@ export default function App() {
           url,
           headers: JSON.parse(headers || '{}'),
           extras: { app: 'example' },
+          queue: trail ? { mode: 'all' } : undefined,
+          batch: trail ? { maxSize: 50 } : undefined,
+          auth: refreshUrl ? { refresh: { url: refreshUrl } } : undefined,
         },
         android: {
           notification: {
@@ -153,6 +161,33 @@ export default function App() {
     refresh();
   };
 
+  const showQueueStatus = async () => {
+    try {
+      const status = await getQueueStatus();
+      append(`queue ${status.pending} pending, ${status.sessions} sessions, oldest ${status.oldestAt ?? '-'}`);
+    } catch (error) {
+      append(`getQueueStatus rejected ${describe(error)}`);
+    }
+  };
+
+  const sync = async () => {
+    try {
+      const { sent } = await syncQueue();
+      append(`sync sent ${sent}`);
+    } catch (error) {
+      append(`syncQueue rejected ${describe(error)}`);
+    }
+  };
+
+  const clear = async () => {
+    try {
+      await clearQueue();
+      append('queue cleared');
+    } catch (error) {
+      append(`clearQueue rejected ${describe(error)}`);
+    }
+  };
+
   useEffect(() => {
     const subscriptions = [
       addListener('location', (p) => {
@@ -160,14 +195,14 @@ export default function App() {
         refresh();
       }),
       addListener('upload', (p) => {
-        append(`upload ${p.ok ? 'ok' : 'failed'} ${p.status ?? '-'}`);
+        append(`upload ${p.ok ? 'ok' : 'failed'} ${p.status ?? '-'} ${p.sessionId ?? '-'} ×${p.count ?? '-'}`);
         refresh();
       }),
       addListener('stop', (p) => {
         append(`stop ${p.reason} ${p.sessionId}`);
         refresh();
       }),
-      addListener('error', (p) => append(`error ${p.code}: ${p.message}`)),
+      addListener('error', (p) => append(`error ${p.code}: ${p.message} ${p.sessionId ?? '-'}`)),
       addListener('log', () => setDebugEvents((n) => n + 1)),
     ];
     const appState = AppState.addEventListener('change', (next) => {
@@ -213,6 +248,19 @@ export default function App() {
           placeholder="Headers (JSON)"
           testID="headers"
         />
+        <TextInput
+          style={styles.input}
+          value={refreshUrl}
+          onChangeText={setRefreshUrl}
+          autoCapitalize="none"
+          autoCorrect={false}
+          placeholder="Refresh URL (optional)"
+          testID="refresh-url"
+        />
+        <View style={styles.row}>
+          <Text>Trail (queue all, batch 50)</Text>
+          <Switch value={trail} onValueChange={setTrail} testID="trail" />
+        </View>
 
         <Text style={styles.heading}>Session</Text>
         <View style={styles.row}>
@@ -237,6 +285,13 @@ export default function App() {
         <View style={styles.row}>
           <Button title="Start" onPress={startSession} testID="start" />
           <Button title="Stop" onPress={stopSession} testID="stop" />
+        </View>
+
+        <Text style={styles.heading}>Queue</Text>
+        <View style={styles.row}>
+          <Button title="Queue status" onPress={showQueueStatus} testID="queue-status" />
+          <Button title="Sync queue" onPress={sync} testID="queue-sync" />
+          <Button title="Clear queue" onPress={clear} testID="queue-clear" />
         </View>
 
         <Text style={styles.heading}>Debug log ({debugEvents} events)</Text>

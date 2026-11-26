@@ -9,19 +9,25 @@ import android.content.Context
 import android.content.Intent
 import android.location.Location
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.margelo.nitro.locationsession.core.Fix
+import com.margelo.nitro.locationsession.core.QueueMode
+import com.margelo.nitro.locationsession.core.QueueStatus
+import com.margelo.nitro.locationsession.core.QueueTarget
 import com.margelo.nitro.locationsession.core.SessionConfig
+import com.margelo.nitro.locationsession.core.StopQueueAction
 import com.margelo.nitro.locationsession.core.StopReason
 import com.margelo.nitro.locationsession.core.acceptFix
 import com.margelo.nitro.locationsession.core.isDuplicateFix
+import com.margelo.nitro.locationsession.core.sanitize
 import com.margelo.nitro.locationsession.core.stopDecision
+import com.margelo.nitro.locationsession.core.stopQueueAction
+import com.margelo.nitro.locationsession.core.syncInvalidReason
 import com.margelo.nitro.locationsession.core.validate
 import org.json.JSONObject
+import java.util.concurrent.atomic.AtomicBoolean
 
 class LocationSessionException(val code: String, message: String) : RuntimeException("$code: $message")
 
@@ -39,14 +45,15 @@ data class EngineState(
 object SessionEngine {
     val events = EventBus()
 
-    private val main = Handler(Looper.getMainLooper())
     private var app: Context? = null
     private lateinit var store: SessionStore
+    private lateinit var queue: QueueDatabase
+    private lateinit var credentials: TargetCredentials
     private lateinit var uploader: Uploader
 
-    private var config: SessionConfig? = null
+    @Volatile private var config: SessionConfig? = null
     private var startedAtMs = 0L
-    private var lastFix: Fix? = null
+    @Volatile private var lastFix: Fix? = null
     private var stopping = false
     private var expiryRunnable: Runnable? = null
     private var updatesRequestedForServiceStart = false
@@ -55,16 +62,18 @@ object SessionEngine {
     val isActive: Boolean get() = config != null
     val lastKnownFix: Fix? get() = lastFix
 
-    private var lifecycleAttached = false
+    private val lifecycleAttached = AtomicBoolean(false)
 
     fun attach(ctx: Context) {
-        assertMain()
-        if (lifecycleAttached) return
-        lifecycleAttached = true
-        (ctx.applicationContext as? Application)?.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
+        val application = ctx.applicationContext as? Application ?: return
+        if (!lifecycleAttached.compareAndSet(false, true)) return
+        application.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
             override fun onActivityResumed(activity: Activity) {
                 ElsLog.debug("lifecycle", "activity resumed", level = "info")
-                resumeIfNeeded(activity)
+                EngineThread.post {
+                    resumeIfNeeded(application)
+                    uploader.drain(null) {}
+                }
             }
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
                 DebugLogger.launched("activity", mapOf("restored" to (savedInstanceState != null)))
@@ -80,14 +89,16 @@ object SessionEngine {
     }
 
     private fun init(ctx: Context): Context {
-        assertMain()
+        assertEngine()
         app?.let { return it }
         val context = ctx.applicationContext
         DebugLogger.init(context)
-        attach(context)
         app = context
         store = SessionStore(context)
-        uploader = Uploader(context, store, events)
+        queue = QueueDatabase.shared(context)
+        queue.store()
+        credentials = TargetCredentials(context)
+        uploader = Uploader(context, store, queue, credentials, events)
         return context
     }
 
@@ -102,10 +113,15 @@ object SessionEngine {
         }
         val now = nowMs()
         validate(c, now, config != null, Permissions.notificationsGranted(context))?.let {
-            throw LocationSessionException(it, validationMessage(it))
+            throw LocationSessionException(it, validationMessage(it, c))
         }
         if (!store.save(c, now)) {
             store.wipe()
+            throw LocationSessionException("INTERNAL", "Could not persist the session")
+        }
+        if (!credentials.save(c.id, c.uploadHeaders, c.sync.refresh?.headers ?: emptyMap())) {
+            store.wipe()
+            credentials.remove(c.id)
             throw LocationSessionException("INTERNAL", "Could not persist the session")
         }
         try {
@@ -151,6 +167,52 @@ object SessionEngine {
         )
     }
 
+    fun queueStatus(ctx: Context): QueueStatus {
+        init(ctx)
+        return queue.status(uploader.hiddenRows()) ?: throw LocationSessionException("INTERNAL", "queue storage is not available")
+    }
+
+    fun syncQueue(ctx: Context, budgetMs: Long? = null, completion: (Int) -> Unit) {
+        init(ctx)
+        uploader.drain(budgetMs, completion)
+    }
+
+    fun cancelSync(ctx: Context) {
+        init(ctx)
+        uploader.cancelDrain(true)
+    }
+
+    fun clearQueue(ctx: Context) {
+        init(ctx)
+        uploader.cancelDrain(false)
+        if (config?.sync?.mode == QueueMode.LATEST) {
+            uploader.discardFallback()
+            store.pendingFix = null
+        }
+        val removed = queue.clear() ?: return
+        removed.forEach(credentials::remove)
+        ElsLog.debug("queue", "cleared", mapOf("targets" to removed.size), config?.id)
+        uploader.evaluateConnectivity()
+    }
+
+    fun drainAtProcessStart(ctx: Context) {
+        val context = init(ctx)
+        if (config == null) {
+            when (store.load()) {
+                StoredSession.None -> endLeftoverTargets()
+                StoredSession.Corrupt -> resumeIfNeeded(context)
+                is StoredSession.Session -> return
+            }
+        }
+        uploader.drain(null) {}
+    }
+
+    private fun endLeftoverTargets(running: String? = null) {
+        val removed = queue.store()?.endLeftovers(running) ?: return
+        removed.forEach(credentials::remove)
+        if (removed.isNotEmpty()) ElsLog.debug("queue", "leftover latest-mode sessions deleted", mapOf("targets" to removed.size))
+    }
+
     fun onFixes(ctx: Context, fixes: List<Fix>) = onFixes(ctx, fixes) {}
 
     fun onFixes(ctx: Context, fixes: List<Fix>, settled: () -> Unit) {
@@ -168,7 +230,7 @@ object SessionEngine {
                 logFix(raw, "dropped", if (c == null) "no session" else "stopping", c?.id)
                 break
             }
-            val fix = sanitized(raw)
+            val fix = sanitize(raw)
             if (fix == null) {
                 logFix(raw, "dropped", "invalid", c.id)
                 continue
@@ -223,6 +285,7 @@ object SessionEngine {
             StoredSession.Corrupt -> {
                 ElsLog.info("store", "discarding unreadable persisted session", level = "warn")
                 store.wipe()
+                endLeftoverTargets()
                 removeUpdates(context)
                 cancelAlarm(context)
                 LaunchGate.clear(context)
@@ -230,6 +293,7 @@ object SessionEngine {
             }
             is StoredSession.Session -> {
                 val c = stored.config
+                endLeftoverTargets(c.id)
                 when {
                     nowMs() >= c.expiresAtMs -> teardown(context, c, StopReason.EXPIRED)
                     !Permissions.hasForeground(context) -> teardown(context, c, StopReason.PERMISSION_REVOKED)
@@ -250,6 +314,7 @@ object SessionEngine {
     }
 
     fun refreshUpdates(ctx: Context) {
+        assertEngine()
         if (updatesRequestedForServiceStart) {
             updatesRequestedForServiceStart = false
             return
@@ -260,9 +325,10 @@ object SessionEngine {
     private fun activate(ctx: Context, c: SessionConfig, startedAt: Long, pending: Fix?, lastUploadAt: Long?) {
         config = c
         startedAtMs = startedAt
-        lastFix = pending?.let(::sanitized)
+        lastFix = pending?.let(::sanitize)
         stopping = false
         uploader.onStop = { reason -> stop(ctx, reason) }
+        saveTarget(c)
         uploader.begin(c, lastFix, lastUploadAt)
         startService(ctx)
         requestUpdates(ctx, c)
@@ -270,27 +336,71 @@ object SessionEngine {
         scheduleExpiry(ctx, c)
     }
 
+    private fun saveTarget(c: SessionConfig) {
+        val target = QueueTarget(
+            sessionId = c.id,
+            url = c.uploadUrl,
+            mode = c.sync.mode,
+            batch = c.sync.batch,
+            extrasJson = c.uploadExtrasJson,
+            maxAgeMs = c.sync.maxAgeMs,
+            refreshUrl = c.sync.refresh?.url,
+            refreshBodyJson = c.sync.refresh?.bodyJson,
+            ended = false
+        )
+        queue.saveTarget(target)
+    }
+
     private fun teardown(ctx: Context, c: SessionConfig, reason: StopReason?) {
-        expiryRunnable?.let { main.removeCallbacks(it) }
+        expiryRunnable?.let { EngineThread.removeCallbacks(it) }
         expiryRunnable = null
         updatesRequestedForServiceStart = false
         cancelAlarm(ctx)
         LaunchGate.clear(ctx)
         removeUpdates(ctx)
         stopService(ctx)
+        events.clearStickyErrors()
         uploader.reset()
+        val action = if (reason == null) StopQueueAction.DELETE_ROWS else stopQueueAction(c.sync.mode, reason)
+        if (action == StopQueueAction.MARK_ENDED) {
+            queue.markEnded(c.id)
+            ElsLog.debug("queue", "session marked ended", mapOf("totalPending" to (queue.status()?.pending ?: 0), "buffered" to queue.buffered), c.id)
+        } else {
+            uploader.discardFallback()
+            val deleted = queue.deleteSession(c.id)
+            ElsLog.debug("queue", "session rows deleted", mapOf("rows" to deleted), c.id)
+            credentials.remove(c.id)
+            if (action == StopQueueAction.DELETE_ROWS_DROPPED && deleted > 0) {
+                events.emit(
+                    "error",
+                    JSONObject()
+                        .put("code", "UPLOAD_DROPPED")
+                        .put("message", "Session rejected; $deleted location${if (deleted == 1) "" else "s"} dropped")
+                        .put("sessionId", c.id)
+                )
+            }
+        }
+        uploader.evaluateConnectivity()
         store.wipe()
         config = null
         lastFix = null
         stopping = false
         if (reason == null) {
             ElsLog.info("stop", "discarded session ${c.id} after a failed start", sessionId = c.id)
+            uploader.drain(null) {}
             return
         }
         store.lastStop = LastStop(reason, nowMs(), c.id)
         ElsLog.info("stop", "stopped session ${c.id} reason=${reason.wire}", mapOf("reason" to reason.wire), c.id)
         DebugLogger.onStopping()
         events.emit("stop", JSONObject().put("reason", reason.wire).put("sessionId", c.id))
+        scheduleSync(ctx)
+        uploader.drain(null) {}
+    }
+
+    private fun scheduleSync(ctx: Context) {
+        if (!QueueSync.isEnabled(ctx)) return
+        QueueSync.scheduleIfNeeded(ctx, queue.status()?.pending ?: 0, config != null)
     }
 
     private fun evaluate(ctx: Context, fix: Fix?) {
@@ -332,13 +442,13 @@ object SessionEngine {
     }
 
     private fun scheduleExpiry(ctx: Context, c: SessionConfig) {
-        expiryRunnable?.let { main.removeCallbacks(it) }
+        expiryRunnable?.let { EngineThread.removeCallbacks(it) }
         val r = Runnable {
             expiryRunnable = null
             evaluate(ctx, null)
         }
         expiryRunnable = r
-        main.postDelayed(r, maxOf(0L, c.expiresAtMs - nowMs()))
+        EngineThread.postDelayed(r, maxOf(0L, c.expiresAtMs - nowMs()))
         scheduleAlarm(ctx, c)
     }
 
@@ -409,6 +519,7 @@ object SessionEngine {
             return
         }
         ctx.stopService(Intent(ctx, LocationTrackingService::class.java))
+        LaunchGate.serviceStopRequested()
     }
 
     fun isAppInForeground(ctx: Context): Boolean {
@@ -417,27 +528,20 @@ object SessionEngine {
         return info.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
     }
 
-    private fun validationMessage(code: String): String = when (code) {
-        "ALREADY_RUNNING" -> "A session is already running; call stop() first"
-        "EXPIRED" -> "expiresAt is in the past"
-        "NOTIFICATION_PERMISSION_DENIED" -> "Notification permission is not granted"
-        else -> "Invalid session config (https upload url, non-empty id, positive radius, valid accuracy)"
+    private fun validationMessage(code: String, c: SessionConfig): String {
+        if (code == "INVALID_CONFIG") syncInvalidReason(c)?.let { return it }
+        return when (code) {
+            "ALREADY_RUNNING" -> "A session is already running; call stop() first"
+            "EXPIRED" -> "expiresAt is in the past"
+            "NOTIFICATION_PERMISSION_DENIED" -> "Notification permission is not granted"
+            else -> "Invalid session config (https upload url, non-empty id, positive radius, valid accuracy)"
+        }
     }
-}
-
-fun sanitized(f: Fix): Fix? {
-    if (!f.latitude.isFinite() || !f.longitude.isFinite() || !f.accuracy.isFinite()) return null
-    if (f.accuracy < 0 || kotlin.math.abs(f.latitude) > 90 || kotlin.math.abs(f.longitude) > 180) return null
-    return f.copy(
-        altitude = f.altitude?.takeIf { it.isFinite() },
-        speed = f.speed?.takeIf { it.isFinite() && it >= 0 },
-        heading = f.heading?.takeIf { it.isFinite() && it >= 0 }
-    )
 }
 
 fun fixFrom(location: Location): Fix? {
     if (!location.hasAccuracy()) return null
-    return sanitized(
+    return sanitize(
         Fix(
             latitude = location.latitude,
             longitude = location.longitude,

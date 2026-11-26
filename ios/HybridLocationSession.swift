@@ -1,5 +1,6 @@
 import Foundation
 import NitroModules
+import UIKit
 
 class HybridLocationSession: HybridLocationSessionSpec {
     private let engine = SessionEngine.shared
@@ -8,7 +9,10 @@ class HybridLocationSession: HybridLocationSessionSpec {
 
     override init() {
         super.init()
-        DispatchQueue.main.async { SessionEngine.shared.resumeIfNeeded() }
+        DispatchQueue.main.async {
+            SessionEngine.shared.primeOnMain()
+            EngineQueue.shared.async { SessionEngine.shared.resumeIfNeeded() }
+        }
     }
 
     deinit {
@@ -41,26 +45,30 @@ class HybridLocationSession: HybridLocationSessionSpec {
 
     func start(config: NativeSessionConfig) throws -> Promise<Void> {
         onMain { promise in
-            do {
-                try self.engine.start(sessionConfig(config))
-                promise.resolve()
-            } catch let error as LocationSessionError {
-                promise.reject(withError: runtimeError(error))
-            } catch {
-                promise.reject(withError: RuntimeError.error(withMessage: "INTERNAL: \(error)"))
+            self.engine.primeOnMain()
+            let appActive = UIApplication.shared.applicationState == .active
+            EngineQueue.shared.async {
+                do {
+                    try self.engine.start(sessionConfig(config), appActive: appActive)
+                    promise.resolve()
+                } catch let error as LocationSessionError {
+                    promise.reject(withError: runtimeError(error))
+                } catch {
+                    promise.reject(withError: RuntimeError.error(withMessage: "INTERNAL: \(error)"))
+                }
             }
         }
     }
 
     func stop() throws -> Promise<Void> {
-        onMain { promise in
+        onEngine { promise in
             self.engine.stop(.stopped)
             promise.resolve()
         }
     }
 
     func getState() throws -> Promise<NativeSessionState> {
-        onMain { promise in promise.resolve(withResult: nativeState(self.engine.state())) }
+        onEngine { promise in promise.resolve(withResult: nativeState(self.engine.state())) }
     }
 
     func configureDebug(options: NativeDebugOptions) throws -> Promise<Void> {
@@ -109,6 +117,32 @@ class HybridLocationSession: HybridLocationSessionSpec {
         }
     }
 
+    func getQueueStatus() throws -> Promise<NativeQueueStatus> {
+        onEngine { promise in
+            do {
+                let status = try self.engine.queueStatus()
+                promise.resolve(withResult: NativeQueueStatus(pending: Double(status.pending), oldestAt: status.oldestAt.map(Double.init), sessions: Double(status.sessions)))
+            } catch let error as LocationSessionError {
+                promise.reject(withError: runtimeError(error))
+            } catch {
+                promise.reject(withError: RuntimeError.error(withMessage: "INTERNAL: \(error)"))
+            }
+        }
+    }
+
+    func syncQueue() throws -> Promise<Double> {
+        onEngine { promise in
+            self.engine.syncQueue { promise.resolve(withResult: Double($0)) }
+        }
+    }
+
+    func clearQueue() throws -> Promise<Void> {
+        onEngine { promise in
+            self.engine.clearQueue()
+            promise.resolve()
+        }
+    }
+
     func addListener(event: SessionEvent, callback: @escaping (String) -> Void) throws -> Double {
         guard let kind = EventBus.Event(rawValue: event.stringValue) else {
             throw RuntimeError.error(withMessage: "INVALID_EVENT: \(event.stringValue)")
@@ -133,6 +167,12 @@ class HybridLocationSession: HybridLocationSessionSpec {
         return promise
     }
 
+    private func onEngine<T>(_ body: @escaping (Promise<T>) -> Void) -> Promise<T> {
+        let promise = Promise<T>()
+        DispatchQueue.main.async { EngineQueue.shared.async { body(promise) } }
+        return promise
+    }
+
     private func offMain<T>(_ body: @escaping (Promise<T>) -> Void) -> Promise<T> {
         let promise = Promise<T>()
         DispatchQueue.global(qos: .userInitiated).async { body(promise) }
@@ -147,6 +187,29 @@ private func runtimeError(_ error: LocationSessionError) -> Error {
 private func milliseconds(_ value: Double) -> Int64? {
     guard value.isFinite, abs(value) < 9.0e15 else { return nil }
     return Int64(value.rounded())
+}
+
+private func syncConfig(_ c: NativeSessionConfig) throws -> SyncConfig {
+    let mode: QueueMode
+    switch c.uploadQueueMode {
+    case .latest: mode = .latest
+    case .all: mode = .all
+    }
+    do {
+        return try makeSyncConfig(
+            mode: mode,
+            maxRecords: c.uploadQueueMaxRecords,
+            maxAgeMs: c.uploadQueueMaxAgeMs,
+            batchMaxSize: c.uploadBatchMaxSize,
+            batchRootProperty: c.uploadBatchRootProperty,
+            templateJson: c.uploadBodyTemplateJson,
+            refreshUrl: c.uploadRefreshUrl,
+            refreshHeaders: c.uploadRefreshHeaders,
+            refreshBodyJson: c.uploadRefreshBodyJson
+        )
+    } catch let error as InvalidConfig {
+        throw LocationSessionError(code: "INVALID_CONFIG", message: error.reason)
+    }
 }
 
 private func sessionConfig(_ c: NativeSessionConfig) throws -> SessionConfig {
@@ -168,7 +231,8 @@ private func sessionConfig(_ c: NativeSessionConfig) throws -> SessionConfig {
         uploadUrl: c.uploadUrl,
         uploadHeaders: c.uploadHeaders,
         uploadExtrasJson: c.uploadExtrasJson,
-        uploadMinIntervalMs: minInterval
+        uploadMinIntervalMs: minInterval,
+        sync: try syncConfig(c)
     )
 }
 

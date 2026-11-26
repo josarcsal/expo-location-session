@@ -4,12 +4,18 @@ import android.content.ContentProvider
 import android.content.ContentValues
 import android.database.Cursor
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 
 class SessionInitProvider : ContentProvider() {
     override fun onCreate(): Boolean {
         context?.let {
             DebugLogger.processStarted(it)
             SessionEngine.attach(it)
+            val app = it.applicationContext
+            Handler(Looper.getMainLooper()).post {
+                EngineThread.post { SessionEngine.drainAtProcessStart(app) }
+            }
         }
         return true
     }

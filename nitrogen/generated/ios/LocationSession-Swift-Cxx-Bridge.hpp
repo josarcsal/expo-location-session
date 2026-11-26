@@ -16,6 +16,8 @@ namespace margelo::nitro::locationsession { struct NativeDestination; }
 namespace margelo::nitro::locationsession { struct NativeLocation; }
 // Forward declaration of `NativePermissionStatus` to properly resolve imports.
 namespace margelo::nitro::locationsession { struct NativePermissionStatus; }
+// Forward declaration of `NativeQueueStatus` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeQueueStatus; }
 // Forward declaration of `NativeSessionState` to properly resolve imports.
 namespace margelo::nitro::locationsession { struct NativeSessionState; }
 // Forward declaration of `PermissionValue` to properly resolve imports.
@@ -32,6 +34,7 @@ namespace LocationSession { class HybridLocationSessionSpec_cxx; }
 #include "NativeDestination.hpp"
 #include "NativeLocation.hpp"
 #include "NativePermissionStatus.hpp"
+#include "NativeQueueStatus.hpp"
 #include "NativeSessionState.hpp"
 #include "PermissionValue.hpp"
 #include "SessionStatus.hpp"
@@ -245,6 +248,21 @@ namespace margelo::nitro::locationsession::bridge::swift {
     return optional.value();
   }
   
+  // pragma MARK: std::optional<std::unordered_map<std::string, std::string>>
+  /**
+   * Specialized version of `std::optional<std::unordered_map<std::string, std::string>>`.
+   */
+  using std__optional_std__unordered_map_std__string__std__string__ = std::optional<std::unordered_map<std::string, std::string>>;
+  inline std::optional<std::unordered_map<std::string, std::string>> create_std__optional_std__unordered_map_std__string__std__string__(const std::unordered_map<std::string, std::string>& value) noexcept {
+    return std::optional<std::unordered_map<std::string, std::string>>(value);
+  }
+  inline bool has_value_std__optional_std__unordered_map_std__string__std__string__(const std::optional<std::unordered_map<std::string, std::string>>& optional) noexcept {
+    return optional.has_value();
+  }
+  inline std::unordered_map<std::string, std::string> get_std__optional_std__unordered_map_std__string__std__string__(const std::optional<std::unordered_map<std::string, std::string>>& optional) noexcept {
+    return optional.value();
+  }
+  
   // pragma MARK: std::optional<NativeLocation>
   /**
    * Specialized version of `std::optional<NativeLocation>`.
@@ -377,6 +395,40 @@ namespace margelo::nitro::locationsession::bridge::swift {
     return Func_void_double_Wrapper(std::move(value));
   }
   
+  // pragma MARK: std::shared_ptr<Promise<NativeQueueStatus>>
+  /**
+   * Specialized version of `std::shared_ptr<Promise<NativeQueueStatus>>`.
+   */
+  using std__shared_ptr_Promise_NativeQueueStatus__ = std::shared_ptr<Promise<NativeQueueStatus>>;
+  inline std::shared_ptr<Promise<NativeQueueStatus>> create_std__shared_ptr_Promise_NativeQueueStatus__() noexcept {
+    return Promise<NativeQueueStatus>::create();
+  }
+  inline PromiseHolder<NativeQueueStatus> wrap_std__shared_ptr_Promise_NativeQueueStatus__(std::shared_ptr<Promise<NativeQueueStatus>> promise) noexcept {
+    return PromiseHolder<NativeQueueStatus>(std::move(promise));
+  }
+  
+  // pragma MARK: std::function<void(const NativeQueueStatus& /* result */)>
+  /**
+   * Specialized version of `std::function<void(const NativeQueueStatus&)>`.
+   */
+  using Func_void_NativeQueueStatus = std::function<void(const NativeQueueStatus& /* result */)>;
+  /**
+   * Wrapper class for a `std::function<void(const NativeQueueStatus& / * result * /)>`, this can be used from Swift.
+   */
+  class Func_void_NativeQueueStatus_Wrapper final {
+  public:
+    explicit Func_void_NativeQueueStatus_Wrapper(std::function<void(const NativeQueueStatus& /* result */)>&& func): _function(std::make_unique<std::function<void(const NativeQueueStatus& /* result */)>>(std::move(func))) {}
+    inline void call(NativeQueueStatus result) const noexcept {
+      _function->operator()(result);
+    }
+  private:
+    std::unique_ptr<std::function<void(const NativeQueueStatus& /* result */)>> _function;
+  } SWIFT_NONCOPYABLE;
+  Func_void_NativeQueueStatus create_Func_void_NativeQueueStatus(void* NON_NULL swiftClosureWrapper) noexcept;
+  inline Func_void_NativeQueueStatus_Wrapper wrap_Func_void_NativeQueueStatus(Func_void_NativeQueueStatus value) noexcept {
+    return Func_void_NativeQueueStatus_Wrapper(std::move(value));
+  }
+  
   // pragma MARK: std::shared_ptr<HybridLocationSessionSpec>
   /**
    * Specialized version of `std::shared_ptr<HybridLocationSessionSpec>`.
@@ -441,6 +493,15 @@ namespace margelo::nitro::locationsession::bridge::swift {
   }
   inline Result_std__shared_ptr_Promise_double___ create_Result_std__shared_ptr_Promise_double___(const std::exception_ptr& error) noexcept {
     return Result<std::shared_ptr<Promise<double>>>::withError(error);
+  }
+  
+  // pragma MARK: Result<std::shared_ptr<Promise<NativeQueueStatus>>>
+  using Result_std__shared_ptr_Promise_NativeQueueStatus___ = Result<std::shared_ptr<Promise<NativeQueueStatus>>>;
+  inline Result_std__shared_ptr_Promise_NativeQueueStatus___ create_Result_std__shared_ptr_Promise_NativeQueueStatus___(const std::shared_ptr<Promise<NativeQueueStatus>>& value) noexcept {
+    return Result<std::shared_ptr<Promise<NativeQueueStatus>>>::withValue(value);
+  }
+  inline Result_std__shared_ptr_Promise_NativeQueueStatus___ create_Result_std__shared_ptr_Promise_NativeQueueStatus___(const std::exception_ptr& error) noexcept {
+    return Result<std::shared_ptr<Promise<NativeQueueStatus>>>::withError(error);
   }
   
   // pragma MARK: Result<double>

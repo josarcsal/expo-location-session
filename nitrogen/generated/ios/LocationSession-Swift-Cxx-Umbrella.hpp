@@ -20,6 +20,10 @@ namespace margelo::nitro::locationsession { struct NativeDestination; }
 namespace margelo::nitro::locationsession { struct NativeLocation; }
 // Forward declaration of `NativePermissionStatus` to properly resolve imports.
 namespace margelo::nitro::locationsession { struct NativePermissionStatus; }
+// Forward declaration of `NativeQueueMode` to properly resolve imports.
+namespace margelo::nitro::locationsession { enum class NativeQueueMode; }
+// Forward declaration of `NativeQueueStatus` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeQueueStatus; }
 // Forward declaration of `NativeSessionConfig` to properly resolve imports.
 namespace margelo::nitro::locationsession { struct NativeSessionConfig; }
 // Forward declaration of `NativeSessionState` to properly resolve imports.
@@ -40,6 +44,8 @@ namespace margelo::nitro::locationsession { enum class SessionStatus; }
 #include "NativeDestination.hpp"
 #include "NativeLocation.hpp"
 #include "NativePermissionStatus.hpp"
+#include "NativeQueueMode.hpp"
+#include "NativeQueueStatus.hpp"
 #include "NativeSessionConfig.hpp"
 #include "NativeSessionState.hpp"
 #include "PermissionLevel.hpp"

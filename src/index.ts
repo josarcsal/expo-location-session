@@ -3,6 +3,7 @@ import type {
   LocationSession as LocationSessionSpec,
   NativeLocation,
   NativePermissionStatus,
+  NativeQueueStatus,
   NativeSessionState,
 } from './specs/location-session.nitro';
 import {
@@ -14,6 +15,7 @@ import {
   type LocationSessionEventMap,
   type PermissionLevel,
   type PermissionStatus,
+  type QueueStatus,
   type SessionConfig,
   type SessionState,
   type StopReason,
@@ -24,6 +26,10 @@ export * from './types';
 const DEFAULT_ACCURACY = 'balanced';
 const DEFAULT_DISTANCE_FILTER_METERS = 50;
 const DEFAULT_MIN_INTERVAL_MS = 15000;
+const DEFAULT_QUEUE_MODE = 'latest';
+const DEFAULT_QUEUE_MAX_RECORDS = 10_000;
+const DEFAULT_QUEUE_MAX_AGE_MS = 86_400_000;
+const DEFAULT_BATCH_ROOT_PROPERTY = 'locations';
 const DEFAULT_TIMEOUT_MS = 15000;
 const DEFAULT_MAX_AGE_MS = 0;
 const DEFAULT_DEBUG_FLUSH_INTERVAL_MS = 60000;
@@ -75,6 +81,12 @@ function toPermissionStatus(status: NativePermissionStatus): PermissionStatus {
   };
 }
 
+function toQueueStatus(status: NativeQueueStatus): QueueStatus {
+  const result: QueueStatus = { pending: status.pending, sessions: status.sessions };
+  if (status.oldestAt != null) result.oldestAt = status.oldestAt;
+  return result;
+}
+
 function toSessionState(state: NativeSessionState): SessionState {
   if (state.status === 'running') {
     const running: Extract<SessionState, { status: 'running' }> = {
@@ -122,6 +134,7 @@ export function getCurrentPosition(opts: CurrentPositionOptions = {}): Promise<L
 }
 
 export function start(config: SessionConfig): Promise<void> {
+  const { queue, batch, body, auth } = config.upload;
   return call((s) =>
     s.start({
       id: config.id,
@@ -133,6 +146,15 @@ export function start(config: SessionConfig): Promise<void> {
       uploadHeaders: config.upload.headers ?? {},
       uploadExtrasJson: JSON.stringify(config.upload.extras ?? {}),
       uploadMinIntervalMs: config.upload.minIntervalMs ?? DEFAULT_MIN_INTERVAL_MS,
+      uploadQueueMode: queue?.mode ?? DEFAULT_QUEUE_MODE,
+      uploadQueueMaxRecords: queue?.maxRecords ?? DEFAULT_QUEUE_MAX_RECORDS,
+      uploadQueueMaxAgeMs: queue?.maxAgeMs ?? DEFAULT_QUEUE_MAX_AGE_MS,
+      uploadBatchMaxSize: batch?.maxSize,
+      uploadBatchRootProperty: batch ? (batch.rootProperty ?? DEFAULT_BATCH_ROOT_PROPERTY) : undefined,
+      uploadBodyTemplateJson: body ? (JSON.stringify(body.template) ?? '') : undefined,
+      uploadRefreshUrl: auth?.refresh.url,
+      uploadRefreshHeaders: auth?.refresh.headers,
+      uploadRefreshBodyJson: auth?.refresh.body ? JSON.stringify(auth.refresh.body) : undefined,
       androidNotificationTitle: config.android.notification.title,
       androidNotificationText: config.android.notification.text,
       androidNotificationChannelName: config.android.notification.channelName,
@@ -184,6 +206,18 @@ export function flushDebugLog(): Promise<{ sent: number }> {
 
 export function getDebugInstallId(): Promise<string> {
   return call((s) => s.getDebugInstallId());
+}
+
+export function getQueueStatus(): Promise<QueueStatus> {
+  return call(async (s) => toQueueStatus(await s.getQueueStatus()));
+}
+
+export function syncQueue(): Promise<{ sent: number }> {
+  return call(async (s) => ({ sent: await s.syncQueue() }));
+}
+
+export function clearQueue(): Promise<void> {
+  return call((s) => s.clearQueue());
 }
 
 export function addListener<E extends keyof LocationSessionEventMap>(

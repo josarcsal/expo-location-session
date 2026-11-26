@@ -24,6 +24,8 @@ Pod::Spec.new do |s|
     "cpp/**/*.{hpp,cpp}",
   ]
 
+  s.libraries = "sqlite3"
+
   s.pod_target_xcconfig = {
     "GCC_PREPROCESSOR_DEFINITIONS" => "$(inherited) ELS_LIB_VERSION=\\\"#{s.version}\\\"",
   }

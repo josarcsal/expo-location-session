@@ -23,29 +23,49 @@ final class SessionEngine {
 
     let events = EventBus()
     let store = SessionStore()
-    private(set) lazy var permissions = Permissions(store: store)
+    let permissions: Permissions
     let source = LocationSource()
-    private(set) lazy var uploader = Uploader(store: store, events: events)
+    let queue = QueueDatabase.shared
+    let credentials = TargetCredentials()
+    private(set) lazy var uploader = Uploader(store: store, events: events, db: queue, credentials: credentials)
 
     let launchAtMs = nowMs()
     private(set) var config: SessionConfig?
     private var startedAtMs: Int64 = 0
     private(set) var lastFix: Fix?
     private var stopping = false
-    private var expiryTimer: Timer?
+    private let expiryTimer = EngineTimer(EngineQueue.shared)
+    private var accuracyCheck: String?
     var protectedDataObservers: [NSObjectProtocol] = []
     var terminateObserver: NSObjectProtocol?
 
     private init() {
+        permissions = Permissions(store: store)
         DebugLogger.shared.attach(events)
         source.onFixes = { [weak self] in self?.handle($0) }
         source.onAuthorizationChange = { [weak self] in self?.authorizationChanged($0) }
         source.onAccuracyChange = { [weak self] in self?.accuracyChanged($0) }
+        source.onStarted = { [weak self] in self?.sourceStarted($0) }
+        _ = NotificationCenter.default.addObserver(forName: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil, queue: nil) { [weak self] _ in
+            AppSnapshot.shared.primeOnMain()
+            EngineQueue.shared.async { self?.uploader.protectedDataAvailable() }
+        }
+        observeForeground()
+        if BackgroundSync.isPermitted {
+            _ = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil) { [weak self] _ in
+                EngineQueue.shared.async { self?.submitBackgroundSync() }
+            }
+        }
     }
 
-    func start(_ c: SessionConfig) throws {
-        dispatchPrecondition(condition: .onQueue(.main))
-        guard UIApplication.shared.applicationState == .active else {
+    func primeOnMain() {
+        AppSnapshot.shared.primeOnMain()
+        permissions.primeOnMain()
+    }
+
+    func start(_ c: SessionConfig, appActive: Bool) throws {
+        EngineQueue.shared.assertCurrent()
+        guard appActive else {
             throw LocationSessionError(code: "NOT_FOREGROUND", message: "start must be called while the app is in the foreground")
         }
         guard permissions.isAuthorized else {
@@ -53,15 +73,17 @@ final class SessionEngine {
         }
         let now = nowMs()
         if let code = validate(c, nowMs: now, running: config != nil) {
-            throw LocationSessionError(code: code, message: validationMessage(code))
+            throw LocationSessionError(code: code, message: validationMessage(code, c))
         }
         guard LocationSource.hasBackgroundLocationMode else {
             throw LocationSessionError(code: "INVALID_CONFIG", message: "missing UIBackgroundModes location")
         }
         do {
             try store.save(c, startedAtMs: now)
+            try credentials.save(sessionId: c.id, headers: c.uploadHeaders, refreshHeaders: c.sync.refresh?.headers ?? [:])
         } catch {
             store.wipe()
+            credentials.remove(sessionId: c.id)
             throw LocationSessionError(code: "INTERNAL", message: "Could not persist the session: \(error)")
         }
         activate(c, startedAtMs: now, pending: nil, lastUploadAtMs: nil)
@@ -69,18 +91,33 @@ final class SessionEngine {
     }
 
     func stop(_ reason: StopReason) {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         guard let c = config else { return }
         Log.debug("stop", "stop requested", data: ["reason": reason.rawValue, "nowMs": nowMs(), "expiresAtMs": c.expiresAtMs], sessionId: c.id, level: "info")
         teardown(c, reason)
     }
 
     func teardown(_ c: SessionConfig, _ reason: StopReason) {
-        expiryTimer?.invalidate()
-        expiryTimer = nil
-        source.stop()
+        expiryTimer.cancel()
+        accuracyCheck = nil
+        let source = self.source
+        DispatchQueue.main.async { source.stop() }
         events.clearStickyErrors()
         uploader.reset()
+        let action = stopQueueAction(mode: c.sync.mode, reason: reason)
+        if action == .markEnded {
+            queue.markEnded(c.id)
+            Log.debug("queue", "session marked ended", data: ["totalPending": queue.status()?.pending ?? 0, "buffered": queue.buffered], sessionId: c.id)
+        } else {
+            uploader.discardFallback()
+            let deleted = queue.deleteSession(c.id)
+            Log.debug("queue", "session rows deleted", data: ["rows": deleted], sessionId: c.id)
+            credentials.remove(sessionId: c.id)
+            if action == .deleteRowsDropped, deleted > 0 {
+                events.emit(.error, ["code": "UPLOAD_DROPPED", "message": "Session rejected; \(deleted) location\(deleted == 1 ? "" : "s") dropped", "sessionId": c.id])
+            }
+        }
+        uploader.evaluateConnectivity()
         store.wipe()
         store.lastStop = LastStop(reason: reason, atMs: nowMs(), sessionId: c.id)
         config = nil
@@ -89,10 +126,43 @@ final class SessionEngine {
         Log.info("stop", "stopped session \(c.id) reason=\(reason.rawValue)", sessionId: c.id)
         DebugLogger.shared.onStopping()
         events.emit(.stop, ["reason": reason.rawValue, "sessionId": c.id])
+        submitBackgroundSync()
+        uploader.drain(budgetMs: nil) { _ in }
+    }
+
+    func submitBackgroundSync() {
+        guard BackgroundSync.isPermitted else { return }
+        BackgroundSync.submitIfNeeded(pending: queue.status()?.pending ?? 0, sessionRunning: config != nil)
+    }
+
+    func queueStatus() throws -> QueueStatus {
+        EngineQueue.shared.assertCurrent()
+        guard let status = queue.status(hiding: uploader.hiddenRows()) else {
+            throw LocationSessionError(code: "INTERNAL", message: "queue storage is not available")
+        }
+        return status
+    }
+
+    func syncQueue(_ completion: @escaping (Int) -> Void) {
+        EngineQueue.shared.assertCurrent()
+        uploader.drain(budgetMs: nil, completion: completion)
+    }
+
+    func clearQueue() {
+        EngineQueue.shared.assertCurrent()
+        uploader.cancelDrain(release: false)
+        if config?.sync.mode == .latest {
+            uploader.discardFallback()
+            store.pendingFix = nil
+        }
+        guard let removed = queue.clear() else { return }
+        removed.forEach { credentials.remove(sessionId: $0) }
+        Log.debug("queue", "cleared", data: ["targets": removed.count], sessionId: config?.id)
+        uploader.evaluateConnectivity()
     }
 
     func state() -> EngineState {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         guard let c = config else {
             return EngineState(running: false, survivesProcessDeath: false, lastStop: store.lastStop)
         }
@@ -111,34 +181,45 @@ final class SessionEngine {
     func activate(_ c: SessionConfig, startedAtMs: Int64, pending: Fix?, lastUploadAtMs: Int64?) {
         config = c
         self.startedAtMs = startedAtMs
-        lastFix = pending.flatMap(sanitized)
+        lastFix = pending.flatMap(sanitize)
         stopping = false
         uploader.onStop = { [weak self] in self?.stop($0) }
         uploader.processKeptAlive = { [weak self] in self?.source.backgroundUpdatesActive ?? false }
+        saveTarget(c)
         uploader.begin(c, pending: lastFix, lastSuccessMs: lastUploadAtMs)
+        accuracyCheck = c.id
         startSource(c)
-        if source.accuracyAuthorization == .reducedAccuracy { reportReducedAccuracy(c) }
         observeTermination()
         scheduleExpiry(c)
     }
 
+    private func saveTarget(_ c: SessionConfig) {
+        let target = QueueTarget(sessionId: c.id, url: c.uploadUrl, mode: c.sync.mode, batch: c.sync.batch, extrasJson: c.uploadExtrasJson, maxAgeMs: c.sync.maxAgeMs, refreshUrl: c.sync.refresh?.url, refreshBodyJson: c.sync.refresh?.bodyJson, ended: false)
+        queue.saveTarget(target)
+    }
+
     private func startSource(_ c: SessionConfig) {
-        guard !source.start(c) else { return }
+        let source = self.source
+        DispatchQueue.main.async { source.start(c) }
+        guard !LocationSource.hasBackgroundLocationMode else { return }
         events.emitStickyError(code: "CONFIG_MISSING_BACKGROUND_MODE", message: "UIBackgroundModes does not contain location; the session only updates while the app is in the foreground")
     }
 
     private func scheduleExpiry(_ c: SessionConfig) {
-        expiryTimer?.invalidate()
-        let delay = max(0, Double(c.expiresAtMs - nowMs()) / 1000)
-        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
+        expiryTimer.schedule(afterMs: c.expiresAtMs - nowMs()) { [weak self] in
             self?.evaluate(fix: nil)
         }
-        RunLoop.main.add(timer, forMode: .common)
-        expiryTimer = timer
+    }
+
+    private func sourceStarted(_ accuracy: CLAccuracyAuthorization) {
+        guard let id = accuracyCheck else { return }
+        accuracyCheck = nil
+        guard let c = config, c.id == id, accuracy == .reducedAccuracy else { return }
+        reportReducedAccuracy(c)
     }
 
     private func handle(_ fixes: [Fix]) {
-        dispatchPrecondition(condition: .onQueue(.main))
+        EngineQueue.shared.assertCurrent()
         for fix in fixes {
             guard let c = config, !stopping else {
                 logFix(fix, outcome: "dropped", reason: config == nil ? "no session" : "stopping")
@@ -200,7 +281,8 @@ final class SessionEngine {
         case .denied, .restricted:
             stop(.permissionRevoked)
         case .authorizedWhenInUse:
-            source.removeRegions()
+            let source = self.source
+            DispatchQueue.main.async { source.removeRegions() }
             Log.info("permission", "authorization downgraded to whenInUse; session \(c.id) keeps running without relaunch", sessionId: c.id)
         case .authorizedAlways:
             startSource(c)
@@ -225,7 +307,8 @@ final class SessionEngine {
         events.emitStickyError(code: "ACCURACY_REDUCED", message: "Precise location is off; fixes are approximate and arrival cannot trigger")
     }
 
-    private func validationMessage(_ code: String) -> String {
+    private func validationMessage(_ code: String, _ c: SessionConfig) -> String {
+        if code == "INVALID_CONFIG", let reason = syncInvalidReason(c) { return reason }
         switch code {
         case "ALREADY_RUNNING": return "A session is already running; call stop() first"
         case "EXPIRED": return "expiresAt is in the past"

@@ -17,6 +17,8 @@ namespace margelo::nitro::locationsession { struct NativeLocation; }
 namespace margelo::nitro::locationsession { struct NativeSessionState; }
 // Forward declaration of `SessionStatus` to properly resolve imports.
 namespace margelo::nitro::locationsession { enum class SessionStatus; }
+// Forward declaration of `NativeQueueStatus` to properly resolve imports.
+namespace margelo::nitro::locationsession { struct NativeQueueStatus; }
 // Forward declaration of `PermissionLevel` to properly resolve imports.
 namespace margelo::nitro::locationsession { enum class PermissionLevel; }
 // Forward declaration of `Accuracy` to properly resolve imports.
@@ -25,6 +27,8 @@ namespace margelo::nitro::locationsession { enum class Accuracy; }
 namespace margelo::nitro::locationsession { struct NativeSessionConfig; }
 // Forward declaration of `NativeDestination` to properly resolve imports.
 namespace margelo::nitro::locationsession { struct NativeDestination; }
+// Forward declaration of `NativeQueueMode` to properly resolve imports.
+namespace margelo::nitro::locationsession { enum class NativeQueueMode; }
 // Forward declaration of `NativeDebugOptions` to properly resolve imports.
 namespace margelo::nitro::locationsession { struct NativeDebugOptions; }
 // Forward declaration of `SessionEvent` to properly resolve imports.
@@ -45,6 +49,8 @@ namespace margelo::nitro::locationsession { enum class SessionEvent; }
 #include "SessionStatus.hpp"
 #include "JSessionStatus.hpp"
 #include <string>
+#include "NativeQueueStatus.hpp"
+#include "JNativeQueueStatus.hpp"
 #include "PermissionLevel.hpp"
 #include "JPermissionLevel.hpp"
 #include "Accuracy.hpp"
@@ -54,6 +60,8 @@ namespace margelo::nitro::locationsession { enum class SessionEvent; }
 #include "NativeDestination.hpp"
 #include "JNativeDestination.hpp"
 #include <unordered_map>
+#include "NativeQueueMode.hpp"
+#include "JNativeQueueMode.hpp"
 #include "NativeDebugOptions.hpp"
 #include "JNativeDebugOptions.hpp"
 #include "SessionEvent.hpp"
@@ -259,6 +267,53 @@ namespace margelo::nitro::locationsession {
       __result->cthis()->addOnResolvedListener([=](const jni::alias_ref<jni::JObject>& __boxedResult) {
         auto __result = jni::static_ref_cast<jni::JString>(__boxedResult);
         __promise->resolve(__result->toStdString());
+      });
+      __result->cthis()->addOnRejectedListener([=](const jni::alias_ref<jni::JThrowable>& __throwable) {
+        jni::JniException __jniError(__throwable);
+        __promise->reject(std::make_exception_ptr(__jniError));
+      });
+      return __promise;
+    }();
+  }
+  std::shared_ptr<Promise<NativeQueueStatus>> JHybridLocationSessionSpec::getQueueStatus() {
+    static const auto method = _javaPart->javaClassStatic()->getMethod<jni::local_ref<JPromise::javaobject>()>("getQueueStatus");
+    auto __result = method(_javaPart);
+    return [&]() {
+      auto __promise = Promise<NativeQueueStatus>::create();
+      __result->cthis()->addOnResolvedListener([=](const jni::alias_ref<jni::JObject>& __boxedResult) {
+        auto __result = jni::static_ref_cast<JNativeQueueStatus>(__boxedResult);
+        __promise->resolve(__result->toCpp());
+      });
+      __result->cthis()->addOnRejectedListener([=](const jni::alias_ref<jni::JThrowable>& __throwable) {
+        jni::JniException __jniError(__throwable);
+        __promise->reject(std::make_exception_ptr(__jniError));
+      });
+      return __promise;
+    }();
+  }
+  std::shared_ptr<Promise<double>> JHybridLocationSessionSpec::syncQueue() {
+    static const auto method = _javaPart->javaClassStatic()->getMethod<jni::local_ref<JPromise::javaobject>()>("syncQueue");
+    auto __result = method(_javaPart);
+    return [&]() {
+      auto __promise = Promise<double>::create();
+      __result->cthis()->addOnResolvedListener([=](const jni::alias_ref<jni::JObject>& __boxedResult) {
+        auto __result = jni::static_ref_cast<jni::JDouble>(__boxedResult);
+        __promise->resolve(__result->value());
+      });
+      __result->cthis()->addOnRejectedListener([=](const jni::alias_ref<jni::JThrowable>& __throwable) {
+        jni::JniException __jniError(__throwable);
+        __promise->reject(std::make_exception_ptr(__jniError));
+      });
+      return __promise;
+    }();
+  }
+  std::shared_ptr<Promise<void>> JHybridLocationSessionSpec::clearQueue() {
+    static const auto method = _javaPart->javaClassStatic()->getMethod<jni::local_ref<JPromise::javaobject>()>("clearQueue");
+    auto __result = method(_javaPart);
+    return [&]() {
+      auto __promise = Promise<void>::create();
+      __result->cthis()->addOnResolvedListener([=](const jni::alias_ref<jni::JObject>& /* unit */) {
+        __promise->resolve();
       });
       __result->cthis()->addOnRejectedListener([=](const jni::alias_ref<jni::JThrowable>& __throwable) {
         jni::JniException __jniError(__throwable);

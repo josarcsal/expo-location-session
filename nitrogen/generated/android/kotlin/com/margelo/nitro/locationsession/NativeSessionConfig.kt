@@ -47,6 +47,33 @@ data class NativeSessionConfig(
   val uploadMinIntervalMs: Double,
   @DoNotStrip
   @Keep
+  val uploadQueueMode: NativeQueueMode,
+  @DoNotStrip
+  @Keep
+  val uploadQueueMaxRecords: Double,
+  @DoNotStrip
+  @Keep
+  val uploadQueueMaxAgeMs: Double,
+  @DoNotStrip
+  @Keep
+  val uploadBatchMaxSize: Double?,
+  @DoNotStrip
+  @Keep
+  val uploadBatchRootProperty: String?,
+  @DoNotStrip
+  @Keep
+  val uploadBodyTemplateJson: String?,
+  @DoNotStrip
+  @Keep
+  val uploadRefreshUrl: String?,
+  @DoNotStrip
+  @Keep
+  val uploadRefreshHeaders: Map<String, String>?,
+  @DoNotStrip
+  @Keep
+  val uploadRefreshBodyJson: String?,
+  @DoNotStrip
+  @Keep
   val androidNotificationTitle: String,
   @DoNotStrip
   @Keep
@@ -69,6 +96,15 @@ data class NativeSessionConfig(
       && Objects.deepEquals(this.uploadHeaders, other.uploadHeaders)
       && Objects.deepEquals(this.uploadExtrasJson, other.uploadExtrasJson)
       && Objects.deepEquals(this.uploadMinIntervalMs, other.uploadMinIntervalMs)
+      && Objects.deepEquals(this.uploadQueueMode, other.uploadQueueMode)
+      && Objects.deepEquals(this.uploadQueueMaxRecords, other.uploadQueueMaxRecords)
+      && Objects.deepEquals(this.uploadQueueMaxAgeMs, other.uploadQueueMaxAgeMs)
+      && Objects.deepEquals(this.uploadBatchMaxSize, other.uploadBatchMaxSize)
+      && Objects.deepEquals(this.uploadBatchRootProperty, other.uploadBatchRootProperty)
+      && Objects.deepEquals(this.uploadBodyTemplateJson, other.uploadBodyTemplateJson)
+      && Objects.deepEquals(this.uploadRefreshUrl, other.uploadRefreshUrl)
+      && Objects.deepEquals(this.uploadRefreshHeaders, other.uploadRefreshHeaders)
+      && Objects.deepEquals(this.uploadRefreshBodyJson, other.uploadRefreshBodyJson)
       && Objects.deepEquals(this.androidNotificationTitle, other.androidNotificationTitle)
       && Objects.deepEquals(this.androidNotificationText, other.androidNotificationText)
       && Objects.deepEquals(this.androidNotificationChannelName, other.androidNotificationChannelName)
@@ -85,6 +121,15 @@ data class NativeSessionConfig(
       uploadHeaders,
       uploadExtrasJson,
       uploadMinIntervalMs,
+      uploadQueueMode,
+      uploadQueueMaxRecords,
+      uploadQueueMaxAgeMs,
+      uploadBatchMaxSize,
+      uploadBatchRootProperty,
+      uploadBodyTemplateJson,
+      uploadRefreshUrl,
+      uploadRefreshHeaders,
+      uploadRefreshBodyJson,
       androidNotificationTitle,
       androidNotificationText,
       androidNotificationChannelName
@@ -99,8 +144,8 @@ data class NativeSessionConfig(
     @Keep
     @Suppress("unused")
     @JvmStatic
-    private fun fromCpp(id: String, expiresAt: Double, destination: NativeDestination?, accuracy: Accuracy, distanceFilterMeters: Double, uploadUrl: String, uploadHeaders: Map<String, String>, uploadExtrasJson: String, uploadMinIntervalMs: Double, androidNotificationTitle: String, androidNotificationText: String, androidNotificationChannelName: String): NativeSessionConfig {
-      return NativeSessionConfig(id, expiresAt, destination, accuracy, distanceFilterMeters, uploadUrl, uploadHeaders, uploadExtrasJson, uploadMinIntervalMs, androidNotificationTitle, androidNotificationText, androidNotificationChannelName)
+    private fun fromCpp(id: String, expiresAt: Double, destination: NativeDestination?, accuracy: Accuracy, distanceFilterMeters: Double, uploadUrl: String, uploadHeaders: Map<String, String>, uploadExtrasJson: String, uploadMinIntervalMs: Double, uploadQueueMode: NativeQueueMode, uploadQueueMaxRecords: Double, uploadQueueMaxAgeMs: Double, uploadBatchMaxSize: Double?, uploadBatchRootProperty: String?, uploadBodyTemplateJson: String?, uploadRefreshUrl: String?, uploadRefreshHeaders: Map<String, String>?, uploadRefreshBodyJson: String?, androidNotificationTitle: String, androidNotificationText: String, androidNotificationChannelName: String): NativeSessionConfig {
+      return NativeSessionConfig(id, expiresAt, destination, accuracy, distanceFilterMeters, uploadUrl, uploadHeaders, uploadExtrasJson, uploadMinIntervalMs, uploadQueueMode, uploadQueueMaxRecords, uploadQueueMaxAgeMs, uploadBatchMaxSize, uploadBatchRootProperty, uploadBodyTemplateJson, uploadRefreshUrl, uploadRefreshHeaders, uploadRefreshBodyJson, androidNotificationTitle, androidNotificationText, androidNotificationChannelName)
     }
   }
 }

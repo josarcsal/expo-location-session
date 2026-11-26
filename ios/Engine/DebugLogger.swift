@@ -148,7 +148,8 @@ final class DebugLogger {
         queue.sync {
             try? handle?.close()
             handle = nil
-            try? FileManager.default.removeItem(at: directoryURL)
+            try? FileManager.default.removeItem(at: fileURL(0))
+            try? FileManager.default.removeItem(at: fileURL(1))
             files = [FileState(), FileState()]
             pending.removeAll()
             droppedPending = 0

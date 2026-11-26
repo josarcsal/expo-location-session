@@ -176,7 +176,7 @@ object DebugLogger {
         onQueue {
             closeHandle()
             persistLatestSeq()
-            directory()?.deleteRecursively()
+            directory()?.let { dir -> (0..1).forEach { File(dir, fileName(it)).delete() } }
             files[0] = FileState()
             files[1] = FileState()
             pending.clear()

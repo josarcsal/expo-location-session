@@ -20,7 +20,7 @@ final class EventBus {
         if event == .error { awaitingReplay[id] = [] }
         lock.unlock()
         if event == .error {
-            DispatchQueue.main.async { [weak self] in
+            EngineQueue.shared.async { [weak self] in
                 guard let self else { return }
                 self.lock.lock()
                 let deliveredLive = self.awaitingReplay.removeValue(forKey: id) ?? []
@@ -95,7 +95,17 @@ enum Log {
         DebugLogger.shared.log(level, tag, message, data: data, sessionId: sessionId)
     }
 
-    static func upload(status: Int?, outcome: UploadOutcome, data: [String: Any], sessionId: String?) {
-        info("upload", "upload status=\(status.map(String.init) ?? "none") outcome=\(outcome)", data: data, sessionId: sessionId)
+    static func upload(status: Int?, outcome: SyncAction, data: [String: Any], sessionId: String?) {
+        info("upload", "upload status=\(status.map(String.init) ?? "none") outcome=\(uploadOutcomeName(outcome))", data: data, sessionId: sessionId)
+    }
+}
+
+func uploadOutcomeName(_ action: SyncAction) -> String {
+    switch action {
+    case .deleteSent: return "\(UploadOutcome.success)"
+    case .dropSent: return "\(UploadOutcome.drop)"
+    case .retry: return "\(UploadOutcome.retry)"
+    case .stop(let reason): return "\(UploadOutcome.stop(reason))"
+    case .refreshAndRetry, .dropSession: return "\(action)"
     }
 }

@@ -10,11 +10,16 @@ import com.margelo.nitro.core.Promise
 import com.margelo.nitro.locationsession.core.DebugOptions
 import com.margelo.nitro.locationsession.core.Destination
 import com.margelo.nitro.locationsession.core.Fix
+import com.margelo.nitro.locationsession.core.InvalidConfigException
+import com.margelo.nitro.locationsession.core.QueueMode
 import com.margelo.nitro.locationsession.core.SessionConfig
 import com.margelo.nitro.locationsession.core.StopReason
+import com.margelo.nitro.locationsession.core.SyncConfig
+import com.margelo.nitro.locationsession.core.makeSyncConfig
 import com.margelo.nitro.locationsession.engine.CurrentPosition
 import com.margelo.nitro.locationsession.engine.DebugLogger
 import com.margelo.nitro.locationsession.engine.EngineState
+import com.margelo.nitro.locationsession.engine.EngineThread
 import com.margelo.nitro.locationsession.engine.Grant
 import com.margelo.nitro.locationsession.engine.LocationSessionException
 import com.margelo.nitro.locationsession.engine.PermissionSnapshot
@@ -31,7 +36,8 @@ class HybridLocationSession : HybridLocationSessionSpec() {
     private val listenerIds: MutableSet<Double> = Collections.synchronizedSet(HashSet())
 
     init {
-        main.post { context()?.let { SessionEngine.resumeIfNeeded(it) } }
+        context()?.let { SessionEngine.attach(it) }
+        EngineThread.post { context()?.let { SessionEngine.resumeIfNeeded(it) } }
     }
 
     override fun dispose() {
@@ -45,21 +51,29 @@ class HybridLocationSession : HybridLocationSessionSpec() {
 
     private fun <T> onMain(body: (Context, Promise<T>) -> Unit): Promise<T> {
         val promise = Promise<T>()
-        main.post {
-            val ctx = context()
-            if (ctx == null) {
-                promise.reject(RuntimeException("INTERNAL: React context is not available"))
-                return@post
-            }
-            try {
-                body(ctx, promise)
-            } catch (e: LocationSessionException) {
-                promise.reject(RuntimeException(e.message))
-            } catch (e: Exception) {
-                promise.reject(RuntimeException("INTERNAL: $e"))
-            }
-        }
+        main.post { execute(promise, body) }
         return promise
+    }
+
+    private fun <T> onEngine(body: (Context, Promise<T>) -> Unit): Promise<T> {
+        val promise = Promise<T>()
+        EngineThread.post { execute(promise, body) }
+        return promise
+    }
+
+    private fun <T> execute(promise: Promise<T>, body: (Context, Promise<T>) -> Unit) {
+        val ctx = context()
+        if (ctx == null) {
+            promise.reject(RuntimeException("INTERNAL: React context is not available"))
+            return
+        }
+        try {
+            body(ctx, promise)
+        } catch (e: LocationSessionException) {
+            promise.reject(RuntimeException(e.message))
+        } catch (e: Exception) {
+            promise.reject(RuntimeException("INTERNAL: $e"))
+        }
     }
 
     override fun getPermissionStatus(): Promise<NativePermissionStatus> = onMain { ctx, promise ->
@@ -82,17 +96,17 @@ class HybridLocationSession : HybridLocationSessionSpec() {
             }
         }
 
-    override fun start(config: NativeSessionConfig): Promise<Unit> = onMain { ctx, promise ->
+    override fun start(config: NativeSessionConfig): Promise<Unit> = onEngine { ctx, promise ->
         SessionEngine.start(ctx, sessionConfig(config))
         promise.resolve(Unit)
     }
 
-    override fun stop(): Promise<Unit> = onMain { ctx, promise ->
+    override fun stop(): Promise<Unit> = onEngine { ctx, promise ->
         SessionEngine.stop(ctx, StopReason.STOPPED)
         promise.resolve(Unit)
     }
 
-    override fun getState(): Promise<NativeSessionState> = onMain { ctx, promise ->
+    override fun getState(): Promise<NativeSessionState> = onEngine { ctx, promise ->
         promise.resolve(nativeState(SessionEngine.state(ctx)))
     }
 
@@ -127,6 +141,20 @@ class HybridLocationSession : HybridLocationSessionSpec() {
         }
     }
 
+    override fun getQueueStatus(): Promise<NativeQueueStatus> = onEngine { ctx, promise ->
+        val status = SessionEngine.queueStatus(ctx)
+        promise.resolve(NativeQueueStatus(status.pending.toDouble(), status.oldestAt?.toDouble(), status.sessions.toDouble()))
+    }
+
+    override fun syncQueue(): Promise<Double> = onEngine { ctx, promise ->
+        SessionEngine.syncQueue(ctx) { promise.resolve(it.toDouble()) }
+    }
+
+    override fun clearQueue(): Promise<Unit> = onEngine { ctx, promise ->
+        SessionEngine.clearQueue(ctx)
+        promise.resolve(Unit)
+    }
+
     override fun addListener(event: SessionEvent, callback: (payloadJson: String) -> Unit): Double {
         val name = when (event) {
             SessionEvent.LOCATION -> "location"
@@ -155,6 +183,25 @@ private fun Accuracy.wire(): String = when (this) {
 private fun milliseconds(value: Double): Long? =
     if (value.isFinite() && abs(value) < 9.0e15) value.roundToLong() else null
 
+private fun syncConfig(c: NativeSessionConfig): SyncConfig = try {
+    makeSyncConfig(
+        mode = when (c.uploadQueueMode) {
+            NativeQueueMode.LATEST -> QueueMode.LATEST
+            NativeQueueMode.ALL -> QueueMode.ALL
+        },
+        maxRecords = c.uploadQueueMaxRecords,
+        maxAgeMs = c.uploadQueueMaxAgeMs,
+        batchMaxSize = c.uploadBatchMaxSize,
+        batchRootProperty = c.uploadBatchRootProperty,
+        templateJson = c.uploadBodyTemplateJson,
+        refreshUrl = c.uploadRefreshUrl,
+        refreshHeaders = c.uploadRefreshHeaders,
+        refreshBodyJson = c.uploadRefreshBodyJson
+    )
+} catch (e: InvalidConfigException) {
+    throw LocationSessionException("INVALID_CONFIG", e.reason)
+}
+
 private fun sessionConfig(c: NativeSessionConfig): SessionConfig {
     val expiresAt = milliseconds(c.expiresAt)
     val minInterval = milliseconds(c.uploadMinIntervalMs)
@@ -181,7 +228,8 @@ private fun sessionConfig(c: NativeSessionConfig): SessionConfig {
         uploadMinIntervalMs = minInterval,
         notificationTitle = c.androidNotificationTitle,
         notificationText = c.androidNotificationText,
-        notificationChannelName = c.androidNotificationChannelName
+        notificationChannelName = c.androidNotificationChannelName,
+        sync = syncConfig(c)
     )
 }
 
