@@ -7,6 +7,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.margelo.nitro.locationsession.core.SessionConfig
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotSame
@@ -112,5 +113,21 @@ class EngineThreadTest {
         idleEngine()
         shadowOf(Looper.getMainLooper()).idle()
         assertTrue(shadowOf(c.get()).isStoppedBySelf)
+    }
+
+    @Test
+    fun processStartDrainIsQueuedAfterTheMainThreadFinishesStarting() {
+        idleEngine()
+        val engine = shadowOf(EngineThread.looper)
+        engine.pause()
+        try {
+            Robolectric.buildContentProvider(SessionInitProvider::class.java).create()
+            assertTrue(engine.isIdle)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertFalse(engine.isIdle)
+        } finally {
+            engine.unPause()
+        }
+        idleEngine()
     }
 }

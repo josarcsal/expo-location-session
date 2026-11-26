@@ -4,6 +4,8 @@ import android.content.ContentProvider
 import android.content.ContentValues
 import android.database.Cursor
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 
 class SessionInitProvider : ContentProvider() {
     override fun onCreate(): Boolean {
@@ -11,7 +13,9 @@ class SessionInitProvider : ContentProvider() {
             DebugLogger.processStarted(it)
             SessionEngine.attach(it)
             val app = it.applicationContext
-            EngineThread.post { SessionEngine.drainAtProcessStart(app) }
+            Handler(Looper.getMainLooper()).post {
+                EngineThread.post { SessionEngine.drainAtProcessStart(app) }
+            }
         }
         return true
     }
