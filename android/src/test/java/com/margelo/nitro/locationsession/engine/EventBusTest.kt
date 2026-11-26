@@ -20,9 +20,13 @@ class EventBusTest {
         val bus = EventBus()
         bus.emitStickyError("QUEUE_UNAVAILABLE", "unavailable", "s1")
         val received = mutableListOf<String>()
-        bus.add("error") { received.add(it) }
-        assertEquals(emptyList<String>(), received)
+        var receivedDuringAdd: List<String>? = null
+        EngineThread.post {
+            bus.add("error") { received.add(it) }
+            receivedDuringAdd = received.toList()
+        }
         idleEngine()
+        assertEquals(emptyList<String>(), receivedDuringAdd)
         assertEquals(listOf("QUEUE_UNAVAILABLE"), codes(received))
         assertEquals("s1", JSONObject(received[0]).getString("sessionId"))
         idleEngine()
