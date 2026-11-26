@@ -13,8 +13,9 @@ enum BackgroundSync {
 
     static func register() {
         guard isPermitted, let identifier else { return }
-        let registered = BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: EngineQueue.shared.queue) { task in
-            run(task)
+        let registered = BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: .main) { task in
+            SessionEngine.shared.primeOnMain()
+            EngineQueue.shared.async { run(task) }
         }
         Log.debug("sync", "background sync registered", data: ["identifier": identifier, "registered": registered], level: registered ? "debug" : "warn")
     }
