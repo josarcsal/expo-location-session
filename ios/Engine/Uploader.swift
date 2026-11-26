@@ -950,12 +950,15 @@ final class Uploader {
 
     private func beginBackgroundTask() {
         endBackgroundTask()
-        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "expo-location-session.upload") { [weak self] in
-            EngineQueue.shared.syncFromMain { self?.backgroundTaskExpired() }
+        var id = UIBackgroundTaskIdentifier.invalid
+        id = UIApplication.shared.beginBackgroundTask(withName: "expo-location-session.upload") { [weak self] in
+            EngineQueue.shared.syncFromMain { self?.backgroundTaskExpired(id) }
         }
+        backgroundTask = id
     }
 
-    private func backgroundTaskExpired() {
+    private func backgroundTaskExpired(_ id: UIBackgroundTaskIdentifier) {
+        guard id == backgroundTask else { return }
         let keptAlive = processKeptAlive?() ?? false
         Log.debug("upload", keptAlive ? "background task expired; background location keeps the upload running" : "background task expired; cancelling in-flight upload", data: ["inFlight": inFlight != nil], sessionId: inFlightTarget?.id ?? config?.id, level: "warn")
         if !keptAlive, inFlight != nil {

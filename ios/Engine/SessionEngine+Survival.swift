@@ -55,7 +55,9 @@ extension SessionEngine {
         case let .session(c, startedAt):
             stopWaitingForProtectedData()
             endLeftoverTargets(except: c.id)
-            DispatchQueue.main.async { Log.info("store", "persisted session \(c.id) protectedData=\(protectedData) regionsAtLaunch=\(source.monitoredRegionIds)", sessionId: c.id) }
+            DispatchQueue.main.async {
+                Log.info("store", "persisted session \(c.id) protectedData=\(protectedData) regionsAtLaunch=\(source.monitoredRegionIds)", sessionId: c.id)
+            }
             if nowMs() >= c.expiresAtMs {
                 teardown(c, .expired)
             } else if !permissions.isAuthorized {
@@ -82,11 +84,14 @@ extension SessionEngine {
     private func waitForProtectedData() {
         guard protectedDataObservers.isEmpty else { return }
         let center = NotificationCenter.default
+        var forwarded = false
         protectedDataObservers = [
             UIApplication.protectedDataDidBecomeAvailableNotification,
             UIApplication.didBecomeActiveNotification,
         ].map { name in
             center.addObserver(forName: name, object: nil, queue: nil) { [weak self] _ in
+                guard !forwarded else { return }
+                forwarded = true
                 AppSnapshot.shared.primeOnMain()
                 EngineQueue.shared.async {
                     Log.info("lifecycle", "retrying resume after \(name.rawValue)")

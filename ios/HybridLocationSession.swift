@@ -169,7 +169,7 @@ class HybridLocationSession: HybridLocationSessionSpec {
 
     private func onEngine<T>(_ body: @escaping (Promise<T>) -> Void) -> Promise<T> {
         let promise = Promise<T>()
-        EngineQueue.shared.async { body(promise) }
+        DispatchQueue.main.async { EngineQueue.shared.async { body(promise) } }
         return promise
     }
 
