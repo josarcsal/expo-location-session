@@ -519,6 +519,7 @@ object SessionEngine {
             return
         }
         ctx.stopService(Intent(ctx, LocationTrackingService::class.java))
+        LaunchGate.serviceStopRequested()
     }
 
     fun isAppInForeground(ctx: Context): Boolean {

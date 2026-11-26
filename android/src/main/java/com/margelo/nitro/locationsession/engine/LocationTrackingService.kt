@@ -51,6 +51,7 @@ class LocationTrackingService : Service() {
             promotedNow = promoted
         }
         val app = applicationContext
+        val promotedForStart = promoted
         EngineThread.post {
             LaunchGate.serviceStartDelivered()
             val activeBefore = SessionEngine.isActive
@@ -61,21 +62,25 @@ class LocationTrackingService : Service() {
             }
             if (SessionEngine.activeConfig != null && activeBefore) SessionEngine.refreshUpdates(app)
             if (promotedNow) LaunchGate.onPromoted(app)
-            main.post { settle() }
+            if (SessionEngine.activeConfig == null || !promotedForStart) LaunchGate.serviceStopRequested()
+            main.post { settle(startId) }
         }
         return if (promoted) START_STICKY else START_NOT_STICKY
     }
 
-    private fun settle() {
+    private fun settle(startId: Int) {
         if (destroyed) return
         val config = SessionEngine.activeConfig
         if (config == null || !promoted) {
+            if (!stopSelfResult(startId)) {
+                ElsLog.info("service", "service started again; keeping it", mapOf("startId" to startId))
+                return
+            }
             if (config == null) ElsLog.info("service", "service has no active session; stopping") else ElsLog.info("service", "service not promoted; stopping", level = "warn")
             if (promoted && promote(notification(PLACEHOLDER_TITLE, null))) {
                 ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             }
             isForeground = false
-            stopSelf()
             return
         }
         showConfigured(config)

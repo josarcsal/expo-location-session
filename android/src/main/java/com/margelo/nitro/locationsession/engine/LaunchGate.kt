@@ -45,6 +45,7 @@ class LaunchGate : BroadcastReceiver() {
         private var deliveryRoute: String? = null
         private var startedRoute: String? = null
         private var deniedDuringDelivery = false
+        private var serviceStopping = false
         var startPending = false
             private set
 
@@ -126,13 +127,14 @@ class LaunchGate : BroadcastReceiver() {
 
         fun promote(ctx: Context) {
             assertEngine()
-            if (LocationTrackingService.isForeground || startPending || deniedDuringDelivery) {
+            if (serviceForeground() || startPending || deniedDuringDelivery) {
                 ElsLog.debug(
                     "gate",
                     "promote skipped",
                     mapOf(
                         "deliveryRoute" to deliveryRoute,
                         "serviceForeground" to LocationTrackingService.isForeground,
+                        "serviceStopping" to serviceStopping,
                         "startPending" to startPending,
                         "deniedDuringDelivery" to deniedDuringDelivery
                     )
@@ -157,7 +159,7 @@ class LaunchGate : BroadcastReceiver() {
                 ElsLog.info("gate", "skipping foreground service start via $route: location FGS would not be allowed", mapOf("route" to route))
                 return
             }
-            if (LocationTrackingService.isAlive) {
+            if (LocationTrackingService.isAlive && !serviceStopping) {
                 ElsLog.route("service alive but not foreground via $route", mapOf("route" to route, "outcome" to "denied"))
                 onDenied(ctx, route)
                 return
@@ -165,6 +167,7 @@ class LaunchGate : BroadcastReceiver() {
             try {
                 ContextCompat.startForegroundService(ctx, Intent(ctx, LocationTrackingService::class.java))
                 startPending = true
+                serviceStopping = false
                 startedRoute = route
                 ElsLog.route("foreground service start allowed via $route", mapOf("route" to route, "outcome" to "allowed"))
             } catch (e: Exception) {
@@ -180,7 +183,7 @@ class LaunchGate : BroadcastReceiver() {
 
         fun restart(ctx: Context, route: String) {
             assertEngine()
-            if (!SessionEngine.isActive || LocationTrackingService.isForeground) return
+            if (!SessionEngine.isActive || serviceForeground()) return
             deliveryRoute = route
             try {
                 promote(ctx)
@@ -192,7 +195,15 @@ class LaunchGate : BroadcastReceiver() {
         fun serviceStartDelivered() {
             assertEngine()
             startPending = false
+            serviceStopping = false
         }
+
+        fun serviceStopRequested() {
+            assertEngine()
+            serviceStopping = true
+        }
+
+        private fun serviceForeground(): Boolean = LocationTrackingService.isForeground && !serviceStopping
 
         fun onPromoted(ctx: Context) {
             assertEngine()
@@ -244,7 +255,7 @@ class LaunchGate : BroadcastReceiver() {
         }
 
         private fun enforceDeadline(ctx: Context) {
-            if (!SessionEngine.isActive || LocationTrackingService.isForeground || startPending) return
+            if (!SessionEngine.isActive || serviceForeground() || startPending) return
             val first = SessionStore(ctx).firstPromotionFailureAtMs ?: return
             val elapsed = nowMs() - first
             if (elapsed < PROMOTION_DEADLINE_MS) {

@@ -1,5 +1,7 @@
 package com.margelo.nitro.locationsession.engine
 
+import android.Manifest
+import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.os.Looper
@@ -129,5 +131,22 @@ class EngineThreadTest {
             engine.unPause()
         }
         idleEngine()
+    }
+
+    @Test
+    fun serviceStoppingWithoutASessionIsStartedAgainByANewSession() {
+        shadowOf(ctx as Application).grantPermissions(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        val c = Robolectric.buildService(LocationTrackingService::class.java).create()
+        try {
+            c.startCommand(0, 1)
+            idleEngine()
+            onEngine { LaunchGate.promote(ctx) }
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(LocationTrackingService::class.java.name, shadowOf(ctx as Application).nextStartedService?.component?.className)
+            assertEquals(1, shadowOf(c.get()).stopSelfResultId)
+        } finally {
+            onEngine { LaunchGate.serviceStartDelivered() }
+            c.destroy()
+        }
     }
 }
