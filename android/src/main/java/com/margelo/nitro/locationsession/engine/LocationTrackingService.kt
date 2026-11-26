@@ -62,13 +62,13 @@ class LocationTrackingService : Service() {
             }
             if (SessionEngine.activeConfig != null && activeBefore) SessionEngine.refreshUpdates(app)
             if (promotedNow) LaunchGate.onPromoted(app)
-            if (SessionEngine.activeConfig == null || !promotedForStart) LaunchGate.serviceStopRequested()
-            main.post { settle(startId) }
+            val stopRequest = if (SessionEngine.activeConfig == null || !promotedForStart) LaunchGate.serviceStopRequested() else null
+            main.post { settle(startId, stopRequest) }
         }
         return if (promoted) START_STICKY else START_NOT_STICKY
     }
 
-    private fun settle(startId: Int) {
+    private fun settle(startId: Int, stopRequest: Int?) {
         if (destroyed) return
         val config = SessionEngine.activeConfig
         if (config == null || !promoted) {
@@ -84,6 +84,7 @@ class LocationTrackingService : Service() {
             return
         }
         showConfigured(config)
+        if (stopRequest != null) EngineThread.post { LaunchGate.serviceKept(stopRequest) }
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {

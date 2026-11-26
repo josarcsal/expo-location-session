@@ -46,6 +46,7 @@ class LaunchGate : BroadcastReceiver() {
         private var startedRoute: String? = null
         private var deniedDuringDelivery = false
         private var serviceStopping = false
+        private var stopRequests = 0
         var startPending = false
             private set
 
@@ -198,9 +199,16 @@ class LaunchGate : BroadcastReceiver() {
             serviceStopping = false
         }
 
-        fun serviceStopRequested() {
+        fun serviceStopRequested(): Int {
             assertEngine()
             serviceStopping = true
+            stopRequests += 1
+            return stopRequests
+        }
+
+        fun serviceKept(stopRequest: Int) {
+            assertEngine()
+            if (stopRequest == stopRequests) serviceStopping = false
         }
 
         private fun serviceForeground(): Boolean = LocationTrackingService.isForeground && !serviceStopping

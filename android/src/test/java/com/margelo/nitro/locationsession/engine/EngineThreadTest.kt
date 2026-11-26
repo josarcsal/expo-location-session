@@ -116,10 +116,15 @@ class EngineThreadTest {
     fun serviceStartsForegroundOnMainThenStopsWhenTheEngineHasNoSession() {
         val c = Robolectric.buildService(LocationTrackingService::class.java).create()
         assertNotNull(shadowOf(c.get()).lastForegroundNotification)
-        c.startCommand(0, 1)
-        idleEngine()
-        shadowOf(Looper.getMainLooper()).idle()
-        assertTrue(shadowOf(c.get()).isStoppedBySelf)
+        try {
+            c.startCommand(0, 1)
+            idleEngine()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertTrue(shadowOf(c.get()).isStoppedBySelf)
+        } finally {
+            onEngine { LaunchGate.serviceStartDelivered() }
+            c.destroy()
+        }
     }
 
     @Test
@@ -150,7 +155,34 @@ class EngineThreadTest {
             assertEquals(LocationTrackingService::class.java.name, shadowOf(ctx as Application).nextStartedService?.component?.className)
             assertEquals(1, shadowOf(c.get()).stopSelfResultId)
         } finally {
-            onEngine { LaunchGate.serviceStartDelivered() }
+            onEngine {
+                LaunchGate.serviceStartDelivered()
+                LaunchGate.onPromoted(ctx)
+            }
+            c.destroy()
+        }
+    }
+
+    @Test
+    fun serviceKeptForASessionIsTreatedAsForegroundAgain() {
+        shadowOf(ctx as Application).grantPermissions(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        val active = SessionEngine::class.java.getDeclaredField("config").apply { isAccessible = true }
+        val c = Robolectric.buildService(LocationTrackingService::class.java).create()
+        try {
+            c.startCommand(0, 1)
+            idleEngine()
+            active.set(null, config())
+            shadowOf(Looper.getMainLooper()).idle()
+            idleEngine()
+            onEngine { LaunchGate.promote(ctx) }
+            assertEquals(null, shadowOf(ctx as Application).nextStartedService)
+            assertFalse(shadowOf(c.get()).isStoppedBySelf)
+        } finally {
+            active.set(null, null)
+            onEngine {
+                LaunchGate.serviceStartDelivered()
+                LaunchGate.onPromoted(ctx)
+            }
             c.destroy()
         }
     }
